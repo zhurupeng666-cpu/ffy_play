@@ -1,0 +1,834 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://frontier-guardian.local/save-v1.schema.json",
+  "title": "Frontier Guardian MVP Save v1",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "game_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "content_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "campaign_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "id_counters": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "rng": {
+      "type": "object",
+      "properties": {
+        "seed": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "seed",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "clock": {
+      "$ref": "#/$defs/clock"
+    },
+    "treasury": {
+      "type": "object",
+      "properties": {
+        "gold": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "gold"
+      ],
+      "additionalProperties": false
+    },
+    "regions": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/region"
+      }
+    },
+    "towns": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/town"
+      }
+    },
+    "buildings": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/building"
+      }
+    },
+    "soldiers": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/soldier"
+      }
+    },
+    "squads": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/squad"
+      }
+    },
+    "armies": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/army"
+      }
+    },
+    "training_orders": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/training"
+      }
+    },
+    "shipments": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/shipment"
+      }
+    },
+    "pending_market_orders": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/market_order"
+      }
+    },
+    "battle_states": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/battle"
+      }
+    },
+    "technology": {
+      "type": "object",
+      "properties": {
+        "unlocked_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "active_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "progress_hours": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "unlocked_ids",
+        "active_id",
+        "progress_hours"
+      ],
+      "additionalProperties": false
+    },
+    "quests": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/quest"
+      }
+    },
+    "event_history": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "applied_result_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "game_version",
+    "content_version",
+    "campaign_id",
+    "revision",
+    "id_counters",
+    "rng",
+    "clock",
+    "treasury",
+    "regions",
+    "towns",
+    "buildings",
+    "soldiers",
+    "squads",
+    "armies",
+    "training_orders",
+    "shipments",
+    "pending_market_orders",
+    "battle_states",
+    "technology",
+    "quests",
+    "event_history",
+    "applied_result_ids"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "inventory": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "capacity": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "amounts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "reserved": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "required": [
+        "id",
+        "capacity",
+        "amounts",
+        "reserved"
+      ],
+      "additionalProperties": false
+    },
+    "population": {
+      "type": "object",
+      "properties": {
+        "employable": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dependents": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "employed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "builders": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "training": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "idle": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "housing_capacity": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "employable",
+        "dependents",
+        "employed",
+        "builders",
+        "training",
+        "idle",
+        "housing_capacity"
+      ],
+      "additionalProperties": false
+    },
+    "clock": {
+      "type": "object",
+      "properties": {
+        "strategic_tick": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "day": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "last_settled_day": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "speed": {
+          "enum": [
+            1,
+            2,
+            4
+          ]
+        },
+        "paused": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "strategic_tick",
+        "day",
+        "last_settled_day",
+        "speed",
+        "paused"
+      ],
+      "additionalProperties": false
+    },
+    "region": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "def_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "owner_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "visibility": {
+          "enum": [
+            "hidden",
+            "known",
+            "scouted"
+          ]
+        },
+        "access": {
+          "enum": [
+            "blocked",
+            "open"
+          ]
+        },
+        "town_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "resource_sites": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "required": [
+        "id",
+        "def_id",
+        "owner_id",
+        "visibility",
+        "access",
+        "town_ids",
+        "resource_sites"
+      ],
+      "additionalProperties": false
+    },
+    "town": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "region_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "population": {
+          "$ref": "#/$defs/population"
+        },
+        "inventory": {
+          "$ref": "#/$defs/inventory"
+        },
+        "building_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "tax_policy": {
+          "enum": [
+            "low",
+            "standard",
+            "high"
+          ]
+        },
+        "satisfaction": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        }
+      },
+      "required": [
+        "id",
+        "region_id",
+        "population",
+        "inventory",
+        "building_ids",
+        "tax_policy",
+        "satisfaction"
+      ],
+      "additionalProperties": false
+    },
+    "building": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "def_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "town_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "level": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        },
+        "cell": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "state": {
+          "enum": [
+            "constructing",
+            "active",
+            "disabled",
+            "destroyed"
+          ]
+        },
+        "workers": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "progress": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        }
+      },
+      "required": [
+        "id",
+        "def_id",
+        "town_id",
+        "level",
+        "cell",
+        "state",
+        "workers",
+        "progress"
+      ],
+      "additionalProperties": false
+    },
+    "soldier": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "def_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "squad_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hp": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "status": {
+          "enum": [
+            "healthy",
+            "wounded",
+            "dead"
+          ]
+        },
+        "equipment_tier": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2
+        }
+      },
+      "required": [
+        "id",
+        "def_id",
+        "squad_id",
+        "hp",
+        "status",
+        "equipment_tier"
+      ],
+      "additionalProperties": false
+    },
+    "squad": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "army_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "unit_def_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "soldier_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "required": [
+        "id",
+        "army_id",
+        "unit_def_id",
+        "soldier_ids"
+      ],
+      "additionalProperties": false
+    },
+    "order": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "idle",
+            "move",
+            "attack_move",
+            "hold",
+            "focus",
+            "retreat",
+            "travel",
+            "scout"
+          ]
+        },
+        "target_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "target_id"
+      ],
+      "additionalProperties": false
+    },
+    "army": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "owner_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "region_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "squad_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "inventory": {
+          "$ref": "#/$defs/inventory"
+        },
+        "order": {
+          "$ref": "#/$defs/order"
+        },
+        "morale": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "satisfaction": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "arrears": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "owner_id",
+        "region_id",
+        "squad_ids",
+        "inventory",
+        "order",
+        "morale",
+        "satisfaction",
+        "arrears"
+      ],
+      "additionalProperties": false
+    },
+    "quest": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "locked",
+            "active",
+            "completed",
+            "failed"
+          ]
+        },
+        "counters": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "claimed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "counters",
+        "claimed"
+      ],
+      "additionalProperties": false
+    },
+    "training": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "town_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "unit_def_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target_army_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reserved_people": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "remaining_work": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "town_id",
+        "unit_def_id",
+        "target_army_id",
+        "reserved_people",
+        "remaining_work"
+      ],
+      "additionalProperties": false
+    },
+    "shipment": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "origin_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "destination_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "route": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "cargo": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "edge_progress": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        }
+      },
+      "required": [
+        "id",
+        "origin_id",
+        "destination_id",
+        "route",
+        "cargo",
+        "edge_progress"
+      ],
+      "additionalProperties": false
+    },
+    "market_order": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "town_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cargo": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "paid_gold": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "arrival_day": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "town_id",
+        "cargo",
+        "paid_gold",
+        "arrival_day"
+      ],
+      "additionalProperties": false
+    },
+    "battle": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "phase": {
+          "const": "deployment"
+        },
+        "region_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "participants": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "tick": {
+          "const": 0
+        },
+        "rng_state": {
+          "type": "string",
+          "minLength": 1
+        },
+        "result_applied": {
+          "const": false
+        }
+      },
+      "required": [
+        "id",
+        "phase",
+        "region_id",
+        "participants",
+        "tick",
+        "rng_state",
+        "result_applied"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

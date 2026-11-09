@@ -1,0 +1,26 @@
+# Frontier Guardian
+
+Windows PC 单人 2D 等距像素经营战争游戏。
+
+## 已确认的技术方案
+
+- 引擎：Godot 4.x 稳定标准版，环境验证后锁定完整版本。
+- 主语言：带类型的 GDScript。
+- C++：仅在性能分析确认瓶颈后，以 GDExtension 接入。
+- 静态配置：Godot Resource。
+- 运行状态：内存中的统一 WorldState。
+- 本地存档：SQLite，不使用 MySQL 服务。
+- 编辑器：VS Code 配合 Godot 编辑器。
+- 项目目录：D:\playproject\ffy_play。
+
+技术决策及下一步验收见 docs/技术选型与环境准备.md。
+历史设计见 docs/archive；历史文档中的 JSON 主存档方案已被 SQLite 方案替代。
+
+## 同步规则
+
+每完成一个可验收步骤，检查差异，提交本地 Git，再推送 origin。
+推送失败必须明确报告，禁止强制推送或覆盖远程历史。
+
+## 当前进度
+
+已确认架构并整理文档。尚未创建 Godot 工程、安装引擎或验证 SQLite 插件。

@@ -1,0 +1,175 @@
+{
+  "schema_version": 1,
+  "game_version": "0.1.0",
+  "content_version": "mvp-001",
+  "campaign_id": "campaign_test_001",
+  "revision": 1,
+  "id_counters": {
+    "army": 1,
+    "squad": 1,
+    "soldier": 1,
+    "building": 1
+  },
+  "rng": {
+    "seed": "12345",
+    "state": "12345"
+  },
+  "clock": {
+    "strategic_tick": 0,
+    "day": 1,
+    "last_settled_day": 0,
+    "speed": 1,
+    "paused": true
+  },
+  "treasury": {
+    "gold": 300
+  },
+  "regions": {
+    "r_home": {
+      "id": "r_home",
+      "def_id": "r_home",
+      "owner_id": "player",
+      "visibility": "scouted",
+      "access": "open",
+      "town_ids": [
+        "town_000001"
+      ],
+      "resource_sites": []
+    },
+    "r_woods": {
+      "id": "r_woods",
+      "def_id": "r_woods",
+      "owner_id": null,
+      "visibility": "known",
+      "access": "open",
+      "town_ids": [],
+      "resource_sites": []
+    },
+    "r_fort": {
+      "id": "r_fort",
+      "def_id": "r_fort",
+      "owner_id": "enemy",
+      "visibility": "hidden",
+      "access": "open",
+      "town_ids": [],
+      "resource_sites": []
+    }
+  },
+  "towns": {
+    "town_000001": {
+      "id": "town_000001",
+      "region_id": "r_home",
+      "population": {
+        "employable": 24,
+        "dependents": 6,
+        "employed": 0,
+        "builders": 0,
+        "training": 0,
+        "idle": 24,
+        "housing_capacity": 30
+      },
+      "inventory": {
+        "id": "inv_town_000001",
+        "capacity": {
+          "food": 1000,
+          "material": 1000
+        },
+        "amounts": {
+          "wood": 120000,
+          "stone": 80000,
+          "grain": 60000,
+          "food": 180000
+        },
+        "reserved": {}
+      },
+      "building_ids": [
+        "building_000001"
+      ],
+      "tax_policy": "standard",
+      "satisfaction": 50
+    }
+  },
+  "buildings": {
+    "building_000001": {
+      "id": "building_000001",
+      "def_id": "b_hall",
+      "town_id": "town_000001",
+      "level": 1,
+      "cell": [
+        10,
+        10
+      ],
+      "state": "active",
+      "workers": 0,
+      "progress": 100
+    }
+  },
+  "soldiers": {
+    "soldier_000001": {
+      "id": "soldier_000001",
+      "def_id": "u_shield",
+      "squad_id": "squad_000001",
+      "hp": 100,
+      "status": "healthy",
+      "equipment_tier": 0
+    }
+  },
+  "squads": {
+    "squad_000001": {
+      "id": "squad_000001",
+      "army_id": "army_000001",
+      "unit_def_id": "u_shield",
+      "soldier_ids": [
+        "soldier_000001"
+      ]
+    }
+  },
+  "armies": {
+    "army_000001": {
+      "id": "army_000001",
+      "owner_id": "player",
+      "region_id": "r_home",
+      "squad_ids": [
+        "squad_000001"
+      ],
+      "inventory": {
+        "id": "inv_army_000001",
+        "capacity": {
+          "food": 8
+        },
+        "amounts": {
+          "food": 5000
+        },
+        "reserved": {}
+      },
+      "order": {
+        "type": "idle",
+        "target_id": null
+      },
+      "morale": 70,
+      "satisfaction": 70,
+      "arrears": 0
+    }
+  },
+  "training_orders": [],
+  "shipments": [],
+  "pending_market_orders": [],
+  "battle_states": [],
+  "technology": {
+    "unlocked_ids": [],
+    "active_id": null,
+    "progress_hours": 0
+  },
+  "quests": {
+    "q_food": {
+      "id": "q_food",
+      "status": "active",
+      "counters": {
+        "produced_food": 0
+      },
+      "claimed": false
+    }
+  },
+  "event_history": [],
+  "applied_result_ids": []
+}
