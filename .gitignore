@@ -13,3 +13,4 @@ backups/
 *.sqlite3
 *.sqlite-journal
 __pycache__/
+*.db-journal

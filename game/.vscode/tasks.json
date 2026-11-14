@@ -5,7 +5,37 @@
       "label": "Godot: smoke test",
       "type": "process",
       "command": "${config:godotTools.editorPath.godot4}",
-      "args": ["--headless", "--path", "${workspaceFolder}", "--script", "res://tests/smoke_test.gd"],
+      "args": [
+        "--headless",
+        "--path",
+        "${workspaceFolder}",
+        "--script",
+        "res://tests/smoke_test.gd"
+      ],
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "Godot: SQLite test",
+      "type": "process",
+      "command": "${config:godotTools.editorPath.godot4}",
+      "args": [
+        "--headless",
+        "--path",
+        "${workspaceFolder}",
+        "--script",
+        "res://tests/sqlite_test.gd"
+      ],
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "Godot: all tests",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "Godot: SQLite test",
+        "Godot: smoke test"
+      ],
       "problemMatcher": [],
       "group": "test"
     }

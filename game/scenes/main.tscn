@@ -32,7 +32,7 @@ horizontal_alignment = 1
 
 [node name="Hint" type="Label" parent="Center/Panel"]
 layout_mode = 2
-text = "Environment test only - placeholder UI"
+text = "环境与存档验证（占位界面）"
 horizontal_alignment = 1
 
 [node name="Elapsed" type="Label" parent="Center/Panel"]
@@ -47,4 +47,31 @@ text = "Pause (Space)"
 [node name="Help" type="Label" parent="Center/Panel"]
 layout_mode = 2
 text = "Space: pause/resume    Esc: exit"
+horizontal_alignment = 1
+
+[node name="Gold" type="Label" parent="Center/Panel"]
+layout_mode = 2
+text = "测试金币：100"
+horizontal_alignment = 1
+
+[node name="SaveActions" type="HBoxContainer" parent="Center/Panel"]
+layout_mode = 2
+alignment = 1
+theme_override_constants/separation = 12
+
+[node name="Add" type="Button" parent="Center/Panel/SaveActions"]
+layout_mode = 2
+text = "金币 +10"
+
+[node name="Save" type="Button" parent="Center/Panel/SaveActions"]
+layout_mode = 2
+text = "保存"
+
+[node name="Load" type="Button" parent="Center/Panel/SaveActions"]
+layout_mode = 2
+text = "读取"
+
+[node name="SaveStatus" type="Label" parent="Center/Panel"]
+layout_mode = 2
+text = "正在打开数据库"
 horizontal_alignment = 1

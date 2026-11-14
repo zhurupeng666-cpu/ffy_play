@@ -28,3 +28,7 @@ Windows PC 单人 2D 等距像素经营战争游戏。
 ## 最小工程
 
 打开 FrontierGuardian.code-workspace 使用VS Code开发。game已包含可运行占位场景与运行暂停测试；详细操作和待验收项见 docs/最小工程与VSCode环境验收.md。工作区已解除受限模式；Godot语言服务连接与VS Code断点命中、变量检查已实际验证。每步测试方法见 docs/开发测试指南.md。
+
+## SQLite开发态进度
+
+已接入godot-sqlite v4.9，实现测试金币加值、保存和读取；跨连接与独立进程持久化、回滚和版本保护测试通过。操作方法见docs/开发测试指南.md，范围及未验收项见docs/SQLite开发态接入验收.md。此前SQLite尚未验证的记录为历史状态。Windows导出后加载验证仍待完成。

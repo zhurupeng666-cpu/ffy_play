@@ -11,6 +11,7 @@ func _initialize() -> void:
 func _run() -> void:
 	var scene: PackedScene = load("res://scenes/main.tscn")
 	var main: Control = scene.instantiate()
+	main.save_path_override = ProjectSettings.globalize_path("res://local_data/tests/main_%s.db" % Time.get_ticks_usec())
 	root.add_child(main)
 	await create_timer(0.15).timeout
 	if main.elapsed_seconds <= 0.0:
@@ -27,6 +28,17 @@ func _run() -> void:
 	if main.elapsed_seconds <= before:
 		_fail("Clock did not resume")
 		return
+	# 界面存档模块：检查加值、保存和读取确实同步到标签与内存。
+	main._add_gold()
+	main._save_gold()
+	main._add_gold()
+	main._load_gold()
+	if main.gold != 110 or not str(main.save_status.text).begins_with("读取成功"):
+		_fail("界面存档联动失败")
+		return
+	var temporary_path: String = main.save_path_override
+	main.free()
+	DirAccess.remove_absolute(temporary_path)
 	print("SMOKE_PASS: scene, time, pause, resume")
 	quit(0)
 
