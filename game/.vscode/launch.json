@@ -1,0 +1,15 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Frontier Guardian: Debug",
+      "type": "godot",
+      "request": "launch",
+      "project": "${workspaceFolder}",
+      "scene": "main",
+      "address": "127.0.0.1",
+      "port": 6007,
+      "additional_options": "--rendering-method gl_compatibility"
+    }
+  ]
+}
