@@ -1,6 +1,7 @@
-## 文件用途：展示战略日期、资源、倍速和账单，通过领域模块操作世界与存档。
+## 文件用途：组织等距地图与战略管理界面，通过独立模块操作视图、世界和存档。
 extends Control
 
+const TownMap = preload("res://scripts/town_map.gd")
 const State = preload("res://scripts/world_state.gd")
 const Clock = preload("res://scripts/strategic_clock.gd")
 const Store = preload("res://scripts/world_save_repository.gd")
@@ -18,6 +19,8 @@ var status_label: Label
 var pause_button: Button
 var progress: ProgressBar
 var panel: VBoxContainer
+var town_map: Control
+var map_info: Label
 
 
 # 启动模块：普通运行进入战略原型，旧导出验收参数仍转入原存档测试场景。
@@ -44,17 +47,48 @@ func _ready() -> void:
 		get_tree().quit(_verify_export(world_probe))
 
 
-# 界面模块：仅使用引擎默认控件组成占位面板，不确定正式视觉设计。
+# 界面模块：左侧为占位地图，右侧为可滚动管理面板，二者输入互不穿透。
 func _build_ui() -> void:
-	var center: CenterContainer = CenterContainer.new()
-	add_child(center)
-	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var margin: MarginContainer = MarginContainer.new()
+	add_child(margin)
+	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	for side: String in ["left", "right", "top", "bottom"]:
+		margin.add_theme_constant_override("margin_" + side, 12)
+	var columns: HBoxContainer = HBoxContainer.new()
+	columns.add_theme_constant_override("separation", 16)
+	margin.add_child(columns)
+	var map_column: VBoxContainer = VBoxContainer.new()
+	map_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	map_column.custom_minimum_size.x = 320
+	columns.add_child(map_column)
+	var title: Label = Label.new()
+	title.text = "城镇格网（16×16，占位）"
+	map_column.add_child(title)
+	town_map = TownMap.new()
+	town_map.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	town_map.custom_minimum_size = Vector2(320, 200)
+	map_column.add_child(town_map)
+	map_info = Label.new()
+	map_column.add_child(map_info)
+	var map_actions: HBoxContainer = HBoxContainer.new()
+	map_column.add_child(map_actions)
+	_button(map_actions, "镜头复位（Home）", town_map.reset_view)
+	var help: Label = Label.new()
+	help.text = "左键选格 / 右键取消 / 中键拖动 / 滚轮缩放"
+	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	map_column.add_child(help)
+	town_map.hovered_changed.connect(_on_map_cell_changed)
+	town_map.selected_changed.connect(_on_map_cell_changed)
+	town_map.view_changed.connect(_refresh_map_info)
+	var scroll: ScrollContainer = ScrollContainer.new()
+	scroll.custom_minimum_size.x = 320
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	columns.add_child(scroll)
 	panel = VBoxContainer.new()
-	panel.add_theme_constant_override("separation", 14)
-	panel.custom_minimum_size.x = 700
-	center.add_child(panel)
-	_label("Frontier Guardian — 战略原型")
-	_label("规则验证占位界面；数值均为待平衡参数")
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	panel.add_theme_constant_override("separation", 8)
+	scroll.add_child(panel)
+	_label("领地管理（占位）")
 	date_label = _label("")
 	resource_label = _label("")
 	progress = ProgressBar.new()
@@ -70,8 +104,24 @@ func _build_ui() -> void:
 	_button(saves, "读取战略进度", _load)
 	bill_label = _label("")
 	status_label = _label("新世界已暂停；请选择速度后继续")
-	_label("1日=120秒；30居民每日粮食-15、税收+20；木石暂不生产")
-	_label("空格暂停/继续，Esc退出；此阶段尚无建筑、军队与缺粮惩罚")
+	_label("1日120秒；每日粮食-15、税收+20。数值待平衡。")
+	_label("地图操作不扣资源；选格不是建造。镜头与选择暂不存档。")
+	_refresh_map_info()
+
+
+# 地块通知模块：只更新界面提示，不改变人口、库存或战略时间。
+func _on_map_cell_changed(_cell: Vector2i) -> void:
+	_refresh_map_info()
+
+
+# 地图提示模块：分别显示悬停和选择，使用从0开始的逻辑坐标。
+func _refresh_map_info() -> void:
+	map_info.text = "悬停 %s  | 选中 %s  | 缩放 %d%%" % [_cell_text(town_map.hovered), _cell_text(town_map.selected), roundi(town_map.zoom_level * 100)]
+
+
+# 坐标文本模块：地图外或未选择时显示短横线。
+func _cell_text(cell: Vector2i) -> String:
+	return "(%d,%d)" % [cell.x, cell.y] if cell.x >= 0 and cell.y >= 0 else "—"
 
 
 # 标签模块：统一设置换行与居中，避免较长账单超出窗口。
@@ -155,6 +205,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		if event.keycode == KEY_SPACE:
 			_toggle_pause()
 			get_viewport().set_input_as_handled()
+		elif event.keycode == KEY_HOME:
+			town_map.reset_view()
 		elif event.keycode == KEY_ESCAPE:
 			get_tree().quit()
 
