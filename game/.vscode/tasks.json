@@ -34,7 +34,9 @@
       "dependsOrder": "sequence",
       "dependsOn": [
         "Godot: SQLite test",
-        "Godot: smoke test"
+        "Godot: smoke test",
+        "Godot: strategic test",
+        "Godot: world UI test"
       ],
       "problemMatcher": [],
       "group": "test"
@@ -50,6 +52,34 @@
       ],
       "problemMatcher": [],
       "group": "build"
+    },
+    {
+      "label": "Godot: strategic test",
+      "type": "process",
+      "command": "${config:godotTools.editorPath.godot4}",
+      "args": [
+        "--headless",
+        "--path",
+        "${workspaceFolder}",
+        "--script",
+        "res://tests/strategic_test.gd"
+      ],
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "Godot: world UI test",
+      "type": "process",
+      "command": "${config:godotTools.editorPath.godot4}",
+      "args": [
+        "--headless",
+        "--path",
+        "${workspaceFolder}",
+        "--script",
+        "res://tests/world_scene_test.gd"
+      ],
+      "problemMatcher": [],
+      "group": "test"
     }
   ]
 }

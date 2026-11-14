@@ -17,6 +17,8 @@ Invoke-GodotStep @('--headless', '--editor', '--path', $project, '--import')
 if (-not $SkipTests) {
     Invoke-GodotStep @('--headless', '--path', $project, '--script', 'res://tests/sqlite_test.gd')
     Invoke-GodotStep @('--headless', '--path', $project, '--script', 'res://tests/smoke_test.gd')
+    Invoke-GodotStep @('--headless', '--path', $project, '--script', 'res://tests/strategic_test.gd')
+    Invoke-GodotStep @('--headless', '--path', $project, '--script', 'res://tests/world_scene_test.gd')
 }
 # 许可模块：从本次使用的引擎提取声明，避免遗漏内置第三方许可证。
 $notice = Join-Path $repo 'docs\licenses\Godot-ThirdPartyNotices.txt'

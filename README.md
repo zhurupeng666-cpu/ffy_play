@@ -21,7 +21,7 @@ Windows PC 单人 2D 等距像素经营战争游戏。
 每完成一个可验收步骤，检查差异，提交本地 Git，再推送 origin。
 推送失败必须明确报告，禁止强制推送或覆盖远程历史。
 
-## 当前进度
+## 初始阶段记录（历史）
 
 已确认架构并整理文档。Godot 4.7.2 标准版已安装并通过签名、版本和无窗口脚本启动检查。图形编辑器、导出模板、VS Code联调及SQLite插件尚待验证。详见 docs/Godot安装验收记录.md。
 
@@ -36,3 +36,7 @@ Windows PC 单人 2D 等距像素经营战争游戏。
 ## Windows导出进度
 
 Windows debug与release独立测试包已导出，两个构建均通过独立进程SQLite保存读取。入口为仓库旁 builds/FrontierGuardian/release/FrontierGuardian.exe。构建脚本为 tools/build_windows.ps1，复测脚本为 tools/verify_windows.ps1，手动测试步骤见docs/开发测试指南.md。具体范围见docs/Windows独立测试包验收.md；此前导出待验收的描述为历史状态。
+
+## 当前战略原型入口
+
+默认运行已切换为战略日期与资源面板，支持暂停、1/2/4倍速、每日扣粮收税及完整快照存档。全部参数待平衡。旧金币测试与旧档保留但不再默认启动。最新测试方法见docs/开发测试指南.md步骤四，架构与范围见docs/战略时钟与资源原型验收.md。

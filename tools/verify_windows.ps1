@@ -10,19 +10,21 @@ foreach ($variant in @('debug', 'release')) {
     if (-not (Test-Path -LiteralPath $executable)) { throw "缺少构建：$executable" }
     $testDirectory = Join-Path $directory 'local_data\tests'
     New-Item -ItemType Directory -Path $testDirectory -Force | Out-Null
-    foreach ($mode in @('write', 'read')) {
-        $out = Join-Path $testDirectory "$mode.stdout.log"
-        $err = Join-Path $testDirectory "$mode.stderr.log"
-        $process = Start-Process -FilePath $executable -ArgumentList @('--headless','--',"--verify-export=$mode") -WindowStyle Hidden -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+    foreach ($check in @('export=write', 'export=read', 'world=write', 'world=read')) {
+        $kind, $mode = $check.Split('=')
+        $marker = if ($kind -eq 'world') { 'EXPORT_WORLD_PASS' } else { 'EXPORT_SQLITE_PASS' }
+        $out = Join-Path $testDirectory "$kind-$mode.stdout.log"
+        $err = Join-Path $testDirectory "$kind-$mode.stderr.log"
+        $process = Start-Process -FilePath $executable -ArgumentList @('--headless','--',"--verify-$kind=$mode") -WindowStyle Hidden -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
         if (-not $process.WaitForExit(20000)) {
             Stop-Process -Id $process.Id
             throw '导出程序测试超时'
         }
         $process.Refresh()
         $output = Get-Content -LiteralPath $out -Raw
-        if ($process.ExitCode -ne 0 -or $output -notmatch "EXPORT_SQLITE_PASS: $mode") {
+        if ($process.ExitCode -ne 0 -or $output -notmatch ($marker + ': ' + $mode)) {
             throw "导出程序验收失败：$variant / $mode，请检查 $testDirectory"
         }
-        Write-Output "EXPORT_CHECK_PASS: $variant / $mode"
+        Write-Output "EXPORT_CHECK_PASS: $variant / $kind / $mode"
     }
 }
