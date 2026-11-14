@@ -27,4 +27,4 @@ Windows PC 单人 2D 等距像素经营战争游戏。
 
 ## 最小工程
 
-打开 FrontierGuardian.code-workspace 使用VS Code开发。game已包含可运行占位场景与运行暂停测试；详细操作和待验收项见 docs/最小工程与VSCode环境验收.md。工作区当前受限，需用户自行信任后完成VS Code断点验收。
+打开 FrontierGuardian.code-workspace 使用VS Code开发。game已包含可运行占位场景与运行暂停测试；详细操作和待验收项见 docs/最小工程与VSCode环境验收.md。工作区已解除受限模式；Godot语言服务连接与VS Code断点命中、变量检查已实际验证。每步测试方法见 docs/开发测试指南.md。

@@ -1,10 +1,13 @@
+## 文件用途：自动验证主场景加载、计时推进、暂停冻结与恢复运行。
 extends SceneTree
 
 
+# 启动模块：延迟到场景树就绪后执行测试。
 func _initialize() -> void:
 	call_deferred("_run")
 
 
+# 验收模块：依次检查运行、暂停与恢复，全部通过后返回成功。
 func _run() -> void:
 	var scene: PackedScene = load("res://scenes/main.tscn")
 	var main: Control = scene.instantiate()
@@ -28,6 +31,7 @@ func _run() -> void:
 	quit(0)
 
 
+# 失败模块：记录具体原因并用非零退出码通知调用方。
 func _fail(message: String) -> void:
 	push_error(message)
 	quit(1)

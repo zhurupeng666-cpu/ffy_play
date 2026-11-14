@@ -1,5 +1,11 @@
 {
   "folders": [
     {"name": "Frontier Guardian Game", "path": "game"}
-  ]
+  ],
+  "settings": {
+    "godotTools.editorPath.godot4": "E:/playproject/tools/Godot/4.7.2-stable/Godot_v4.7.2-stable_win64.exe",
+    "godotTools.lsp.headless": true,
+    "godotTools.lsp.serverHost": "127.0.0.1",
+    "godotTools.lsp.serverPort": 6008
+  }
 }
