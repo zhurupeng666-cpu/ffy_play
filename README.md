@@ -32,3 +32,7 @@ Windows PC 单人 2D 等距像素经营战争游戏。
 ## SQLite开发态进度
 
 已接入godot-sqlite v4.9，实现测试金币加值、保存和读取；跨连接与独立进程持久化、回滚和版本保护测试通过。操作方法见docs/开发测试指南.md，范围及未验收项见docs/SQLite开发态接入验收.md。此前SQLite尚未验证的记录为历史状态。Windows导出后加载验证仍待完成。
+
+## Windows导出进度
+
+Windows debug与release独立测试包已导出，两个构建均通过独立进程SQLite保存读取。入口为仓库旁 builds/FrontierGuardian/release/FrontierGuardian.exe。构建脚本为 tools/build_windows.ps1，复测脚本为 tools/verify_windows.ps1，手动测试步骤见docs/开发测试指南.md。具体范围见docs/Windows独立测试包验收.md；此前导出待验收的描述为历史状态。

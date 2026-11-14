@@ -6,6 +6,7 @@ var elapsed_seconds: float = 0.0
 
 # 存档模块：测试金币只保存在内存，点击保存才写入SQLite。
 const Repository = preload("res://scripts/sqlite_save_repository.gd")
+const ExportProbe = preload("res://scripts/export_probe.gd")
 var save_repository: RefCounted = Repository.new()
 var gold: int = 100
 var save_path_override: String = ""
@@ -23,6 +24,10 @@ func _ready() -> void:
 	$Center/Panel/SaveActions/Add.pressed.connect(_add_gold)
 	$Center/Panel/SaveActions/Save.pressed.connect(_save_gold)
 	$Center/Panel/SaveActions/Load.pressed.connect(_load_gold)
+	# 导出验收模块：命令行测试使用独立库，不覆盖手动存档。
+	var probe_mode: String = ExportProbe.get_mode() if OS.has_feature("portable_test") else ""
+	if not probe_mode.is_empty():
+		save_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/export_probe.db")
 	if save_repository.open_store(save_path_override):
 		save_status.text = "数据库就绪：初始100，点击读取可恢复上次保存"
 	else:
@@ -31,6 +36,9 @@ func _ready() -> void:
 		$Center/Panel/SaveActions/Load.disabled = true
 	_refresh_gold()
 	print("FRONTIER_READY")
+	if not probe_mode.is_empty():
+		var result_code: int = ExportProbe.run(save_repository, probe_mode) if save_repository.database != null else 1
+		get_tree().quit(result_code)
 
 
 # 计时显示模块：未暂停时累加时间，暂停时保留显示。

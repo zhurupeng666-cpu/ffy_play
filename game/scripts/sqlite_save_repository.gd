@@ -15,7 +15,13 @@ func open_store(path_override: String = "") -> bool:
 	error_message = ""
 	database_path = path_override
 	if database_path.is_empty():
-		database_path = ProjectSettings.globalize_path("res://local_data/saves/frontier_test.db") if OS.has_feature("editor") else OS.get_user_data_dir().path_join("frontier_test.db")
+		# 路径模块：便携测试包使用程序旁的独立存档，开发态继续使用工程目录。
+		if OS.has_feature("portable_test"):
+			database_path = OS.get_executable_path().get_base_dir().path_join("local_data/saves/frontier_test.db")
+		elif OS.has_feature("editor"):
+			database_path = ProjectSettings.globalize_path("res://local_data/saves/frontier_test.db")
+		else:
+			database_path = OS.get_user_data_dir().path_join("frontier_test.db")
 	if DirAccess.make_dir_recursive_absolute(database_path.get_base_dir()) != OK:
 		error_message = "无法创建存档目录"
 		return false

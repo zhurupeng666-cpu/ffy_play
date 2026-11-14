@@ -18,3 +18,4 @@ textures/canvas_textures/default_texture_filter=0
 
 [debug]
 file_logging/log_path="E:/playproject/ffy_play/game/local_data/logs/godot.log"
+file_logging/enable_file_logging.portable_test=false

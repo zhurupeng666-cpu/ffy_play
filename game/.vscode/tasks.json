@@ -38,6 +38,18 @@
       ],
       "problemMatcher": [],
       "group": "test"
+    },
+    {
+      "label": "Godot: build Windows",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-File",
+        "${workspaceFolder}/../tools/build_windows.ps1"
+      ],
+      "problemMatcher": [],
+      "group": "build"
     }
   ]
 }
