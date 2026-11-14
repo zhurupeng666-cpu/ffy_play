@@ -4,7 +4,11 @@ extends Control
 signal hovered_changed(cell: Vector2i)
 signal selected_changed(cell: Vector2i)
 signal view_changed
+signal placement_changed(result: Dictionary)
+signal placement_clicked(result: Dictionary)
+signal placement_cancelled
 
+const Placement = preload("res://scripts/placement_validator.gd")
 const Grid = preload("res://scripts/isometric_grid.gd")
 
 # 视图状态模块：镜头与选格属于界面状态，不写入战略存档。
@@ -14,9 +18,17 @@ var hovered: Vector2i = Grid.INVALID
 var selected: Vector2i = Grid.INVALID
 var dragging: bool = false
 
+# 预览模块：测试占用区只用于重叠验证，不属于真实建筑或世界存档。
+var occupied_cells: Dictionary = {}
+var active_definition: Resource
+var preview_result: Dictionary = {}
+
 
 # 初始化模块：只捕获地图内部鼠标输入，不影响旁侧管理按钮。
 func _ready() -> void:
+	for y: int in range(6, 10):
+		for x: int in range(6, 10):
+			occupied_cells[Vector2i(x, y)] = true
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	clip_contents = true
 	mouse_default_cursor_shape = Control.CURSOR_CROSS
@@ -60,9 +72,16 @@ func _draw() -> void:
 			draw_colored_polygon(points, shade)
 			points.append(points[0])
 			draw_polyline(points, Color(0.40, 0.42, 0.43), 1.0, true)
-	if Grid.contains(selected):
+	# 占用显示模块：蓝灰区域明确用于本阶段的重叠测试。
+	for cell: Vector2i in occupied_cells:
+		draw_colored_polygon(_diamond(cell), Color(0.30, 0.38, 0.48, 0.9))
+	if active_definition != null and Grid.contains(hovered):
+		var color: Color = Color(0.25, 0.85, 0.4, 0.65) if preview_result.get("ok", false) else Color(0.95, 0.22, 0.2, 0.7)
+		for cell: Vector2i in preview_result.get("cells", []):
+			draw_colored_polygon(_diamond(cell), color)
+	if active_definition == null and Grid.contains(selected):
 		draw_colored_polygon(_diamond(selected), Color(0.25, 0.75, 0.45, 0.75))
-	if Grid.contains(hovered):
+	if active_definition == null and Grid.contains(hovered):
 		var outline: PackedVector2Array = _diamond(hovered)
 		outline.append(outline[0])
 		draw_polyline(outline, Color(1.0, 0.82, 0.25), 2.0, true)
@@ -74,6 +93,7 @@ func _update_hover(point: Vector2) -> void:
 	if hovered != cell:
 		hovered = cell
 		hovered_changed.emit(cell)
+	_update_preview()
 	queue_redraw()
 
 
@@ -86,8 +106,15 @@ func _gui_input(event: InputEvent) -> void:
 		elif event.pressed and event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
 			_apply_zoom(event.position, 1.2 if event.button_index == MOUSE_BUTTON_WHEEL_UP else 1.0 / 1.2)
 		elif event.pressed and event.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT]:
-			selected = cell_at(event.position) if event.button_index == MOUSE_BUTTON_LEFT else Grid.INVALID
-			selected_changed.emit(selected)
+			if active_definition != null:
+				if event.button_index == MOUSE_BUTTON_RIGHT:
+					cancel_preview()
+				else:
+					_update_hover(event.position)
+					placement_clicked.emit(preview_result.duplicate(true))
+			else:
+				selected = cell_at(event.position) if event.button_index == MOUSE_BUTTON_LEFT else Grid.INVALID
+				selected_changed.emit(selected)
 		_update_hover(event.position)
 		accept_event()
 	elif event is InputEventMouseMotion:
@@ -131,6 +158,7 @@ func _on_resized() -> void:
 func _on_mouse_exited() -> void:
 	hovered = Grid.INVALID
 	hovered_changed.emit(hovered)
+	_update_preview()
 	queue_redraw()
 
 
@@ -139,3 +167,31 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
 		dragging = false
 		mouse_default_cursor_shape = Control.CURSOR_CROSS
+
+
+# 模式模块：选择静态建筑定义后进入预览，不创建实例或扣材料。
+func set_preview(definition: Resource) -> void:
+	active_definition = definition
+	_update_preview()
+	queue_redraw()
+
+
+# 取消模块：保留普通选格，仅清除建筑预览状态。
+func cancel_preview() -> void:
+	active_definition = null
+	preview_result = {}
+	placement_changed.emit({"active": false})
+	placement_cancelled.emit()
+	queue_redraw()
+
+
+# 预览校验模块：鼠标离开地图时隐藏占地，进入合法格后检查整个建筑范围。
+func _update_preview() -> void:
+	if active_definition == null:
+		return
+	if not Grid.contains(hovered):
+		preview_result = {"ok": false, "code": "NO_ANCHOR", "reason": "请将鼠标移到地图内", "cells": []}
+	else:
+		preview_result = Placement.check(hovered, active_definition.get("footprint"), occupied_cells)
+	preview_result["active"] = true
+	placement_changed.emit(preview_result)

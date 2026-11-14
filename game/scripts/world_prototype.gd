@@ -1,6 +1,8 @@
 ## 文件用途：组织等距地图与战略管理界面，通过独立模块操作视图、世界和存档。
 extends Control
 
+const HOUSE = preload("res://data/buildings/house.tres")
+const FARM = preload("res://data/buildings/farm.tres")
 const TownMap = preload("res://scripts/town_map.gd")
 const State = preload("res://scripts/world_state.gd")
 const Clock = preload("res://scripts/strategic_clock.gd")
@@ -21,6 +23,7 @@ var progress: ProgressBar
 var panel: VBoxContainer
 var town_map: Control
 var map_info: Label
+var placement_label: Label
 
 
 # 启动模块：普通运行进入战略原型，旧导出验收参数仍转入原存档测试场景。
@@ -74,12 +77,15 @@ func _build_ui() -> void:
 	map_column.add_child(map_actions)
 	_button(map_actions, "镜头复位（Home）", town_map.reset_view)
 	var help: Label = Label.new()
-	help.text = "左键选格 / 右键取消 / 中键拖动 / 滚轮缩放"
+	help.text = "左键选格或检查预览 / 右键取消 / 中键拖动 / 滚轮缩放"
 	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	map_column.add_child(help)
 	town_map.hovered_changed.connect(_on_map_cell_changed)
 	town_map.selected_changed.connect(_on_map_cell_changed)
 	town_map.view_changed.connect(_refresh_map_info)
+	town_map.placement_changed.connect(_on_placement_changed)
+	town_map.placement_clicked.connect(_on_placement_clicked)
+	town_map.placement_cancelled.connect(_on_placement_cancelled)
 	var scroll: ScrollContainer = ScrollContainer.new()
 	scroll.custom_minimum_size.x = 320
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -89,6 +95,11 @@ func _build_ui() -> void:
 	panel.add_theme_constant_override("separation", 8)
 	scroll.add_child(panel)
 	_label("领地管理（占位）")
+	var building_actions: HBoxContainer = _row()
+	_button(building_actions, "住宅 2×2", _start_preview.bind(HOUSE))
+	_button(building_actions, "农场 4×4", _start_preview.bind(FARM))
+	_button(building_actions, "取消", _cancel_preview)
+	placement_label = _label("请选择建筑以预览；蓝灰格为测试占用区")
 	date_label = _label("")
 	resource_label = _label("")
 	progress = ProgressBar.new()
@@ -105,7 +116,7 @@ func _build_ui() -> void:
 	bill_label = _label("")
 	status_label = _label("新世界已暂停；请选择速度后继续")
 	_label("1日120秒；每日粮食-15、税收+20。数值待平衡。")
-	_label("地图操作不扣资源；选格不是建造。镜头与选择暂不存档。")
+	_label("本阶段只预览，不建造、不扣费。蓝灰区为重叠测试占用。")
 	_refresh_map_info()
 
 
@@ -208,7 +219,11 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		elif event.keycode == KEY_HOME:
 			town_map.reset_view()
 		elif event.keycode == KEY_ESCAPE:
-			get_tree().quit()
+			if town_map.active_definition != null:
+				town_map.cancel_preview()
+				get_viewport().set_input_as_handled()
+			else:
+				get_tree().quit()
 
 
 # 退出模块：只关闭连接，不擅自覆盖手动存档。
@@ -235,3 +250,35 @@ func _verify_export(mode: String) -> int:
 			return 1
 	print("EXPORT_WORLD_PASS: ", mode)
 	return 0
+
+
+# 建筑选择模块：将只读定义交给地图，所有占地检查由独立校验器执行。
+func _start_preview(definition: Resource) -> void:
+	town_map.set_preview(definition)
+	status_label.text = "已进入" + str(definition.get("display_name")) + "预览；左键仅检查位置"
+
+
+# 取消入口模块：提供按钮与鼠标右键一致的操作。
+func _cancel_preview() -> void:
+	town_map.cancel_preview()
+
+
+# 预览提示模块：同时显示建筑类型和无效原因，红绿之外仍有文字反馈。
+func _on_placement_changed(result: Dictionary) -> void:
+	if placement_label == null:
+		return
+	if not result.get("active", false):
+		placement_label.text = "已取消预览；蓝灰格为测试占用区"
+	else:
+		placement_label.text = str(town_map.active_definition.get("display_name")) + "：" + str(result.get("reason", ""))
+
+
+# 点击反馈模块：合法位置也仅提示，不改变资源、占用或存档。
+func _on_placement_clicked(result: Dictionary) -> void:
+	status_label.text = "检查通过：仅预览，未建造、未扣材料" if result.get("ok", false) else "不可放置：" + str(result.get("reason", ""))
+
+
+# 取消提示模块：不覆盖战略数据，只更新操作提示。
+func _on_placement_cancelled() -> void:
+	if status_label != null:
+		status_label.text = "已取消建筑预览，恢复普通选格"
