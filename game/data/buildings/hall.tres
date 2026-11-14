@@ -1,0 +1,11 @@
+[gd_resource type="Resource" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/building_definition.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "b_hall"
+display_name = "领主厅"
+footprint = Vector2i(4, 4)
+cost = {}
+buildable = false

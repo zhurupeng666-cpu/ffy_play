@@ -1,6 +1,8 @@
 ## 文件用途：组织等距地图与战略管理界面，通过独立模块操作视图、世界和存档。
 extends Control
 
+const ConstructionProbe = preload("res://scripts/construction_export_probe.gd")
+const Construction = preload("res://scripts/construction_service.gd")
 const HOUSE = preload("res://data/buildings/house.tres")
 const FARM = preload("res://data/buildings/farm.tres")
 const TownMap = preload("res://scripts/town_map.gd")
@@ -24,6 +26,8 @@ var panel: VBoxContainer
 var town_map: Control
 var map_info: Label
 var placement_label: Label
+var building_label: Label
+var pending_build_command: String = ""
 
 
 # 启动模块：普通运行进入战略原型，旧导出验收参数仍转入原存档测试场景。
@@ -34,20 +38,27 @@ func _ready() -> void:
 		return
 	_build_ui()
 	var world_probe: String = ""
+	var build_probe: String = ""
 	if OS.has_feature("portable_test"):
 		for argument: String in OS.get_cmdline_user_args():
 			if argument in ["--verify-world=write", "--verify-world=read"]:
 				world_probe = argument.get_slice("=", 1)
+			elif argument in ["--verify-build=write", "--verify-build=read"]:
+				build_probe = argument.get_slice("=", 1)
 		if not world_probe.is_empty():
 			store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/world_export.db")
+	if not build_probe.is_empty():
+		store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/building_export.db")
 	if not store.open_store(store_path_override):
 		status_label.text = "存档不可用：" + store.error_message
-		if not world_probe.is_empty():
+		if not world_probe.is_empty() or not build_probe.is_empty():
 			get_tree().quit(1)
 			return
 	_refresh()
 	if not world_probe.is_empty():
 		get_tree().quit(_verify_export(world_probe))
+	if not build_probe.is_empty():
+		get_tree().quit(ConstructionProbe.run(world, store, build_probe))
 
 
 # 界面模块：左侧为占位地图，右侧为可滚动管理面板，二者输入互不穿透。
@@ -96,10 +107,11 @@ func _build_ui() -> void:
 	scroll.add_child(panel)
 	_label("领地管理（占位）")
 	var building_actions: HBoxContainer = _row()
-	_button(building_actions, "住宅 2×2", _start_preview.bind(HOUSE))
-	_button(building_actions, "农场 4×4", _start_preview.bind(FARM))
+	_button(building_actions, "建住宅 2×2", _start_preview.bind(HOUSE))
+	_button(building_actions, "建农场 4×4", _start_preview.bind(FARM))
 	_button(building_actions, "取消", _cancel_preview)
-	placement_label = _label("请选择建筑以预览；蓝灰格为测试占用区")
+	placement_label = _label("选择建筑；左键确认会扣材料")
+	building_label = _label("")
 	date_label = _label("")
 	resource_label = _label("")
 	progress = ProgressBar.new()
@@ -116,7 +128,8 @@ func _build_ui() -> void:
 	bill_label = _label("")
 	status_label = _label("新世界已暂停；请选择速度后继续")
 	_label("1日120秒；每日粮食-15、税收+20。数值待平衡。")
-	_label("本阶段只预览，不建造、不扣费。蓝灰区为重叠测试占用。")
+	_label("中央为初始领主厅。左键确认建造；本阶段立即落地，尚无施工、生产与人口效果。")
+	_sync_building_view()
 	_refresh_map_info()
 
 
@@ -179,6 +192,8 @@ func _refresh() -> void:
 	progress.value = (world.tick % State.DAY_TICKS) + world.subsecond
 	bill_label.text = world.last_bill
 	pause_button.text = "继续（空格）" if world.paused else "暂停（空格）"
+	town_map.sync_resources(world.resources)
+	building_label.text = "已建建筑：%d座（含初始领主厅）" % world.buildings.size()
 
 
 # 暂停模块：冻结战略时钟但保持界面与保存操作可用。
@@ -195,7 +210,7 @@ func _set_speed(multiplier: int) -> void:
 
 # 保存模块：在完整逻辑步后捕获快照，写入成功才提示。
 func _save() -> void:
-	status_label.text = "保存成功：第%d日；已保存日期、资源与暂停状态" % world.current_day() if store.save_world(world) else "保存失败：" + store.error_message
+	status_label.text = "保存成功：第%d日；已保存日期、资源、建筑与暂停状态" % world.current_day() if store.save_world(world) else "保存失败：" + store.error_message
 
 
 # 读取模块：用校验成功的新世界替换旧引用，避免半读档和重复日结。
@@ -206,7 +221,9 @@ func _load() -> void:
 		return
 	world = candidate
 	clock = Clock.new(world)
-	status_label.text = "读取成功：已恢复日期、资源、倍速与暂停状态"
+	town_map.cancel_preview()
+	_sync_building_view()
+	status_label.text = "读取成功：已恢复日期、资源、建筑与暂停状态"
 	_refresh()
 
 
@@ -252,10 +269,12 @@ func _verify_export(mode: String) -> int:
 	return 0
 
 
-# 建筑选择模块：将只读定义交给地图，所有占地检查由独立校验器执行。
+# 建筑选择模块：为一次放置生成唯一命令，失败时可调整位置重试。
 func _start_preview(definition: Resource) -> void:
+	pending_build_command = Crypto.new().generate_random_bytes(16).hex_encode()
 	town_map.set_preview(definition)
-	status_label.text = "已进入" + str(definition.get("display_name")) + "预览；左键仅检查位置"
+	var cost: Dictionary = definition.get("cost")
+	status_label.text = "建造%s：木材%d、金币%d；左键确认扣费" % [definition.get("display_name"), cost.get("wood", 0), cost.get("gold", 0)]
 
 
 # 取消入口模块：提供按钮与鼠标右键一致的操作。
@@ -263,22 +282,40 @@ func _cancel_preview() -> void:
 	town_map.cancel_preview()
 
 
-# 预览提示模块：同时显示建筑类型和无效原因，红绿之外仍有文字反馈。
+# 预览提示模块：显示几何和费用校验原因，不凭预览结果直接扣费。
 func _on_placement_changed(result: Dictionary) -> void:
 	if placement_label == null:
 		return
 	if not result.get("active", false):
-		placement_label.text = "已取消预览；蓝灰格为测试占用区"
+		placement_label.text = "已退出建造模式，可普通选格"
 	else:
 		placement_label.text = str(town_map.active_definition.get("display_name")) + "：" + str(result.get("reason", ""))
 
 
-# 点击反馈模块：合法位置也仅提示，不改变资源、占用或存档。
-func _on_placement_clicked(result: Dictionary) -> void:
-	status_label.text = "检查通过：仅预览，未建造、未扣材料" if result.get("ok", false) else "不可放置：" + str(result.get("reason", ""))
+# 确认建造模块：重新检查权威世界，成功后同步视图并退出单次放置模式。
+func _on_placement_clicked(_result: Dictionary) -> void:
+	if town_map.active_definition == null:
+		return
+	var definition: Resource = town_map.active_definition
+	var result: Dictionary = Construction.execute(world, definition.get("id"), town_map.hovered, pending_build_command)
+	if not result["ok"]:
+		status_label.text = "建造失败：" + str(result.get("reason", ""))
+		return
+	_sync_building_view()
+	town_map.cancel_preview()
+	_refresh()
+	var cost: Dictionary = result["cost"]
+	status_label.text = "建造成功：%s；木材-%d，金币-%d（请保存战略进度）" % [definition.get("display_name"), cost.get("wood", 0), cost.get("gold", 0)]
 
 
-# 取消提示模块：不覆盖战略数据，只更新操作提示。
+# 取消提示模块：清除尚未提交的命令，不修改已建实例或资源。
 func _on_placement_cancelled() -> void:
+	pending_build_command = ""
 	if status_label != null:
-		status_label.text = "已取消建筑预览，恢复普通选格"
+		status_label.text = "已退出建造模式，恢复普通选格"
+
+
+# 视图同步模块：建造或读档后，从权威数据重建建筑占用与费用提示。
+func _sync_building_view() -> void:
+	town_map.sync_buildings(world.buildings)
+	town_map.sync_resources(world.resources)

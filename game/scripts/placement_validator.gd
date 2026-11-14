@@ -25,5 +25,5 @@ static func check(anchor: Vector2i, size: Vector2i, occupied: Dictionary) -> Dic
 			return {"ok": false, "code": "OUT_OF_BOUNDS", "reason": "占地越界：建筑必须完整位于地图内", "cells": cells}
 	for cell: Vector2i in cells:
 		if occupied.has(cell):
-			return {"ok": false, "code": "OCCUPIED", "reason": "占地重叠：(%d,%d)已被测试占用区占用" % [cell.x, cell.y], "cells": cells}
+			return {"ok": false, "code": "OCCUPIED", "reason": "占地重叠：(%d,%d)已被建筑占用" % [cell.x, cell.y], "cells": cells}
 	return {"ok": true, "code": "OK", "reason": "位置合法（仅预览，未建造、未扣费）", "cells": cells}

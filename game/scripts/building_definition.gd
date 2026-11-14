@@ -6,3 +6,4 @@ extends Resource
 @export var display_name: String = ""
 @export var footprint: Vector2i = Vector2i.ONE
 @export var cost: Dictionary = {}
+@export var buildable: bool = true

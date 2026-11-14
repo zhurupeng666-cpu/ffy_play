@@ -25,14 +25,14 @@ func open_store(path_override: String = "") -> bool:
 	if not database.open_db() or not _query("PRAGMA user_version;"):
 		close_store()
 		return false
-	if int(database.query_result[0]["user_version"]) not in [0, 1]:
+	if int(database.query_result[0]["user_version"]) not in [0, 1, 2]:
 		error_message = "不支持的数据库版本"
 		close_store()
 		return false
 	if not _query("BEGIN IMMEDIATE;"):
 		close_store()
 		return false
-	if not _query("CREATE TABLE IF NOT EXISTS world_snapshot(slot INTEGER PRIMARY KEY CHECK(slot=1), payload TEXT NOT NULL);") or not _query("PRAGMA user_version=1;") or not _query("COMMIT;"):
+	if not _query("CREATE TABLE IF NOT EXISTS world_snapshot(slot INTEGER PRIMARY KEY CHECK(slot=1), payload TEXT NOT NULL);") or not _query("CREATE TABLE IF NOT EXISTS snapshot_backup(id INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT NOT NULL);") or not _query("PRAGMA user_version=2;") or not _query("COMMIT;"):
 		database.query("ROLLBACK;")
 		close_store()
 		return false
@@ -49,6 +49,10 @@ func save_world(world: RefCounted) -> bool:
 		error_message = "当前状态未通过存档校验"
 		return false
 	if not _query("BEGIN IMMEDIATE;"):
+		return false
+	# 备份模块：同一事务中保留最近三个旧快照，迁移后第一次保存仍可找回旧内容。
+	if not _query("INSERT INTO snapshot_backup(payload) SELECT payload FROM world_snapshot WHERE slot=1;") or not _query("DELETE FROM snapshot_backup WHERE id NOT IN (SELECT id FROM snapshot_backup ORDER BY id DESC LIMIT 3);"):
+		database.query("ROLLBACK;")
 		return false
 	if not database.query_with_bindings("INSERT INTO world_snapshot(slot,payload) VALUES(1,?) ON CONFLICT(slot) DO UPDATE SET payload=excluded.payload;", [JSON.stringify(snapshot)]):
 		error_message = database.error_message

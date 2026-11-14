@@ -38,7 +38,8 @@
         "Godot: strategic test",
         "Godot: world UI test",
         "Godot: map test",
-        "Godot: placement test"
+        "Godot: placement test",
+        "Godot: construction test"
       ],
       "problemMatcher": [],
       "group": "test"
@@ -107,6 +108,20 @@
         "${workspaceFolder}",
         "--script",
         "res://tests/placement_test.gd"
+      ],
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "Godot: construction test",
+      "type": "process",
+      "command": "${config:godotTools.editorPath.godot4}",
+      "args": [
+        "--headless",
+        "--path",
+        "${workspaceFolder}",
+        "--script",
+        "res://tests/construction_test.gd"
       ],
       "problemMatcher": [],
       "group": "test"

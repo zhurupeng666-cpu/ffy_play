@@ -8,6 +8,8 @@ signal placement_changed(result: Dictionary)
 signal placement_clicked(result: Dictionary)
 signal placement_cancelled
 
+const Catalog = preload("res://scripts/building_catalog.gd")
+const Construction = preload("res://scripts/construction_service.gd")
 const Placement = preload("res://scripts/placement_validator.gd")
 const Grid = preload("res://scripts/isometric_grid.gd")
 
@@ -18,17 +20,18 @@ var hovered: Vector2i = Grid.INVALID
 var selected: Vector2i = Grid.INVALID
 var dragging: bool = false
 
-# 预览模块：测试占用区只用于重叠验证，不属于真实建筑或世界存档。
+# 建筑视图模块：占用来自世界实例，视图只读并将确认请求交回控制器。
 var occupied_cells: Dictionary = {}
+var placed_buildings: Array = []
+var available_resources: Dictionary = {}
+var economy_ready: bool = false
 var active_definition: Resource
 var preview_result: Dictionary = {}
 
 
 # 初始化模块：只捕获地图内部鼠标输入，不影响旁侧管理按钮。
 func _ready() -> void:
-	for y: int in range(6, 10):
-		for x: int in range(6, 10):
-			occupied_cells[Vector2i(x, y)] = true
+
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	clip_contents = true
 	mouse_default_cursor_shape = Control.CURSOR_CROSS
@@ -72,9 +75,10 @@ func _draw() -> void:
 			draw_colored_polygon(points, shade)
 			points.append(points[0])
 			draw_polyline(points, Color(0.40, 0.42, 0.43), 1.0, true)
-	# 占用显示模块：蓝灰区域明确用于本阶段的重叠测试。
+	# 占用显示模块：真实建筑的范围由实例推导，并按建筑类型绘制占位块。
 	for cell: Vector2i in occupied_cells:
 		draw_colored_polygon(_diamond(cell), Color(0.30, 0.38, 0.48, 0.9))
+	_draw_buildings()
 	if active_definition != null and Grid.contains(hovered):
 		var color: Color = Color(0.25, 0.85, 0.4, 0.65) if preview_result.get("ok", false) else Color(0.95, 0.22, 0.2, 0.7)
 		for cell: Vector2i in preview_result.get("cells", []):
@@ -193,5 +197,52 @@ func _update_preview() -> void:
 		preview_result = {"ok": false, "code": "NO_ANCHOR", "reason": "请将鼠标移到地图内", "cells": []}
 	else:
 		preview_result = Placement.check(hovered, active_definition.get("footprint"), occupied_cells)
+	if preview_result.get("ok", false) and economy_ready:
+		var affordability: Dictionary = Construction.check_cost(active_definition.get("cost"), available_resources)
+		if not affordability["ok"]:
+			preview_result["ok"] = false
+			preview_result["code"] = affordability["code"]
+			preview_result["reason"] = affordability["reason"]
+		else:
+			preview_result["reason"] = "可以建造：左键确认并扣费"
 	preview_result["active"] = true
 	placement_changed.emit(preview_result)
+
+
+# 实例同步模块：从世界传入只读副本，重新推导格表以避免视图与存档各存一份占用。
+func sync_buildings(records: Array) -> void:
+	placed_buildings = records.duplicate(true)
+	occupied_cells.clear()
+	for record: Dictionary in placed_buildings:
+		var definition: Resource = Catalog.find(record["def_id"])
+		var anchor: Vector2i = Vector2i(int(record["cell"][0]), int(record["cell"][1]))
+		for cell: Vector2i in Placement.footprint_cells(anchor, definition.get("footprint")):
+			occupied_cells[cell] = record["id"]
+	_update_preview()
+	queue_redraw()
+
+
+# 库存同步模块：只在资源变化时刷新可负担提示，不修改世界库存。
+func sync_resources(resources: Dictionary) -> void:
+	if economy_ready and resources == available_resources:
+		return
+	economy_ready = true
+	available_resources = resources.duplicate()
+	_update_preview()
+	queue_redraw()
+
+
+# 建筑绘制模块：用色块和名称表示真实实例，暂不确定正式像素美术。
+func _draw_buildings() -> void:
+	for record: Dictionary in placed_buildings:
+		var definition: Resource = Catalog.find(record["def_id"])
+		var anchor: Vector2i = Vector2i(int(record["cell"][0]), int(record["cell"][1]))
+		var footprint: Vector2i = definition.get("footprint")
+		var colors: Dictionary = {"b_hall": Color(0.30, 0.38, 0.48), "b_house": Color(0.55, 0.43, 0.29), "b_farm": Color(0.30, 0.47, 0.31)}
+		for cell: Vector2i in Placement.footprint_cells(anchor, footprint):
+			draw_colored_polygon(_diamond(cell), colors[record["def_id"]])
+		var center: Vector2 = (Grid.cell_to_world(anchor) + Grid.cell_to_world(anchor + footprint - Vector2i.ONE)) * 0.5
+		var label: String = definition.get("display_name")
+		var font: Font = ThemeDB.fallback_font
+		var text_size: Vector2 = font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14)
+		draw_string(font, world_to_screen(center) + Vector2(-text_size.x * 0.5, 5), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color.WHITE)

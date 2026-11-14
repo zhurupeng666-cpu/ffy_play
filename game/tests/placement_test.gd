@@ -1,4 +1,4 @@
-## 文件用途：验证建筑多格占地、红绿预览和取消交互，确保不创建建筑也不扣资源。
+## 文件用途：验证建筑多格占地、红绿预览和取消交互，确保独立预览不写世界，确认入口只扣一次费用。
 extends SceneTree
 
 const Grid = preload("res://scripts/isometric_grid.gd")
@@ -39,6 +39,10 @@ func _run() -> void:
 	var map: Control = Map.new()
 	map.size = Vector2(600, 400)
 	root.add_child(map)
+	# 几何单元测试显式注入占用样本，运行游戏不再生成测试占用区。
+	for y: int in range(6, 10):
+		for x: int in range(6, 10):
+			map.occupied_cells[Vector2i(x, y)] = true
 	map.set_preview(House)
 	var click: InputEventMouseButton = InputEventMouseButton.new()
 	click.button_index = MOUSE_BUTTON_LEFT
@@ -46,6 +50,10 @@ func _run() -> void:
 	click.position = map.world_to_screen(Grid.cell_to_world(Vector2i(2, 2)))
 	map._gui_input(click)
 	_check(map.preview_result.get("ok", false) and map.preview_result["cells"].size() == 4, "住宅预览范围或结果错误")
+	map.sync_resources({"wood": 0, "gold": 999})
+	_check(map.preview_result.get("code") == "INSUFFICIENT", "材料不足仍显示可建造")
+	map.sync_resources({"wood": 1000, "gold": 1000})
+	_check(map.preview_result.get("ok", false), "补足材料后预览未恢复")
 	map.set_preview(Farm)
 	_check(map.preview_result["cells"].size() == 16, "切换农场后占地未更新")
 	map.pan_offset += Vector2(50, -30)
@@ -65,7 +73,7 @@ func _run() -> void:
 	map._gui_input(click)
 	_check(map.active_definition == null, "右键未取消预览")
 	map.free()
-	# 集成模块：合法与非法点击后世界快照都必须保持不变，Esc只取消当前模式。
+	# 集成模块：合法确认只提交一次，非法位置不改变世界，Esc只取消当前模式。
 	var scene: PackedScene = load("res://scenes/world_prototype.tscn")
 	var main: Control = scene.instantiate()
 	var path: String = ProjectSettings.globalize_path("res://local_data/tests/placement_%s.db" % Time.get_ticks_usec())
@@ -76,11 +84,15 @@ func _run() -> void:
 	click.button_index = MOUSE_BUTTON_LEFT
 	click.position = main.town_map.world_to_screen(Grid.cell_to_world(Vector2i(2, 2)))
 	main.town_map._gui_input(click)
-	_check(main.status_label.text.contains("检查通过"), "合法点击缺少反馈")
+	_check(main.status_label.text.contains("建造成功") and main.world.buildings.size() == 2 and main.world.resources["wood"] == 100 and main.world.resources["gold"] == 290, "确认建造未落地或扣费错误")
+	var committed: Dictionary = main.world.snapshot()
+	main.town_map._gui_input(click)
+	_check(main.world.snapshot() == committed, "成功后退出模式未防止再次扣费")
+	main._start_preview(House)
 	click.position = main.town_map.world_to_screen(Grid.cell_to_world(Vector2i(7, 7)))
 	main.town_map._gui_input(click)
-	_check(main.status_label.text.contains("不可放置"), "重叠点击缺少原因")
-	_check(main.world.snapshot() == world_before, "预览改变了资源或日期")
+	_check(main.status_label.text.contains("建造失败"), "重叠点击缺少原因")
+	_check(main.world.snapshot() == committed and world_before["tick"] == main.world.tick, "失败建造改变了资源或日期")
 	var escape: InputEventKey = InputEventKey.new()
 	escape.keycode = KEY_ESCAPE
 	escape.pressed = true
@@ -89,5 +101,5 @@ func _run() -> void:
 	main.free()
 	DirAccess.remove_absolute(path)
 	if not failed:
-		print("PLACEMENT_PASS: resources, footprint, bounds, overlap, pan, zoom, cancel, no mutation")
+		print("PLACEMENT_PASS: resources, footprint, bounds, overlap, pan, zoom, cancel, single commit")
 	quit(1 if failed else 0)

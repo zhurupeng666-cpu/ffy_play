@@ -10,9 +10,9 @@ foreach ($variant in @('debug', 'release')) {
     if (-not (Test-Path -LiteralPath $executable)) { throw "缺少构建：$executable" }
     $testDirectory = Join-Path $directory 'local_data\tests'
     New-Item -ItemType Directory -Path $testDirectory -Force | Out-Null
-    foreach ($check in @('export=write', 'export=read', 'world=write', 'world=read')) {
+    foreach ($check in @('export=write', 'export=read', 'world=write', 'world=read', 'build=write', 'build=read')) {
         $kind, $mode = $check.Split('=')
-        $marker = if ($kind -eq 'world') { 'EXPORT_WORLD_PASS' } else { 'EXPORT_SQLITE_PASS' }
+        $marker = if ($kind -eq 'world') { 'EXPORT_WORLD_PASS' } elseif ($kind -eq 'build') { 'EXPORT_BUILD_PASS' } else { 'EXPORT_SQLITE_PASS' }
         $out = Join-Path $testDirectory "$kind-$mode.stdout.log"
         $err = Join-Path $testDirectory "$kind-$mode.stderr.log"
         $process = Start-Process -FilePath $executable -ArgumentList @('--headless','--',"--verify-$kind=$mode") -WindowStyle Hidden -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
