@@ -6,7 +6,7 @@
 
 - 引擎：Godot 4.7.2 stable 标准版，Windows x86_64。
 - 实际版本输出：4.7.2.stable.official.ed1daf0bf。
-- 安装目录：D:\playproject\tools\Godot\4.7.2-stable。
+- 安装目录：E:\playproject\tools\Godot\4.7.2-stable。
 - 图形程序：Godot_v4.7.2-stable_win64.exe。
 - 控制台程序：Godot_v4.7.2-stable_win64_console.exe。
 - 使用 _sc_ 标记启用便携模式，编辑器数据保存在引擎目录下的 editor_data。

@@ -11,7 +11,7 @@ Windows PC 单人 2D 等距像素经营战争游戏。
 - 运行状态：内存中的统一 WorldState。
 - 本地存档：SQLite，不使用 MySQL 服务。
 - 编辑器：VS Code 配合 Godot 编辑器。
-- 项目目录：D:\playproject\ffy_play。
+- 项目目录：E:\playproject\ffy_play。
 
 技术决策及下一步验收见 docs/技术选型与环境准备.md。
 历史设计见 docs/archive；历史文档中的 JSON 主存档方案已被 SQLite 方案替代。
