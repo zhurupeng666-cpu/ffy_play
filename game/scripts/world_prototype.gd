@@ -1,6 +1,8 @@
 ## 文件用途：组织等距地图与战略管理界面，通过独立模块操作视图、世界和存档。
 extends Control
 
+const LegionProbe = preload("res://scripts/legion_export_probe.gd")
+const Legions = preload("res://scripts/legion_service.gd")
 const DisbandProbe = preload("res://scripts/army_disband_export_probe.gd")
 const ArmyDisband = preload("res://scripts/army_disband_service.gd")
 const ArmyProbe = preload("res://scripts/army_export_probe.gd")
@@ -80,6 +82,23 @@ var army_disband_offer: Dictionary = {}
 var army_disband_command: String = ""
 var army_disband_was_paused: bool = true
 var army_picker_signature: String = ""
+var legion_toggle: Button
+var legion_body: VBoxContainer
+var legion_picker: OptionButton
+var legion_troop_picker: OptionButton
+var legion_people: SpinBox
+var legion_detail: Label
+var legion_available: Label
+var legion_create: Button
+var legion_apply: Button
+var legion_remove: Button
+var legion_close: Button
+var selected_legion_id: String = ""
+var legion_signature: String = ""
+var legion_updating: bool = false
+var legion_dialog: ConfirmationDialog
+var legion_close_offer: Dictionary = {}
+var legion_was_paused: bool = true
 var removal_dialog: ConfirmationDialog
 var removal_offer: Dictionary = {}
 var removal_command: String = ""
@@ -103,6 +122,7 @@ func _ready() -> void:
 	var civic_probe: String = ""
 	var army_probe: String = ""
 	var disband_probe: String = ""
+	var legion_probe: String = ""
 	if OS.has_feature("portable_test"):
 		for argument: String in OS.get_cmdline_user_args():
 			if argument in ["--verify-world=write", "--verify-world=read"]:
@@ -125,6 +145,8 @@ func _ready() -> void:
 				army_probe = argument.get_slice("=", 1)
 			elif argument in ["--verify-disband=write", "--verify-disband=read"]:
 				disband_probe = argument.get_slice("=", 1)
+			elif argument in ["--verify-legion=write", "--verify-legion=read"]:
+				legion_probe = argument.get_slice("=", 1)
 		if not world_probe.is_empty():
 			store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/world_export.db")
 	if not build_probe.is_empty():
@@ -145,9 +167,11 @@ func _ready() -> void:
 		store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/army_export.db")
 	if not disband_probe.is_empty():
 		store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/disband_export.db")
+	if not legion_probe.is_empty():
+		store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/legion_export.db")
 	if not store.open_store(store_path_override):
 		status_label.text = "存档不可用：" + store.error_message
-		if not world_probe.is_empty() or not build_probe.is_empty() or not food_probe.is_empty() or not storage_probe.is_empty() or not material_probe.is_empty() or not inspection_probe.is_empty() or not removal_probe.is_empty() or not civic_probe.is_empty() or not army_probe.is_empty() or not disband_probe.is_empty():
+		if not world_probe.is_empty() or not build_probe.is_empty() or not food_probe.is_empty() or not storage_probe.is_empty() or not material_probe.is_empty() or not inspection_probe.is_empty() or not removal_probe.is_empty() or not civic_probe.is_empty() or not army_probe.is_empty() or not disband_probe.is_empty() or not legion_probe.is_empty():
 			get_tree().quit(1)
 			return
 	_refresh()
@@ -171,6 +195,8 @@ func _ready() -> void:
 		get_tree().quit(ArmyProbe.run(self, army_probe))
 	if not disband_probe.is_empty():
 		get_tree().quit(DisbandProbe.run(self, disband_probe))
+	if not legion_probe.is_empty():
+		get_tree().quit(LegionProbe.run(self, legion_probe))
 
 
 # 界面模块：左侧为占位地图，右侧为可滚动管理面板，二者输入互不穿透。
@@ -238,7 +264,8 @@ func _build_ui() -> void:
 	_button(saves, "保存战略进度", _save)
 	_button(saves, "读取战略进度", _load)
 	_build_inspection_card()
-	army_label = _label("")
+	army_label = _label("" )
+	_build_legion_panel()
 	bill_label = _label("")
 	food_detail_button = _button(_row(), "展开粮食收支", _toggle_food_details)
 	food_detail_label = _label("")
@@ -334,6 +361,7 @@ func _process(delta: float) -> void:
 
 # 刷新模块：日期、库存与账单全部来自同一份世界数据。
 func _refresh() -> void:
+	_refresh_legions()
 	_refresh_army()
 	_refresh_civic()
 	_refresh_inspection()
@@ -384,6 +412,9 @@ func _save() -> void:
 
 # 读取模块：用校验成功的新世界替换旧引用，避免半读档和重复日结。
 func _load() -> void:
+	_cancel_legion_close()
+	selected_legion_id = ""
+	legion_signature = ""
 	_cancel_army_disband()
 	_cancel_removal()
 	var candidate: RefCounted = store.load_world()
@@ -857,7 +888,7 @@ func _request_army_disband() -> void:
 	army_disband_offer = ArmyDisband.quote(world, id)
 	army_disband_command = Crypto.new().generate_random_bytes(16).hex_encode()
 	army_disband_dialog.title = "确认" + str(offer["action"])
-	army_disband_dialog.dialog_text = "%s %s（%d人）？\n返回空闲劳动力%d人。\n退金币%d、木材%d；上限损失金币%d、木材%d。\n本批次已累计军粮%.2f、军饷%.2f保留到日结。\n执行后不再训练或产生新的军需；批次不能恢复。\n窗口期间时间暂停，执行后请手动保存。" % [offer["action"], id.trim_prefix("troop_"), troop["count"], offer["return_workers"], offer["refund"]["gold"], offer["refund"]["wood"], offer["overflow"]["gold"], offer["overflow"]["wood"], int(offer["ration_credit"]) / 120.0, int(offer["wage_credit"]) / 120.0]
+	army_disband_dialog.dialog_text = "%s %s（%d人）？\n返回空闲劳动力%d人；同步移出军团编制%d人。\n退金币%d、木材%d；上限损失金币%d、木材%d。\n本批次已累计军粮%.2f、军饷%.2f保留到日结。\n执行后不再训练或产生新的军需；批次不能恢复。\n窗口期间时间暂停，执行后请手动保存。" % [offer["action"], id.trim_prefix("troop_"), troop["count"], offer["return_workers"], offer["legion_people"], offer["refund"]["gold"], offer["refund"]["wood"], offer["overflow"]["gold"], offer["overflow"]["wood"], int(offer["ration_credit"]) / 120.0, int(offer["wage_credit"]) / 120.0]
 	army_disband_dialog.popup_centered(Vector2i(600, 280))
 	_refresh()
 
@@ -880,4 +911,209 @@ func _cancel_army_disband() -> void:
 	world.paused = army_disband_was_paused
 	army_disband_offer = {}
 	army_disband_command = ""
+	_refresh()
+
+
+# 编制面板模块：默认折叠，人数设置为绝对编内人数，避免连续点击重复添加。
+func _build_legion_panel() -> void:
+	legion_toggle = _button(_row(), "军团管理", _toggle_legions)
+	legion_body = VBoxContainer.new()
+	panel.add_child(legion_body)
+	legion_body.visible = false
+	var actions: HBoxContainer = HBoxContainer.new()
+	legion_body.add_child(actions)
+	legion_create = _button(actions, "新建军团", _create_legion)
+	legion_close = _button(actions, "撤销军团编制", _request_legion_close)
+	legion_picker = OptionButton.new()
+	legion_body.add_child(legion_picker)
+	legion_picker.item_selected.connect(_on_legion_selected)
+	legion_detail = Label.new()
+	legion_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	legion_body.add_child(legion_detail)
+	legion_troop_picker = OptionButton.new()
+	legion_body.add_child(legion_troop_picker)
+	legion_troop_picker.item_selected.connect(func(_index: int) -> void: _update_legion_amount())
+	legion_available = Label.new()
+	legion_available.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	legion_body.add_child(legion_available)
+	legion_people = SpinBox.new()
+	legion_people.min_value = 0
+	legion_people.step = 1
+	legion_body.add_child(legion_people)
+	legion_people.value_changed.connect(func(_value: float) -> void: _update_legion_buttons())
+	var edits: HBoxContainer = HBoxContainer.new()
+	legion_body.add_child(edits)
+	legion_apply = _button(edits, "保存本团人数", _apply_legion_count)
+	legion_remove = _button(edits, "移出本团", _remove_legion_count)
+	legion_dialog = ConfirmationDialog.new()
+	legion_dialog.exclusive = true
+	legion_dialog.get_ok_button().text = "撤销编制"
+	legion_dialog.get_cancel_button().text = "保留军团"
+	legion_dialog.confirmed.connect(_confirm_legion_close)
+	legion_dialog.canceled.connect(_cancel_legion_close)
+	add_child(legion_dialog)
+
+
+# 展开模块：只控制军团管理的界面可见性，不推进战略时间。
+func _toggle_legions() -> void:
+	legion_body.visible = not legion_body.visible
+
+
+# 编制刷新模块：成员变化时保留军团和部队ID选择，服役信用变化不打断正在输入的人数。
+func _refresh_legions() -> void:
+	if legion_body == null:
+		return
+	var active: Array = []
+	var signature: String = JSON.stringify(world.legions)
+	for legion: Dictionary in world.legions:
+		if legion["state"] == "active":
+			active.append(legion)
+	for troop: Dictionary in world.troops:
+		signature += str(troop["id"]) + str(troop["count"]) + str(troop["state"])
+	legion_toggle.text = "军团管理（%d个）" % active.size()
+	legion_create.disabled = active.size() >= int(Legions.SETTINGS.active_limit) or world.legions.size() >= int(Legions.SETTINGS.history_limit)
+	if signature != legion_signature:
+		var source_id: String = str(legion_troop_picker.get_item_metadata(legion_troop_picker.selected)) if legion_troop_picker.selected >= 0 else ""
+		legion_updating = true
+		legion_picker.clear()
+		for legion: Dictionary in active:
+			legion_picker.add_item("%s · %d/%d人" % [legion["name"], Legions.people(legion), Legions.SETTINGS.people_capacity])
+			var index: int = legion_picker.item_count - 1
+			legion_picker.set_item_metadata(index, legion["id"])
+			if legion["id"] == selected_legion_id:
+				legion_picker.select(index)
+		if active.is_empty():
+			legion_picker.add_item("先创建军团")
+			legion_picker.set_item_metadata(0, "")
+		legion_picker.disabled = active.is_empty()
+		selected_legion_id = str(legion_picker.get_item_metadata(legion_picker.selected))
+		legion_troop_picker.clear()
+		for troop: Dictionary in world.troops:
+			if troop["state"] == "ready":
+				var own: int = Legions.assigned(world, troop["id"], selected_legion_id) if not selected_legion_id.is_empty() else 0
+				var free: int = int(troop["count"]) - Legions.assigned(world, troop["id"])
+				legion_troop_picker.add_item("%s · 本团%d · 未编入%d" % [str(troop["id"]).trim_prefix("troop_"), own, free])
+				var index: int = legion_troop_picker.item_count - 1
+				legion_troop_picker.set_item_metadata(index, troop["id"])
+				if troop["id"] == source_id:
+					legion_troop_picker.select(index)
+		if legion_troop_picker.item_count == 0:
+			legion_troop_picker.add_item("没有现役部队，训练完成后可编入")
+			legion_troop_picker.set_item_metadata(0, "")
+		legion_signature = signature
+		legion_updating = false
+		_update_legion_amount()
+	var selected: Dictionary = Legions.find(world, selected_legion_id)
+	legion_close.disabled = selected.is_empty()
+	if selected.is_empty():
+		legion_detail.text = "军团是免费编制；先新建，再按人数分配现役部队"
+	else:
+		var count: int = Legions.people(selected)
+		legion_detail.text = "%s：步兵%d人，%d个来源批次\n编内每日额外军粮%d、军饷%d（已包含在全军维护）\n撤销编制后士兵仍现役；移出不会返回空闲劳动力" % [selected["name"], count, selected["members"].size(), count * int(Army.UNIT.food_per_day), count * int(Army.UNIT.wage_per_day)]
+	_update_legion_buttons()
+
+
+# 军团选择模块：只切换操作对象，重新载入该团当前人数而不修改成员。
+func _on_legion_selected(index: int) -> void:
+	selected_legion_id = str(legion_picker.get_item_metadata(index))
+	legion_signature = ""
+	_refresh_legions()
+
+
+# 配额输入模块：上限同时受部队未分配余额和军团剩余容量约束，0为移出。
+func _update_legion_amount() -> void:
+	if legion_updating:
+		return
+	legion_updating = true
+	var legion: Dictionary = Legions.find(world, selected_legion_id)
+	var id: String = str(legion_troop_picker.get_item_metadata(legion_troop_picker.selected)) if legion_troop_picker.selected >= 0 else ""
+	var source: Dictionary = Legions.troop(world, id)
+	var current: int = Legions.assigned(world, id, selected_legion_id) if not legion.is_empty() else 0
+	var maximum: int = 0
+	if not legion.is_empty() and not source.is_empty():
+		maximum = mini(int(source["count"]) - Legions.assigned(world, id) + current, int(Legions.SETTINGS.people_capacity) - Legions.people(legion) + current)
+	legion_people.max_value = maximum
+	legion_people.value = current
+	legion_people.editable = not legion.is_empty() and not source.is_empty()
+	legion_available.text = "设置该批次在本军团的人数：当前%d，可设0至%d（0为移出）" % [current, maximum]
+	legion_updating = false
+	_update_legion_buttons()
+
+
+# 按钮模块：只读禁用提示，实际人数约束仍由服务层执行。
+func _update_legion_buttons() -> void:
+	if legion_updating or legion_people == null:
+		return
+	var id: String = str(legion_troop_picker.get_item_metadata(legion_troop_picker.selected)) if legion_troop_picker.selected >= 0 else ""
+	var usable: bool = not selected_legion_id.is_empty() and not id.is_empty()
+	var current: int = Legions.assigned(world, id, selected_legion_id) if usable else 0
+	legion_apply.disabled = not usable or int(legion_people.value) == current
+	legion_remove.disabled = not usable or current == 0
+
+
+# 创建入口模块：创建后选择新军团，ID只增不减，操作不消耗资源。
+func _create_legion() -> void:
+	var result: Dictionary = Legions.create(world, Crypto.new().generate_random_bytes(16).hex_encode())
+	if result["ok"]:
+		selected_legion_id = result["legion_id"]
+		legion_body.visible = true
+		status_label.text = "军团编制已创建，可按人数分配现役部队；请保存"
+	else:
+		status_label.text = result["reason"]
+	_refresh()
+
+
+# 设置入口模块：提交本团绝对人数，重复保存同一值不重复编入。
+func _apply_legion_count() -> void:
+	if legion_troop_picker.selected < 0:
+		return
+	var id: String = str(legion_troop_picker.get_item_metadata(legion_troop_picker.selected))
+	var result: Dictionary = Legions.set_count(world, selected_legion_id, id, int(legion_people.value))
+	status_label.text = "本团人数已保存；人口和军需仍按原部队计算，请保存战略进度" if result["ok"] else str(result["reason"])
+	_refresh()
+
+
+# 移出入口模块：只释放该军团的配额，士兵仍服役并继续产生维护。
+func _remove_legion_count() -> void:
+	if legion_troop_picker.selected < 0:
+		return
+	var id: String = str(legion_troop_picker.get_item_metadata(legion_troop_picker.selected))
+	var result: Dictionary = Legions.set_count(world, selected_legion_id, id, 0)
+	status_label.text = "已移出本团，部队仍现役且维护照常；请保存" if result["ok"] else str(result["reason"])
+	_refresh()
+
+
+# 撤销预览模块：明确撤销编制和解散部队的区别，冻结世界并捕获目标签名。
+func _request_legion_close() -> void:
+	if not legion_close_offer.is_empty() or not army_disband_offer.is_empty() or not removal_offer.is_empty():
+		return
+	var legion: Dictionary = Legions.find(world, selected_legion_id)
+	if legion.is_empty():
+		return
+	legion_was_paused = world.paused
+	world.paused = true
+	legion_close_offer = {"id": selected_legion_id, "signature": world.snapshot()}
+	legion_dialog.title = "撤销军团编制"
+	legion_dialog.dialog_text = "撤销%s的编制？\n编内%d人将变为未编入军团，仍保持现役。\n城镇空闲人口不增加，招募费不退，军需维护照常。\n部队和军营归属保留；执行后请手动保存。" % [legion["name"], Legions.people(legion)]
+	legion_dialog.popup_centered(Vector2i(600, 240))
+	_refresh()
+
+
+# 撤销确认模块：重新校验目标与快照，关闭编制后保留原部队和维护状态。
+func _confirm_legion_close() -> void:
+	if legion_close_offer.is_empty():
+		return
+	var result: Dictionary = Legions.dissolve(world, legion_close_offer["id"], legion_close_offer["signature"])
+	_cancel_legion_close()
+	status_label.text = "军团编制已撤销，原部队仍现役；请保存" if result["ok"] else str(result["reason"])
+	_refresh()
+
+
+# 保留编制模块：关闭弹窗还原原暂停状态，不改变军团或兵员分配。
+func _cancel_legion_close() -> void:
+	if legion_close_offer.is_empty():
+		return
+	legion_dialog.hide()
+	world.paused = legion_was_paused
+	legion_close_offer = {}
 	_refresh()

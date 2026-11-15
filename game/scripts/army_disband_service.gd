@@ -1,5 +1,6 @@
 ## 文件用途：原子取消训练或解散整批部队，按实付费用退款并保留未结军需与幂等历史。
 extends RefCounted
+const Legions = preload("res://scripts/legion_service.gd")
 const LIMIT: int = 1000000000
 
 # 查询模块：仅活动批次可操作，历史记录不再占人口或军营编额。
@@ -30,7 +31,7 @@ static func quote(world: RefCounted, id: String) -> Dictionary:
 		var accepted: int = mini(int(refund[key]), LIMIT - int(world.resources[key]))
 		overflow[key] = int(refund[key]) - accepted
 		refund[key] = accepted
-	return {"ok": true, "troop_id": id, "action": "取消训练" if troop["state"] == "training" else "解散部队", "return_workers": int(troop["count"]) if troop["source"] == "town" else 0, "refund": refund, "overflow": overflow, "ration_credit": troop["ration_credit"], "wage_credit": troop["wage_credit"], "signature": world.snapshot()}
+	return {"ok": true, "troop_id": id, "action": "取消训练" if troop["state"] == "training" else "解散部队", "return_workers": int(troop["count"]) if troop["source"] == "town" else 0, "refund": refund, "overflow": overflow, "ration_credit": troop["ration_credit"], "wage_credit": troop["wage_credit"], "legion_people": Legions.assigned(world, id), "signature": world.snapshot()}
 
 # 执行模块：退款、返还兵源、释放编额与转移军需同一逻辑步生效，重试不重复处理。
 static func execute(world: RefCounted, id: String, command: String, expected: Dictionary = {}) -> Dictionary:
@@ -60,6 +61,7 @@ static func execute(world: RefCounted, id: String, command: String, expected: Di
 		resources[key] += int(offer["refund"][key])
 	var receipts: Dictionary = world.disband_commands.duplicate(true)
 	receipts[command] = {"troop_id": id, "tick": world.tick, "refund": offer["refund"].duplicate(), "overflow": offer["overflow"].duplicate()}
+	world.legions = Legions.without_troop(world.legions, id)
 	world.troops = active
 	world.retired_troops = retired
 	world.retired_army_cost = pending

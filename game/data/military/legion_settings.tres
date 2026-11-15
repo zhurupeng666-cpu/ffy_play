@@ -1,0 +1,9 @@
+[gd_resource type="Resource" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/legion_settings.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+people_capacity = 20
+active_limit = 8
+history_limit = 512
