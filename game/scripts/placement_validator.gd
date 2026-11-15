@@ -27,3 +27,15 @@ static func check(anchor: Vector2i, size: Vector2i, occupied: Dictionary) -> Dic
 		if occupied.has(cell):
 			return {"ok": false, "code": "OCCUPIED", "reason": "占地重叠：(%d,%d)已被建筑占用" % [cell.x, cell.y], "cells": cells}
 	return {"ok": true, "code": "OK", "reason": "位置合法（仅预览，未建造、未扣费）", "cells": cells}
+
+
+# 建筑校验模块：几何、占用和地形共用同一入口，预览与确认不会出现规则分歧。
+static func check_building(anchor: Vector2i, definition: Resource, occupied: Dictionary) -> Dictionary:
+	var result: Dictionary = check(anchor, definition.get("footprint"), occupied)
+	if result["ok"]:
+		var terrain: Dictionary = preload("res://scripts/town_terrain.gd").check(result["cells"], definition.get("requires_water"))
+		if not terrain["ok"]:
+			result["ok"] = false
+			result["code"] = terrain["code"]
+			result["reason"] = terrain["reason"]
+	return result

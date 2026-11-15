@@ -1,0 +1,14 @@
+[gd_resource type="Resource" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/building_definition.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "b_fishery"
+display_name = "渔场"
+footprint = Vector2i(3, 2)
+cost = {"wood": 20, "gold": 15}
+build_work = 60
+worker_slots = 2
+food_per_worker_day = 4
+requires_water = true

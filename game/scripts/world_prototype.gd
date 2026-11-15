@@ -1,10 +1,13 @@
 ## 文件用途：组织等距地图与战略管理界面，通过独立模块操作视图、世界和存档。
 extends Control
 
+const ProductionProbe = preload("res://scripts/production_export_probe.gd")
 const ConstructionProbe = preload("res://scripts/construction_export_probe.gd")
 const Construction = preload("res://scripts/construction_service.gd")
 const HOUSE = preload("res://data/buildings/house.tres")
 const FARM = preload("res://data/buildings/farm.tres")
+const RANCH = preload("res://data/buildings/ranch.tres")
+const FISHERY = preload("res://data/buildings/fishery.tres")
 const TownMap = preload("res://scripts/town_map.gd")
 const State = preload("res://scripts/world_state.gd")
 const Clock = preload("res://scripts/strategic_clock.gd")
@@ -29,6 +32,10 @@ var placement_label: Label
 var building_label: Label
 var construction_label: Label
 var labor_label: Label
+var production_label: Label
+var producer_picker: OptionButton
+var producer_detail: Label
+var producer_signature: String = ""
 var displayed_building_tick: int = -1
 var pending_build_command: String = ""
 
@@ -42,19 +49,24 @@ func _ready() -> void:
 	_build_ui()
 	var world_probe: String = ""
 	var build_probe: String = ""
+	var food_probe: String = ""
 	if OS.has_feature("portable_test"):
 		for argument: String in OS.get_cmdline_user_args():
 			if argument in ["--verify-world=write", "--verify-world=read"]:
 				world_probe = argument.get_slice("=", 1)
 			elif argument in ["--verify-build=write", "--verify-build=read"]:
 				build_probe = argument.get_slice("=", 1)
+			elif argument in ["--verify-food=write", "--verify-food=read"]:
+				food_probe = argument.get_slice("=", 1)
 		if not world_probe.is_empty():
 			store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/world_export.db")
 	if not build_probe.is_empty():
 		store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/building_export.db")
+	if not food_probe.is_empty():
+		store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/food_export.db")
 	if not store.open_store(store_path_override):
 		status_label.text = "存档不可用：" + store.error_message
-		if not world_probe.is_empty() or not build_probe.is_empty():
+		if not world_probe.is_empty() or not build_probe.is_empty() or not food_probe.is_empty():
 			get_tree().quit(1)
 			return
 	_refresh()
@@ -62,6 +74,8 @@ func _ready() -> void:
 		get_tree().quit(_verify_export(world_probe))
 	if not build_probe.is_empty():
 		get_tree().quit(ConstructionProbe.run(world, store, build_probe))
+	if not food_probe.is_empty():
+		get_tree().quit(ProductionProbe.run(world, store, food_probe))
 
 
 # 界面模块：左侧为占位地图，右侧为可滚动管理面板，二者输入互不穿透。
@@ -79,7 +93,7 @@ func _build_ui() -> void:
 	map_column.custom_minimum_size.x = 320
 	columns.add_child(map_column)
 	var title: Label = Label.new()
-	title.text = "城镇格网（16×16，占位）"
+	title.text = "城镇格网（16×16；蓝色为北侧河道）"
 	map_column.add_child(title)
 	town_map = TownMap.new()
 	town_map.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -109,17 +123,6 @@ func _build_ui() -> void:
 	panel.add_theme_constant_override("separation", 8)
 	scroll.add_child(panel)
 	_label("领地管理（占位）")
-	var building_actions: HBoxContainer = _row()
-	_button(building_actions, "建住宅 2×2", _start_preview.bind(HOUSE))
-	_button(building_actions, "建农场 4×4", _start_preview.bind(FARM))
-	_button(building_actions, "取消", _cancel_preview)
-	placement_label = _label("选择建筑；左键确认会扣材料")
-	building_label = _label("")
-	construction_label = _label("")
-	labor_label = _label("")
-	var labor_actions: HBoxContainer = _row()
-	_button(labor_actions, "工人 -1", _change_builders.bind(-1))
-	_button(labor_actions, "工人 +1", _change_builders.bind(1))
 	date_label = _label("")
 	resource_label = _label("")
 	progress = ProgressBar.new()
@@ -135,8 +138,30 @@ func _build_ui() -> void:
 	_button(saves, "读取战略进度", _load)
 	bill_label = _label("")
 	status_label = _label("新世界已暂停；请选择速度后继续")
-	_label("1日120秒；每日粮食-15、税收+20。数值待平衡。")
-	_label("中央为初始领主厅。左键确认建造；单队施工：2人原速、1人半速、0人停工。完工住宅+10容量；暂无人口增长与生产。")
+	var building_actions: HBoxContainer = _row()
+	_button(building_actions, "建住宅 2×2", _start_preview.bind(HOUSE))
+	_button(building_actions, "建农场 4×4", _start_preview.bind(FARM))
+	var food_actions: HBoxContainer = _row()
+	_button(food_actions, "建牧场 4×4", _start_preview.bind(RANCH))
+	_button(food_actions, "建渔场 3×2", _start_preview.bind(FISHERY))
+	_button(food_actions, "取消", _cancel_preview)
+	placement_label = _label("选择建筑；左键确认会扣材料")
+	building_label = _label("")
+	construction_label = _label("")
+	labor_label = _label("")
+	var labor_actions: HBoxContainer = _row()
+	_button(labor_actions, "工人 -1", _change_builders.bind(-1))
+	_button(labor_actions, "工人 +1", _change_builders.bind(1))
+	production_label = _label("")
+	producer_picker = OptionButton.new()
+	panel.add_child(producer_picker)
+	producer_picker.item_selected.connect(func(_index: int) -> void: _refresh_production())
+	producer_detail = _label("")
+	var production_actions: HBoxContainer = _row()
+	_button(production_actions, "生产工人 -1", _change_producers.bind(-1))
+	_button(production_actions, "生产工人 +1", _change_producers.bind(1))
+	_label("1日120秒；每日先收粮再消耗15，税收+20。数值待平衡。")
+	_label("中央为初始领主厅。左键确认建造；单队施工：2人原速、1人半速、0人停工。完工住宅+10容量；生产建筑完工后在下拉框分配工人；每日收粮，暂无人口增长。")
 	_sync_building_view()
 	_refresh_map_info()
 
@@ -213,6 +238,7 @@ func _refresh() -> void:
 				active_text = "施工中：%s %d%%" % [Construction.Catalog.find(building["def_id"]).get("display_name"), floori(100.0 * building["work_done"] / building["work_required"])]
 	building_label.text = "建筑%d座：完工%d，待完工%d" % [world.buildings.size(), ready_count, queued_count]
 	labor_label.text = "人口%d / 住房%d；可就业%d，被抚养%d；施工%d，空闲%d" % [world.population, world.housing_capacity(), world.population - world.dependents, world.dependents, world.builders, world.idle_workers()]
+	_refresh_production()
 	construction_label.text = active_text + ("；另有%d座等待" % (queued_count - 1) if queued_count > 1 else "")
 	if queued_count > 0 and world.builders == 0:
 		construction_label.text += "；缺施工工人，已停工"
@@ -352,4 +378,53 @@ func _change_builders(delta: int) -> void:
 		status_label.text = "施工工人已调整为%d；分配会随战略进度保存" % world.builders
 	else:
 		status_label.text = "施工人数需在0至2之间，且不能超过可就业人口"
+	_refresh()
+
+
+# 生产面板模块：按稳定建筑ID选择岗位，列表只在建筑结构变化或读档时重建。
+func _refresh_production() -> void:
+	var signature: String = ""
+	var summaries: Dictionary = {"b_farm": [0, 0], "b_ranch": [0, 0], "b_fishery": [0, 0]}
+	for building: Dictionary in world.buildings:
+		if summaries.has(building["def_id"]):
+			signature += str(building["id"]) + str(building["state"])
+			summaries[building["def_id"]][0] += int(building["workers"])
+			if building["state"] == "ready":
+				summaries[building["def_id"]][1] += int(Construction.Catalog.find(building["def_id"]).get("worker_slots"))
+	if signature != producer_signature or producer_picker.item_count == 0:
+		var selected_id: String = str(producer_picker.get_item_metadata(producer_picker.selected)) if producer_picker.selected >= 0 else ""
+		producer_picker.clear()
+		for building: Dictionary in world.buildings:
+			if summaries.has(building["def_id"]):
+				var name_text: String = str(Construction.Catalog.find(building["def_id"]).get("display_name"))
+				producer_picker.add_item(name_text + " " + str(building["id"]).trim_prefix("building_") + ("（施工中）" if building["state"] != "ready" else ""))
+				var index: int = producer_picker.item_count - 1
+				producer_picker.set_item_metadata(index, building["id"])
+				if building["id"] == selected_id:
+					producer_picker.select(index)
+		producer_signature = signature
+	var lines: PackedStringArray = ["生产岗位%d；按实际在岗时间计粮" % world.production_workers()]
+	for id: String in summaries:
+		var definition: Resource = Construction.Catalog.find(id)
+		lines.append("%s：%d/%d人；当前全天折算%d粮" % [definition.get("display_name"), summaries[id][0], summaries[id][1], int(summaries[id][0]) * int(definition.get("food_per_worker_day"))])
+	production_label.text = "\n".join(lines)
+	producer_detail.text = "先建造并完成生产建筑，再选择分配工人"
+	if producer_picker.selected >= 0:
+		for building: Dictionary in world.buildings:
+			if building["id"] == producer_picker.get_item_metadata(producer_picker.selected):
+				producer_detail.text = "所选建筑：%d人；已累计%.2f粮，日结入库" % [building["workers"], int(building["food_credit"]) / float(State.DAY_TICKS)]
+
+
+# 生产操作模块：岗位命令经过世界人口校验，不允许给工地或不存在的建筑分配。
+func _change_producers(delta: int) -> void:
+	if producer_picker.selected < 0:
+		status_label.text = "请先建造并选择生产建筑"
+		return
+	var id: String = str(producer_picker.get_item_metadata(producer_picker.selected))
+	for building: Dictionary in world.buildings:
+		if building["id"] == id:
+			if world.assign_producers(id, int(building["workers"]) + delta):
+				status_label.text = "生产工人已调整，实际工作产粮将在日结入库；请保存"
+			else:
+				status_label.text = "分配失败：须完工、未超过岗位上限且有空闲人口"
 	_refresh()

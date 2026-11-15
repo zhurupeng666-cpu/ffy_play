@@ -41,7 +41,8 @@
         "Godot: placement test",
         "Godot: construction test",
         "Godot: work test",
-        "Godot: labor test"
+        "Godot: labor test",
+        "Godot: food test"
       ],
       "problemMatcher": [],
       "group": "test"
@@ -147,6 +148,14 @@
       "type": "process",
       "command": "${config:godotTools.editorPath.godot4}",
       "args": ["--headless", "--path", "${workspaceFolder}", "--script", "res://tests/labor_test.gd"],
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "Godot: food test",
+      "type": "process",
+      "command": "${config:godotTools.editorPath.godot4}",
+      "args": ["--headless", "--path", "${workspaceFolder}", "--script", "res://tests/food_test.gd"],
       "problemMatcher": [],
       "group": "test"
     }

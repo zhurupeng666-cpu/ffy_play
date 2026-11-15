@@ -9,3 +9,5 @@ display_name = "农场"
 footprint = Vector2i(4, 4)
 cost = {"wood": 25, "gold": 10}
 build_work = 80
+worker_slots = 3
+food_per_worker_day = 6

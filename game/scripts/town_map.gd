@@ -72,6 +72,8 @@ func _draw() -> void:
 			var cell: Vector2i = Vector2i(x, y)
 			var points: PackedVector2Array = _diamond(cell)
 			var shade: Color = Color(0.22, 0.24, 0.25) if (x + y) % 2 == 0 else Color(0.27, 0.29, 0.30)
+			if preload("res://scripts/town_terrain.gd").is_water(cell):
+				shade = Color(0.15, 0.40, 0.65)
 			draw_colored_polygon(points, shade)
 			points.append(points[0])
 			draw_polyline(points, Color(0.40, 0.42, 0.43), 1.0, true)
@@ -196,7 +198,7 @@ func _update_preview() -> void:
 	if not Grid.contains(hovered):
 		preview_result = {"ok": false, "code": "NO_ANCHOR", "reason": "请将鼠标移到地图内", "cells": []}
 	else:
-		preview_result = Placement.check(hovered, active_definition.get("footprint"), occupied_cells)
+		preview_result = Placement.check_building(hovered, active_definition, occupied_cells)
 	if preview_result.get("ok", false) and economy_ready:
 		var affordability: Dictionary = Construction.check_cost(active_definition.get("cost"), available_resources)
 		if not affordability["ok"]:
@@ -238,7 +240,7 @@ func _draw_buildings() -> void:
 		var definition: Resource = Catalog.find(record["def_id"])
 		var anchor: Vector2i = Vector2i(int(record["cell"][0]), int(record["cell"][1]))
 		var footprint: Vector2i = definition.get("footprint")
-		var colors: Dictionary = {"b_hall": Color(0.30, 0.38, 0.48), "b_house": Color(0.55, 0.43, 0.29), "b_farm": Color(0.30, 0.47, 0.31)}
+		var colors: Dictionary = {"b_hall": Color(0.30, 0.38, 0.48), "b_house": Color(0.55, 0.43, 0.29), "b_farm": Color(0.30, 0.47, 0.31), "b_ranch": Color(0.52, 0.46, 0.25), "b_fishery": Color(0.20, 0.52, 0.64)}
 		for cell: Vector2i in Placement.footprint_cells(anchor, footprint):
 			draw_colored_polygon(_diamond(cell), Color(0.55, 0.45, 0.20) if record["state"] == "constructing" else colors[record["def_id"]])
 		var center: Vector2 = (Grid.cell_to_world(anchor) + Grid.cell_to_world(anchor + footprint - Vector2i.ONE)) * 0.5

@@ -18,5 +18,6 @@ func advance(real_seconds: float) -> void:
 	while state.subsecond >= 1.0:
 		state.subsecond -= 1.0
 		state.tick += 1
+		state.advance_production()
 		state.advance_construction()
 		state.settle_days()
