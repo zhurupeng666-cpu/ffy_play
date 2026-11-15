@@ -1,0 +1,16 @@
+[gd_resource type="Resource" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/unit_definition.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "u_infantry"
+display_name = "民兵步兵"
+category = "infantry"
+batch_size = 5
+train_work = 60
+barracks_capacity = 10
+recruit_cost = {"gold": 50, "wood": 5}
+food_per_day = 1
+wage_per_day = 1
+use_town_workers = true

@@ -1,6 +1,8 @@
 ## 文件用途：组织等距地图与战略管理界面，通过独立模块操作视图、世界和存档。
 extends Control
 
+const ArmyProbe = preload("res://scripts/army_export_probe.gd")
+const Army = preload("res://scripts/army_service.gd")
 const CivicProbe = preload("res://scripts/civic_export_probe.gd")
 const Civic = preload("res://scripts/civic_economy.gd")
 const RemovalProbe = preload("res://scripts/removal_export_probe.gd")
@@ -12,6 +14,7 @@ const StorageProbe = preload("res://scripts/storage_export_probe.gd")
 const ProductionProbe = preload("res://scripts/production_export_probe.gd")
 const ConstructionProbe = preload("res://scripts/construction_export_probe.gd")
 const Construction = preload("res://scripts/construction_service.gd")
+const BARRACKS = preload("res://data/buildings/barracks.tres")
 const LUMBER = preload("res://data/buildings/lumber.tres")
 const QUARRY = preload("res://data/buildings/quarry.tres")
 const GRANARY = preload("res://data/buildings/granary.tres")
@@ -64,6 +67,10 @@ var inspection_label: Label
 var inspection_increase: Button
 var inspection_decrease: Button
 var inspection_remove: Button
+var army_label: Label
+var army_bill_label: Label
+var army_detail_label: Label
+var army_recruit_button: Button
 var removal_dialog: ConfirmationDialog
 var removal_offer: Dictionary = {}
 var removal_command: String = ""
@@ -85,6 +92,7 @@ func _ready() -> void:
 	var inspection_probe: String = ""
 	var removal_probe: String = ""
 	var civic_probe: String = ""
+	var army_probe: String = ""
 	if OS.has_feature("portable_test"):
 		for argument: String in OS.get_cmdline_user_args():
 			if argument in ["--verify-world=write", "--verify-world=read"]:
@@ -103,6 +111,8 @@ func _ready() -> void:
 				removal_probe = argument.get_slice("=", 1)
 			elif argument in ["--verify-civic=write", "--verify-civic=read"]:
 				civic_probe = argument.get_slice("=", 1)
+			elif argument in ["--verify-army=write", "--verify-army=read"]:
+				army_probe = argument.get_slice("=", 1)
 		if not world_probe.is_empty():
 			store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/world_export.db")
 	if not build_probe.is_empty():
@@ -119,9 +129,11 @@ func _ready() -> void:
 		store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/removal_export.db")
 	if not civic_probe.is_empty():
 		store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/civic_export.db")
+	if not army_probe.is_empty():
+		store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/army_export.db")
 	if not store.open_store(store_path_override):
 		status_label.text = "存档不可用：" + store.error_message
-		if not world_probe.is_empty() or not build_probe.is_empty() or not food_probe.is_empty() or not storage_probe.is_empty() or not material_probe.is_empty() or not inspection_probe.is_empty() or not removal_probe.is_empty() or not civic_probe.is_empty():
+		if not world_probe.is_empty() or not build_probe.is_empty() or not food_probe.is_empty() or not storage_probe.is_empty() or not material_probe.is_empty() or not inspection_probe.is_empty() or not removal_probe.is_empty() or not civic_probe.is_empty() or not army_probe.is_empty():
 			get_tree().quit(1)
 			return
 	_refresh()
@@ -141,6 +153,8 @@ func _ready() -> void:
 		get_tree().quit(RemovalProbe.run(self, removal_probe))
 	if not civic_probe.is_empty():
 		get_tree().quit(CivicProbe.run(self, civic_probe))
+	if not army_probe.is_empty():
+		get_tree().quit(ArmyProbe.run(self, army_probe))
 
 
 # 界面模块：左侧为占位地图，右侧为可滚动管理面板，二者输入互不穿透。
@@ -208,10 +222,12 @@ func _build_ui() -> void:
 	_button(saves, "保存战略进度", _save)
 	_button(saves, "读取战略进度", _load)
 	_build_inspection_card()
+	army_label = _label("")
 	bill_label = _label("")
 	food_detail_button = _button(_row(), "展开粮食收支", _toggle_food_details)
 	food_detail_label = _label("")
 	civic_bill_label = _label("")
+	army_bill_label = _label("")
 	material_bill_label = _label("")
 	status_label = _label("新世界已暂停；请选择速度后继续")
 	var building_actions: HBoxContainer = _row()
@@ -225,6 +241,8 @@ func _build_ui() -> void:
 	var material_actions: HBoxContainer = _row()
 	_button(material_actions, "建伐木场 3×3", _start_preview.bind(LUMBER))
 	_button(material_actions, "建采石场 3×3", _start_preview.bind(QUARRY))
+	var military_actions: HBoxContainer = _row()
+	_button(military_actions, "建军营 3×3", _start_preview.bind(BARRACKS))
 	placement_label = _label("选择建筑；左键确认会扣材料")
 	building_label = _label("")
 	construction_label = _label("")
@@ -300,6 +318,7 @@ func _process(delta: float) -> void:
 
 # 刷新模块：日期、库存与账单全部来自同一份世界数据。
 func _refresh() -> void:
+	_refresh_army()
 	_refresh_civic()
 	_refresh_inspection()
 	date_label.text = "第%d日  %02d时  | %d倍速 | %s" % [world.current_day(), int((world.tick % State.DAY_TICKS) * 24.0 / State.DAY_TICKS), world.speed, "已暂停" if world.paused else "运行中"]
@@ -320,7 +339,7 @@ func _refresh() -> void:
 			if queued_count == 1:
 				active_text = "施工中：%s %d%%" % [Construction.Catalog.find(building["def_id"]).get("display_name"), floori(100.0 * building["work_done"] / building["work_required"])]
 	building_label.text = "建筑%d座：完工%d，待完工%d" % [world.buildings.size(), ready_count, queued_count]
-	labor_label.text = "人口%d / 住房%d；可就业%d，被抚养%d；施工%d，空闲%d" % [world.population, world.housing_capacity(), world.population - world.dependents, world.dependents, world.builders, world.idle_workers()]
+	labor_label.text = "人口%d / 住房%d；可就业%d，被抚养%d；施工%d，空闲%d；军职%d" % [world.population, world.housing_capacity(), world.population - world.dependents, world.dependents, world.builders, world.idle_workers(), Army.people(world.troops, true)]
 	_refresh_production()
 	construction_label.text = active_text + ("；另有%d座等待" % (queued_count - 1) if queued_count > 1 else "")
 	if queued_count > 0 and world.builders == 0:
@@ -546,7 +565,10 @@ func _refresh_storage() -> void:
 		food_detail_label.text = "暂无新版日结明细；完成下一日后生成"
 		return
 	var sources: Dictionary = ledger["by_source"]
-	food_detail_label.text = "第%d日粮食收支\n期初%d，结算时容量%d\n农场+%d / 牧场+%d / 渔场+%d\n产出%d = 入库%d + 溢出%d\n居民需%d，实耗%d，缺粮%d\n期末%d，净变化%+d" % [ledger["day"], ledger["opening"], ledger["capacity"], sources["b_farm"], sources["b_ranch"], sources["b_fishery"], ledger["produced"], ledger["stored"], ledger["overflow"], ledger["needed"], ledger["consumed"], ledger["shortage"], ledger["closing"], ledger["net"]]
+	food_detail_label.text = "第%d日基础口粮收支\n期初%d，结算时容量%d\n农场+%d / 牧场+%d / 渔场+%d\n产出%d = 入库%d + 溢出%d\n居民需%d，实耗%d，缺粮%d\n基础口粮后余额%d，净变化%+d" % [ledger["day"], ledger["opening"], ledger["capacity"], sources["b_farm"], sources["b_ranch"], sources["b_fishery"], ledger["produced"], ledger["stored"], ledger["overflow"], ledger["needed"], ledger["consumed"], ledger["shortage"], ledger["closing"], ledger["net"]]
+	var military_bill: Dictionary = world.last_army_ledger
+	if not military_bill.is_empty() and military_bill["day"] == ledger["day"] and int(military_bill["food_needed"]) > 0:
+		food_detail_label.text += "\n再付军粮%d，军需后余粮%d；全日净变%+d" % [military_bill["food_used"], military_bill["food_after"], int(military_bill["food_after"]) - int(ledger["opening"])]
 
 
 # 生产显示模块：根据静态配置选择产物单位与信用字段，不执行库存计算。
@@ -570,6 +592,12 @@ func _build_inspection_card() -> void:
 	contents.add_child(actions)
 	inspection_decrease = _button(actions, "本建筑工人 -1", _change_inspected_workers.bind(-1))
 	inspection_increase = _button(actions, "本建筑工人 +1", _change_inspected_workers.bind(1))
+	var military_actions: HBoxContainer = HBoxContainer.new()
+	contents.add_child(military_actions)
+	army_recruit_button = _button(military_actions, "招募%d名步兵" % Army.UNIT.batch_size, _recruit_infantry)
+	army_detail_label = Label.new()
+	army_detail_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	contents.add_child(army_detail_label)
 	inspection_remove = Button.new()
 	inspection_remove.text = "移除建筑"
 	inspection_remove.focus_mode = Control.FOCUS_NONE
@@ -629,6 +657,20 @@ func _refresh_inspection() -> void:
 	var record: Dictionary = Inspector.find(world, inspected_building_id)
 	inspection_remove.visible = not record.is_empty() and record["def_id"] != "b_hall"
 	inspection_remove.text = "取消施工" if record.get("state") == "constructing" else "拆除建筑"
+	var military: bool = record.get("def_id") == "b_barracks"
+	army_recruit_button.get_parent().visible = military
+	army_detail_label.visible = military
+	if military:
+		var offer: Dictionary = Army.quote(world, inspected_building_id)
+		army_recruit_button.disabled = not offer["ok"]
+		var used: Dictionary = Army.stationed(world.troops, inspected_building_id)
+		var lines: PackedStringArray = ["编额%d/%d；每批%d人\n招募：金币%d、木材%d\n训练：%d战略秒" % [used["count"], Army.UNIT.barracks_capacity, Army.UNIT.batch_size, Army.UNIT.recruit_cost.get("gold", 0), Army.UNIT.recruit_cost.get("wood", 0), Army.UNIT.train_work]]
+		if not offer["ok"]:
+			lines.append(offer["reason"])
+		for troop: Dictionary in world.troops:
+			if troop["barracks_id"] == inspected_building_id:
+				lines.append("%s 步兵%d人：%s" % [str(troop["id"]).trim_prefix("troop_"), troop["count"], "现役" if troop["state"] == "ready" else "训练%d%%" % floori(100.0 * troop["work_done"] / troop["work_required"])])
+		army_detail_label.text = "\n".join(lines)
 
 
 # 清理模块：读档或进入建造模式时清除临时选择，不让相同ID误指向新世界建筑。
@@ -713,3 +755,22 @@ func _refresh_civic() -> void:
 		civic_bill_label.text = "暂无政务日结；低税恢复、高税损耗满意度，缺粮额外扣分"
 		return
 	civic_bill_label.text = "第%d日%s：税收入库%d，溢出%d\n满意度%d→%d；税率%+d、供粮恢复+%d、缺粮-%d" % [bill["day"], Civic.policy_name(bill["policy"]), bill["tax_stored"], bill["tax_overflow"], bill["before"], bill["after"], bill["policy_delta"], bill["recovery"], bill["food_penalty"]]
+
+
+# 招募入口模块：每次明确操作生成新命令，由军队服务校验费用、兵源和军营编额。
+func _recruit_infantry() -> void:
+	var command: String = Crypto.new().generate_random_bytes(16).hex_encode()
+	var result: Dictionary = Army.recruit(world, inspected_building_id, command)
+	status_label.text = "已征募%d人，进入训练；扣金币%d、木材%d，请保存" % [Army.UNIT.batch_size, Army.UNIT.recruit_cost.get("gold", 0), Army.UNIT.recruit_cost.get("wood", 0)] if result["ok"] else str(result["reason"])
+	_refresh()
+
+
+# 军事面板模块：现役与训练人数分开，开销不足只在本阶段记录说明，不擅自扣兵。
+func _refresh_army() -> void:
+	if army_label == null:
+		return
+	var ready: int = Army.people(world.troops, false, true)
+	army_label.text = "军队：现役%d人，训练%d人；占城镇劳动力%d" % [ready, Army.people(world.troops) - ready, Army.people(world.troops, true)]
+	var bill: Dictionary = world.last_army_ledger
+	army_bill_label.visible = not world.troops.is_empty()
+	army_bill_label.text = "暂无军需日结；训练及现役每人每日额外军粮1、军饷1，按实际时间累计" if bill.is_empty() else "第%d日军需：军粮-%d/%d，军饷-%d/%d\n缺军粮%d、缺军饷%d（本阶段记录，不逃兵）" % [bill["day"], bill["food_used"], bill["food_needed"], bill["wage_paid"], bill["wage_needed"], bill["food_shortage"], bill["wage_shortage"]]

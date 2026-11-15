@@ -50,6 +50,8 @@ static func describe(world: RefCounted, id: String) -> Dictionary:
 			lines.append("岗位%d/%d；全镇空闲%d人" % [building["workers"], slots, world.idle_workers()])
 			lines.append("全天折算%d%s；待入库%.2f%s" % [int(building["workers"]) * rate, unit, credit / 120.0, unit])
 			lines.append("无人工作，已停产" if building["workers"] == 0 else ("世界已暂停，生产暂停" if world.paused else "工作中，日结入库"))
+		elif building["def_id"] == "b_barracks":
+			lines.append("军营：在下方征募步兵；兵员与生产岗位互斥")
 		elif building["def_id"] == "b_house":
 			lines.append("本住宅提供10住房容量；当前无生产岗位")
 		elif int(definition.get("food_capacity")) > 0:

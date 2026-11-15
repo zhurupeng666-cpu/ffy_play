@@ -47,7 +47,8 @@
         "Godot: material test",
         "Godot: inspection test",
         "Godot: removal test",
-        "Godot: civic test"
+        "Godot: civic test",
+        "Godot: army test"
       ],
       "problemMatcher": [],
       "group": "test"
@@ -201,6 +202,14 @@
       "type": "process",
       "command": "${config:godotTools.editorPath.godot4}",
       "args": ["--headless", "--path", "${workspaceFolder}", "--script", "res://tests/civic_test.gd"],
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "Godot: army test",
+      "type": "process",
+      "command": "${config:godotTools.editorPath.godot4}",
+      "args": ["--headless", "--path", "${workspaceFolder}", "--script", "res://tests/army_test.gd"],
       "problemMatcher": [],
       "group": "test"
     }

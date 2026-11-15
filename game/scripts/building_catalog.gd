@@ -10,6 +10,7 @@ const GRANARY = preload("res://data/buildings/granary.tres")
 const LUMBER = preload("res://data/buildings/lumber.tres")
 const QUARRY = preload("res://data/buildings/quarry.tres")
 const PRODUCERS: Array[String] = ["b_farm", "b_ranch", "b_fishery", "b_lumber", "b_quarry"]
+const BARRACKS = preload("res://data/buildings/barracks.tres")
 const HALL = preload("res://data/buildings/hall.tres")
 
 
@@ -30,6 +31,8 @@ static func find(id: String) -> Resource:
 			return LUMBER
 		"b_quarry":
 			return QUARRY
+		"b_barracks":
+			return BARRACKS
 		"b_hall":
 			return HALL
 	return null

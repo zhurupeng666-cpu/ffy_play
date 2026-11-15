@@ -10,9 +10,9 @@ foreach ($variant in @('debug', 'release')) {
     if (-not (Test-Path -LiteralPath $executable)) { throw "缺少构建：$executable" }
     $testDirectory = Join-Path $directory 'local_data\tests'
     New-Item -ItemType Directory -Path $testDirectory -Force | Out-Null
-    foreach ($check in @('export=write', 'export=read', 'world=write', 'world=read', 'build=write', 'build=read', 'food=write', 'food=read', 'storage=write', 'storage=read', 'material=write', 'material=read', 'inspect=write', 'inspect=read', 'removal=write', 'removal=read', 'civic=write', 'civic=read')) {
+    foreach ($check in @('export=write', 'export=read', 'world=write', 'world=read', 'build=write', 'build=read', 'food=write', 'food=read', 'storage=write', 'storage=read', 'material=write', 'material=read', 'inspect=write', 'inspect=read', 'removal=write', 'removal=read', 'civic=write', 'civic=read', 'army=write', 'army=read')) {
         $kind, $mode = $check.Split('=')
-        $marker = if ($kind -eq 'world') { 'EXPORT_WORLD_PASS' } elseif ($kind -eq 'civic') { 'EXPORT_CIVIC_PASS' } elseif ($kind -eq 'removal') { 'EXPORT_REMOVAL_PASS' } elseif ($kind -eq 'inspect') { 'EXPORT_INSPECT_PASS' } elseif ($kind -eq 'material') { 'EXPORT_MATERIAL_PASS' } elseif ($kind -eq 'storage') { 'EXPORT_STORAGE_PASS' } elseif ($kind -eq 'food') { 'EXPORT_FOOD_PASS' } elseif ($kind -eq 'build') { 'EXPORT_BUILD_PASS' } else { 'EXPORT_SQLITE_PASS' }
+        $marker = if ($kind -eq 'world') { 'EXPORT_WORLD_PASS' } elseif ($kind -eq 'army') { 'EXPORT_ARMY_PASS' } elseif ($kind -eq 'civic') { 'EXPORT_CIVIC_PASS' } elseif ($kind -eq 'removal') { 'EXPORT_REMOVAL_PASS' } elseif ($kind -eq 'inspect') { 'EXPORT_INSPECT_PASS' } elseif ($kind -eq 'material') { 'EXPORT_MATERIAL_PASS' } elseif ($kind -eq 'storage') { 'EXPORT_STORAGE_PASS' } elseif ($kind -eq 'food') { 'EXPORT_FOOD_PASS' } elseif ($kind -eq 'build') { 'EXPORT_BUILD_PASS' } else { 'EXPORT_SQLITE_PASS' }
         $out = Join-Path $testDirectory "$kind-$mode.stdout.log"
         $err = Join-Path $testDirectory "$kind-$mode.stderr.log"
         # 进程模块：自行持有进程句柄，避免Windows PowerShell丢失快速退出进程的退出码。

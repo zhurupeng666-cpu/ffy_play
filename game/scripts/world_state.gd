@@ -1,8 +1,9 @@
-## 文件用途：保存世界日期、人口、资源与建筑实例，并提供v1到v9快照迁移和完整校验。
+## 文件用途：保存世界日期、人口、资源与建筑实例，并提供v1到v10快照迁移和完整校验。
 extends RefCounted
 
 # 状态模块：数值均为待平衡参数，资源以完整单位保存。
 const DAY_TICKS: int = 120
+const Army = preload("res://scripts/army_service.gd")
 const Civic = preload("res://scripts/civic_economy.gd")
 const Costs = preload("res://scripts/building_costs.gd")
 const Catalog = preload("res://scripts/building_catalog.gd")
@@ -24,6 +25,10 @@ var paused: bool = true
 var tax_policy: String = "standard"
 var satisfaction: int = int(Civic.SETTINGS.initial_satisfaction)
 var last_civic_ledger: Dictionary = {}
+var troops: Array = []
+var recruit_commands: Dictionary = {}
+var next_troop_id: int = 1
+var last_army_ledger: Dictionary = {}
 var last_material_ledger: Dictionary = {}
 var last_food_ledger: Dictionary = {}
 var last_bill: String = "尚未日结；生产建筑完工并分配工人后可产粮"
@@ -54,14 +59,17 @@ func settle_days() -> void:
 		satisfaction = last_civic_ledger["after"]
 		var tax: int = int(last_civic_ledger["tax_stored"])
 		resources["gold"] += tax
+		Army.settle(self)
 		last_settled_day += 1
 		last_bill = "第%d日日结：产粮 +%d（入库%d，溢出%d），消耗 -%d，净变%+d，税收 +%d" % [last_settled_day, last_food_ledger["produced"], last_food_ledger["stored"], last_food_ledger["overflow"], last_food_ledger["consumed"], last_food_ledger["net"], tax]
+		if not troops.is_empty():
+			last_bill += "；军粮-%d，军饷-%d" % [last_army_ledger["food_used"], last_army_ledger["wage_paid"]]
 		if last_food_ledger["shortage"] > 0:
 			last_bill += "；缺粮 %d（影响满意度）" % last_food_ledger["shortage"]
 
 # 快照模块：只导出基础数据，不保存节点、数据库连接或脚本引用。
 func snapshot() -> Dictionary:
-	return {"version": 9, "tick": tick, "subsecond": subsecond, "last_settled_day": last_settled_day, "population": population, "dependents": dependents, "builders": builders, "labor_credit": labor_credit, "resources": resources.duplicate(), "speed": speed, "paused": paused, "tax_policy": tax_policy, "satisfaction": satisfaction, "last_civic_ledger": last_civic_ledger.duplicate(true), "last_bill": last_bill, "last_food_ledger": last_food_ledger.duplicate(true), "last_material_ledger": last_material_ledger.duplicate(true), "buildings": buildings.duplicate(true), "next_building_id": next_building_id, "applied_commands": applied_commands.duplicate(true), "retired_buildings": retired_buildings.duplicate(true), "removal_commands": removal_commands.duplicate(true)}
+	return {"version": 10, "tick": tick, "subsecond": subsecond, "last_settled_day": last_settled_day, "population": population, "dependents": dependents, "builders": builders, "labor_credit": labor_credit, "resources": resources.duplicate(), "speed": speed, "paused": paused, "tax_policy": tax_policy, "satisfaction": satisfaction, "last_civic_ledger": last_civic_ledger.duplicate(true), "troops": troops.duplicate(true), "recruit_commands": recruit_commands.duplicate(true), "next_troop_id": next_troop_id, "last_army_ledger": last_army_ledger.duplicate(true), "last_bill": last_bill, "last_food_ledger": last_food_ledger.duplicate(true), "last_material_ledger": last_material_ledger.duplicate(true), "buildings": buildings.duplicate(true), "next_building_id": next_building_id, "applied_commands": applied_commands.duplicate(true), "retired_buildings": retired_buildings.duplicate(true), "removal_commands": removal_commands.duplicate(true)}
 
 
 # 载入模块：在临时对象中完整校验，失败返回空值，不改变当前世界。
@@ -71,7 +79,7 @@ static func from_snapshot(data: Variant) -> RefCounted:
 	for key: String in ["version", "tick", "last_settled_day", "population", "speed"]:
 		if not _valid_integer(data.get(key), 0, 120000000):
 			return null
-	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9] or int(data["speed"]) not in [1, 2, 4] or data["population"] != 30:
+	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] or int(data["speed"]) not in [1, 2, 4] or data["population"] != 30:
 		return null
 	if data["last_settled_day"] != int(float(data["tick"]) / DAY_TICKS):
 		return null
@@ -128,7 +136,11 @@ static func from_snapshot(data: Variant) -> RefCounted:
 	# 迁移模块：旧战略档没有建筑，保留经济时间并补初始领主厅，不立即覆写磁盘。
 	if int(data["version"]) == 1:
 		return state
-	if not state._restore_buildings(data) or state.idle_workers() < 0:
+	if not state._restore_buildings(data):
+		return null
+	if int(data["version"]) >= 10 and not Army.restore_world(state, data):
+		return null
+	if state.idle_workers() < 0:
 		return null
 	return state
 
@@ -297,7 +309,7 @@ func advance_construction() -> void:
 
 # 分配模块：拒绝超额或负人数，合法调整不增减总人口、不扣金币。
 func assign_builders(count: int) -> bool:
-	if count < 0 or count > 2 or count > population - dependents - production_workers():
+	if count < 0 or count > 2 or count > population - dependents - production_workers() - Army.people(troops, true):
 		return false
 	builders = count
 	return true
@@ -305,7 +317,7 @@ func assign_builders(count: int) -> bool:
 
 # 统计模块：施工岗位计入可就业人口，保持人口与岗位守恒。
 func idle_workers() -> int:
-	return population - dependents - builders - production_workers()
+	return population - dependents - builders - production_workers() - Army.people(troops, true)
 
 
 # 住房模块：只有完工住宅增加容量，未完工工地不提供住房。

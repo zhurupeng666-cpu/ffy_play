@@ -30,6 +30,7 @@ if (-not $SkipTests) {
     Invoke-GodotStep @('--headless', '--path', $project, '--script', 'res://tests/inspection_test.gd')
     Invoke-GodotStep @('--headless', '--path', $project, '--script', 'res://tests/removal_test.gd')
     Invoke-GodotStep @('--headless', '--path', $project, '--script', 'res://tests/civic_test.gd')
+    Invoke-GodotStep @('--headless', '--path', $project, '--script', 'res://tests/army_test.gd')
 }
 # 许可模块：从本次使用的引擎提取声明，避免遗漏内置第三方许可证。
 $notice = Join-Path $repo 'docs\licenses\Godot-ThirdPartyNotices.txt'

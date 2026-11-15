@@ -16,6 +16,10 @@ static func quote(world: RefCounted, id: String) -> Dictionary:
 	var building: Dictionary = Inspector.find(world, id)
 	if building.is_empty() or building["def_id"] == "b_hall":
 		return {"ok": false, "reason": "未选择可移除建筑；领主厅不能拆除"}
+	if building["def_id"] == "b_barracks":
+		for troop: Dictionary in world.troops:
+			if troop["barracks_id"] == id:
+				return {"ok": false, "reason": "军营仍有训练或现役部队，本阶段不能拆除"}
 	if world.retired_buildings.size() >= 2048:
 		return {"ok": false, "reason": "达到当前原型2048条移除历史上限"}
 	var housing: int = world.housing_capacity() - (10 if building["state"] == "ready" and building["def_id"] == "b_house" else 0)
