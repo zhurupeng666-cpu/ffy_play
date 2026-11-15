@@ -1,0 +1,14 @@
+[gd_resource type="Resource" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/civic_settings.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+tax_rates = {"low": 0.6, "standard": 0.8, "high": 1.2}
+policy_deltas = {"low": 2, "standard": 0, "high": -3}
+initial_satisfaction = 50
+satisfaction_limit = 100
+tax_divisor = 60.0
+recovery_target = 50
+recovery_per_day = 1
+full_shortage_penalty = 10

@@ -1,6 +1,8 @@
 ## 文件用途：组织等距地图与战略管理界面，通过独立模块操作视图、世界和存档。
 extends Control
 
+const CivicProbe = preload("res://scripts/civic_export_probe.gd")
+const Civic = preload("res://scripts/civic_economy.gd")
 const RemovalProbe = preload("res://scripts/removal_export_probe.gd")
 const InspectionProbe = preload("res://scripts/inspection_export_probe.gd")
 const Removal = preload("res://scripts/removal_service.gd")
@@ -31,6 +33,9 @@ var store_path_override: String = ""
 var date_label: Label
 var resource_label: Label
 var storage_label: Label
+var civic_label: Label
+var civic_bill_label: Label
+var tax_buttons: Dictionary = {}
 var food_detail_label: Label
 var food_detail_button: Button
 var food_details_visible: bool = false
@@ -79,6 +84,7 @@ func _ready() -> void:
 	var material_probe: String = ""
 	var inspection_probe: String = ""
 	var removal_probe: String = ""
+	var civic_probe: String = ""
 	if OS.has_feature("portable_test"):
 		for argument: String in OS.get_cmdline_user_args():
 			if argument in ["--verify-world=write", "--verify-world=read"]:
@@ -95,6 +101,8 @@ func _ready() -> void:
 				inspection_probe = argument.get_slice("=", 1)
 			elif argument in ["--verify-removal=write", "--verify-removal=read"]:
 				removal_probe = argument.get_slice("=", 1)
+			elif argument in ["--verify-civic=write", "--verify-civic=read"]:
+				civic_probe = argument.get_slice("=", 1)
 		if not world_probe.is_empty():
 			store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/world_export.db")
 	if not build_probe.is_empty():
@@ -109,9 +117,11 @@ func _ready() -> void:
 		store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/inspection_export.db")
 	if not removal_probe.is_empty():
 		store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/removal_export.db")
+	if not civic_probe.is_empty():
+		store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/civic_export.db")
 	if not store.open_store(store_path_override):
 		status_label.text = "存档不可用：" + store.error_message
-		if not world_probe.is_empty() or not build_probe.is_empty() or not food_probe.is_empty() or not storage_probe.is_empty() or not material_probe.is_empty() or not inspection_probe.is_empty() or not removal_probe.is_empty():
+		if not world_probe.is_empty() or not build_probe.is_empty() or not food_probe.is_empty() or not storage_probe.is_empty() or not material_probe.is_empty() or not inspection_probe.is_empty() or not removal_probe.is_empty() or not civic_probe.is_empty():
 			get_tree().quit(1)
 			return
 	_refresh()
@@ -129,6 +139,8 @@ func _ready() -> void:
 		get_tree().quit(InspectionProbe.run(self, inspection_probe))
 	if not removal_probe.is_empty():
 		get_tree().quit(RemovalProbe.run(self, removal_probe))
+	if not civic_probe.is_empty():
+		get_tree().quit(CivicProbe.run(self, civic_probe))
 
 
 # 界面模块：左侧为占位地图，右侧为可滚动管理面板，二者输入互不穿透。
@@ -180,6 +192,10 @@ func _build_ui() -> void:
 	date_label = _label("")
 	resource_label = _label("")
 	storage_label = _label("")
+	civic_label = _label("")
+	var taxes: HBoxContainer = _row()
+	for policy: String in Civic.POLICIES:
+		tax_buttons[policy] = _button(taxes, Civic.policy_name(policy), _set_tax_policy.bind(policy))
 	progress = ProgressBar.new()
 	progress.max_value = State.DAY_TICKS
 	progress.show_percentage = false
@@ -195,6 +211,7 @@ func _build_ui() -> void:
 	bill_label = _label("")
 	food_detail_button = _button(_row(), "展开粮食收支", _toggle_food_details)
 	food_detail_label = _label("")
+	civic_bill_label = _label("")
 	material_bill_label = _label("")
 	status_label = _label("新世界已暂停；请选择速度后继续")
 	var building_actions: HBoxContainer = _row()
@@ -223,7 +240,7 @@ func _build_ui() -> void:
 	var production_actions: HBoxContainer = _row()
 	_button(production_actions, "生产工人 -1", _change_producers.bind(-1))
 	_button(production_actions, "生产工人 +1", _change_producers.bind(1))
-	_label("1日120秒；每日先收粮再消耗15，税收+20。数值待平衡。")
+	_label("1日120秒；每日先收粮再消耗15；税收受税率与满意度影响。数值待平衡。")
 	_label("中央为初始领主厅。左键确认建造；单队施工：2人原速、1人半速、0人停工。完工住宅+10容量；生产建筑完工后在下拉框分配工人；每日入库产物，暂无人口增长。")
 	_sync_building_view()
 	_refresh_map_info()
@@ -283,6 +300,7 @@ func _process(delta: float) -> void:
 
 # 刷新模块：日期、库存与账单全部来自同一份世界数据。
 func _refresh() -> void:
+	_refresh_civic()
 	_refresh_inspection()
 	date_label.text = "第%d日  %02d时  | %d倍速 | %s" % [world.current_day(), int((world.tick % State.DAY_TICKS) * 24.0 / State.DAY_TICKS), world.speed, "已暂停" if world.paused else "运行中"]
 	resource_label.text = "人口 %d  | 粮食 %d  | 金币 %d  | 木材 %d  | 石材 %d" % [world.population, world.resources["food"], world.resources["gold"], world.resources["wood"], world.resources["stone"]]
@@ -675,3 +693,23 @@ func _cancel_removal() -> void:
 	removal_offer = {}
 	removal_command = ""
 	_refresh()
+
+
+# 税率入口模块：政策切换只改变下次日结，点击不发钱，也不立即改变满意度。
+func _set_tax_policy(policy: String) -> void:
+	if world.set_tax_policy(policy):
+		status_label.text = "下次日结采用%s；切换不立即收税或改变满意度，请保存" % Civic.policy_name(policy)
+	_refresh()
+
+
+# 政务显示模块：当前预测和最近一次实际账单分开，说明税率与缺粮分别造成的变化。
+func _refresh_civic() -> void:
+	var forecast: int = Civic.estimate(world.population, world.satisfaction, world.tax_policy)
+	civic_label.text = "满意度%d/100 · 下次日结%s\n按当前满意度预计税收%d" % [world.satisfaction, Civic.policy_name(world.tax_policy), forecast]
+	for policy: String in tax_buttons:
+		tax_buttons[policy].disabled = policy == world.tax_policy
+	var bill: Dictionary = world.last_civic_ledger
+	if bill.is_empty():
+		civic_bill_label.text = "暂无政务日结；低税恢复、高税损耗满意度，缺粮额外扣分"
+		return
+	civic_bill_label.text = "第%d日%s：税收入库%d，溢出%d\n满意度%d→%d；税率%+d、供粮恢复+%d、缺粮-%d" % [bill["day"], Civic.policy_name(bill["policy"]), bill["tax_stored"], bill["tax_overflow"], bill["before"], bill["after"], bill["policy_delta"], bill["recovery"], bill["food_penalty"]]

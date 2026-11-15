@@ -1,8 +1,9 @@
-## 文件用途：保存世界日期、人口、资源与建筑实例，并提供v1到v8快照迁移和完整校验。
+## 文件用途：保存世界日期、人口、资源与建筑实例，并提供v1到v9快照迁移和完整校验。
 extends RefCounted
 
 # 状态模块：数值均为待平衡参数，资源以完整单位保存。
 const DAY_TICKS: int = 120
+const Civic = preload("res://scripts/civic_economy.gd")
 const Costs = preload("res://scripts/building_costs.gd")
 const Catalog = preload("res://scripts/building_catalog.gd")
 const MaterialLedger = preload("res://scripts/material_ledger.gd")
@@ -20,6 +21,9 @@ var labor_credit: int = 0
 var resources: Dictionary = {"food": 180, "gold": 300, "wood": 120, "stone": 80}
 var speed: int = 1
 var paused: bool = true
+var tax_policy: String = "standard"
+var satisfaction: int = int(Civic.SETTINGS.initial_satisfaction)
+var last_civic_ledger: Dictionary = {}
 var last_material_ledger: Dictionary = {}
 var last_food_ledger: Dictionary = {}
 var last_bill: String = "尚未日结；生产建筑完工并分配工人后可产粮"
@@ -46,16 +50,18 @@ func settle_days() -> void:
 		last_material_ledger = MaterialLedger.calculate(last_settled_day + 1, resources, collect_materials())
 		for key: String in MaterialLedger.KEYS:
 			resources[key] = last_material_ledger[key]["closing"]
-		var tax: int = roundi(population * 0.8 * (50.0 / 60.0))
+		last_civic_ledger = Civic.calculate(last_settled_day + 1, tax_policy, satisfaction, population, int(last_food_ledger["shortage"]), int(resources["gold"]))
+		satisfaction = last_civic_ledger["after"]
+		var tax: int = int(last_civic_ledger["tax_stored"])
 		resources["gold"] += tax
 		last_settled_day += 1
 		last_bill = "第%d日日结：产粮 +%d（入库%d，溢出%d），消耗 -%d，净变%+d，税收 +%d" % [last_settled_day, last_food_ledger["produced"], last_food_ledger["stored"], last_food_ledger["overflow"], last_food_ledger["consumed"], last_food_ledger["net"], tax]
 		if last_food_ledger["shortage"] > 0:
-			last_bill += "；缺粮 %d（本阶段仅提示）" % last_food_ledger["shortage"]
+			last_bill += "；缺粮 %d（影响满意度）" % last_food_ledger["shortage"]
 
 # 快照模块：只导出基础数据，不保存节点、数据库连接或脚本引用。
 func snapshot() -> Dictionary:
-	return {"version": 8, "tick": tick, "subsecond": subsecond, "last_settled_day": last_settled_day, "population": population, "dependents": dependents, "builders": builders, "labor_credit": labor_credit, "resources": resources.duplicate(), "speed": speed, "paused": paused, "last_bill": last_bill, "last_food_ledger": last_food_ledger.duplicate(true), "last_material_ledger": last_material_ledger.duplicate(true), "buildings": buildings.duplicate(true), "next_building_id": next_building_id, "applied_commands": applied_commands.duplicate(true), "retired_buildings": retired_buildings.duplicate(true), "removal_commands": removal_commands.duplicate(true)}
+	return {"version": 9, "tick": tick, "subsecond": subsecond, "last_settled_day": last_settled_day, "population": population, "dependents": dependents, "builders": builders, "labor_credit": labor_credit, "resources": resources.duplicate(), "speed": speed, "paused": paused, "tax_policy": tax_policy, "satisfaction": satisfaction, "last_civic_ledger": last_civic_ledger.duplicate(true), "last_bill": last_bill, "last_food_ledger": last_food_ledger.duplicate(true), "last_material_ledger": last_material_ledger.duplicate(true), "buildings": buildings.duplicate(true), "next_building_id": next_building_id, "applied_commands": applied_commands.duplicate(true), "retired_buildings": retired_buildings.duplicate(true), "removal_commands": removal_commands.duplicate(true)}
 
 
 # 载入模块：在临时对象中完整校验，失败返回空值，不改变当前世界。
@@ -65,7 +71,7 @@ static func from_snapshot(data: Variant) -> RefCounted:
 	for key: String in ["version", "tick", "last_settled_day", "population", "speed"]:
 		if not _valid_integer(data.get(key), 0, 120000000):
 			return null
-	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8] or int(data["speed"]) not in [1, 2, 4] or data["population"] != 30:
+	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9] or int(data["speed"]) not in [1, 2, 4] or data["population"] != 30:
 		return null
 	if data["last_settled_day"] != int(float(data["tick"]) / DAY_TICKS):
 		return null
@@ -110,6 +116,15 @@ static func from_snapshot(data: Variant) -> RefCounted:
 		if not MaterialLedger.valid(data.get("last_material_ledger"), state.last_settled_day):
 			return null
 		state.last_material_ledger = MaterialLedger.restore(data["last_material_ledger"])
+	# 政务迁移模块：旧档默认标准税与满意度50，不追溯计算过去的民意和税收。
+	if int(data["version"]) >= 9:
+		if not data.get("tax_policy") is String or data["tax_policy"] not in Civic.POLICIES or not _valid_integer(data.get("satisfaction"), 0, int(Civic.SETTINGS.satisfaction_limit)):
+			return null
+		state.tax_policy = data["tax_policy"]
+		state.satisfaction = int(data["satisfaction"])
+		if not Civic.valid(data.get("last_civic_ledger"), state.last_settled_day, state.population, state.satisfaction, state.last_food_ledger):
+			return null
+		state.last_civic_ledger = Civic.restore(data["last_civic_ledger"], state.population)
 	# 迁移模块：旧战略档没有建筑，保留经济时间并补初始领主厅，不立即覆写磁盘。
 	if int(data["version"]) == 1:
 		return state
@@ -359,3 +374,11 @@ func collect_materials() -> Dictionary:
 			outputs[key] += int(int(building["material_credit"]) / float(DAY_TICKS))
 			building["material_credit"] = int(building["material_credit"]) % DAY_TICKS
 	return outputs
+
+
+# 税率命令模块：仅改变下次日结采用的政策，不立即改变金币或满意度。
+func set_tax_policy(policy: String) -> bool:
+	if policy not in Civic.POLICIES:
+		return false
+	tax_policy = policy
+	return true

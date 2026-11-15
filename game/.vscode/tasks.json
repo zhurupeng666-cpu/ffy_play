@@ -46,7 +46,8 @@
         "Godot: storage test",
         "Godot: material test",
         "Godot: inspection test",
-        "Godot: removal test"
+        "Godot: removal test",
+        "Godot: civic test"
       ],
       "problemMatcher": [],
       "group": "test"
@@ -192,6 +193,14 @@
       "type": "process",
       "command": "${config:godotTools.editorPath.godot4}",
       "args": ["--headless", "--path", "${workspaceFolder}", "--script", "res://tests/removal_test.gd"],
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "Godot: civic test",
+      "type": "process",
+      "command": "${config:godotTools.editorPath.godot4}",
+      "args": ["--headless", "--path", "${workspaceFolder}", "--script", "res://tests/civic_test.gd"],
       "problemMatcher": [],
       "group": "test"
     }
