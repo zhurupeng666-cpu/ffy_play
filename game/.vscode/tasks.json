@@ -45,7 +45,8 @@
         "Godot: food test",
         "Godot: storage test",
         "Godot: material test",
-        "Godot: inspection test"
+        "Godot: inspection test",
+        "Godot: removal test"
       ],
       "problemMatcher": [],
       "group": "test"
@@ -183,6 +184,14 @@
       "type": "process",
       "command": "${config:godotTools.editorPath.godot4}",
       "args": ["--headless", "--path", "${workspaceFolder}", "--script", "res://tests/inspection_test.gd"],
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "Godot: removal test",
+      "type": "process",
+      "command": "${config:godotTools.editorPath.godot4}",
+      "args": ["--headless", "--path", "${workspaceFolder}", "--script", "res://tests/removal_test.gd"],
       "problemMatcher": [],
       "group": "test"
     }

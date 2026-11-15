@@ -1,7 +1,9 @@
 ## 文件用途：组织等距地图与战略管理界面，通过独立模块操作视图、世界和存档。
 extends Control
 
+const RemovalProbe = preload("res://scripts/removal_export_probe.gd")
 const InspectionProbe = preload("res://scripts/inspection_export_probe.gd")
+const Removal = preload("res://scripts/removal_service.gd")
 const Inspector = preload("res://scripts/building_inspector.gd")
 const MaterialProbe = preload("res://scripts/material_export_probe.gd")
 const StorageProbe = preload("res://scripts/storage_export_probe.gd")
@@ -56,6 +58,11 @@ var inspection_card: PanelContainer
 var inspection_label: Label
 var inspection_increase: Button
 var inspection_decrease: Button
+var inspection_remove: Button
+var removal_dialog: ConfirmationDialog
+var removal_offer: Dictionary = {}
+var removal_command: String = ""
+var removal_was_paused: bool = true
 
 
 # 启动模块：普通运行进入战略原型，旧导出验收参数仍转入原存档测试场景。
@@ -71,6 +78,7 @@ func _ready() -> void:
 	var storage_probe: String = ""
 	var material_probe: String = ""
 	var inspection_probe: String = ""
+	var removal_probe: String = ""
 	if OS.has_feature("portable_test"):
 		for argument: String in OS.get_cmdline_user_args():
 			if argument in ["--verify-world=write", "--verify-world=read"]:
@@ -85,6 +93,8 @@ func _ready() -> void:
 				material_probe = argument.get_slice("=", 1)
 			elif argument in ["--verify-inspect=write", "--verify-inspect=read"]:
 				inspection_probe = argument.get_slice("=", 1)
+			elif argument in ["--verify-removal=write", "--verify-removal=read"]:
+				removal_probe = argument.get_slice("=", 1)
 		if not world_probe.is_empty():
 			store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/world_export.db")
 	if not build_probe.is_empty():
@@ -97,9 +107,11 @@ func _ready() -> void:
 		store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/material_export.db")
 	if not inspection_probe.is_empty():
 		store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/inspection_export.db")
+	if not removal_probe.is_empty():
+		store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/removal_export.db")
 	if not store.open_store(store_path_override):
 		status_label.text = "存档不可用：" + store.error_message
-		if not world_probe.is_empty() or not build_probe.is_empty() or not food_probe.is_empty() or not storage_probe.is_empty() or not material_probe.is_empty() or not inspection_probe.is_empty():
+		if not world_probe.is_empty() or not build_probe.is_empty() or not food_probe.is_empty() or not storage_probe.is_empty() or not material_probe.is_empty() or not inspection_probe.is_empty() or not removal_probe.is_empty():
 			get_tree().quit(1)
 			return
 	_refresh()
@@ -115,6 +127,8 @@ func _ready() -> void:
 		get_tree().quit(MaterialProbe.run(world, store, material_probe))
 	if not inspection_probe.is_empty():
 		get_tree().quit(InspectionProbe.run(self, inspection_probe))
+	if not removal_probe.is_empty():
+		get_tree().quit(RemovalProbe.run(self, removal_probe))
 
 
 # 界面模块：左侧为占位地图，右侧为可滚动管理面板，二者输入互不穿透。
@@ -317,6 +331,7 @@ func _save() -> void:
 
 # 读取模块：用校验成功的新世界替换旧引用，避免半读档和重复日结。
 func _load() -> void:
+	_cancel_removal()
 	var candidate: RefCounted = store.load_world()
 	if candidate == null:
 		status_label.text = store.error_message
@@ -537,6 +552,18 @@ func _build_inspection_card() -> void:
 	contents.add_child(actions)
 	inspection_decrease = _button(actions, "本建筑工人 -1", _change_inspected_workers.bind(-1))
 	inspection_increase = _button(actions, "本建筑工人 +1", _change_inspected_workers.bind(1))
+	inspection_remove = Button.new()
+	inspection_remove.text = "移除建筑"
+	inspection_remove.focus_mode = Control.FOCUS_NONE
+	inspection_remove.pressed.connect(_request_removal)
+	contents.add_child(inspection_remove)
+	removal_dialog = ConfirmationDialog.new()
+	removal_dialog.exclusive = true
+	removal_dialog.get_ok_button().text = "确认执行"
+	removal_dialog.get_cancel_button().text = "保留建筑"
+	removal_dialog.confirmed.connect(_confirm_removal)
+	removal_dialog.canceled.connect(_cancel_removal)
+	add_child(removal_dialog)
 	_refresh_inspection()
 
 
@@ -581,6 +608,9 @@ func _refresh_inspection() -> void:
 	inspection_increase.disabled = not detail["increase"]
 	inspection_decrease.disabled = not detail["decrease"]
 	inspection_increase.get_parent().visible = bool(detail.get("producer", false))
+	var record: Dictionary = Inspector.find(world, inspected_building_id)
+	inspection_remove.visible = not record.is_empty() and record["def_id"] != "b_hall"
+	inspection_remove.text = "取消施工" if record.get("state") == "constructing" else "拆除建筑"
 
 
 # 清理模块：读档或进入建造模式时清除临时选择，不让相同ID误指向新世界建筑。
@@ -601,4 +631,47 @@ func _change_inspected_workers(delta: int) -> void:
 		status_label.text = "本建筑岗位已调整，请保存战略进度"
 	else:
 		status_label.text = "分配失败：须完工且符合岗位与空闲人数限制"
+	_refresh()
+
+
+# 移除预览模块：先冻结世界并列清影响，玩家确认之前不扣减建筑或发放退款。
+func _request_removal() -> void:
+	var offer: Dictionary = Removal.quote(world, inspected_building_id)
+	if not offer["ok"]:
+		status_label.text = offer["reason"]
+		return
+	removal_was_paused = world.paused
+	world.paused = true
+	removal_offer = Removal.quote(world, inspected_building_id)
+	removal_command = Crypto.new().generate_random_bytes(16).hex_encode()
+	removal_dialog.title = "确认" + str(removal_offer["action"])
+	var record: Dictionary = Inspector.find(world, inspected_building_id)
+	removal_dialog.dialog_text = "%s %s（%s）？\n退木材%d、石材%d；金币不退。\n材料上限损失：木%d、石%d。\n释放%d名生产工人；待入库粮食%.2f、材料%.2f会丢失。\n操作后住房%d、储粮容量%d；已有粮食保留。\n确认期间时间暂停；执行后请手动保存。" % [removal_offer["action"], Construction.Catalog.find(record["def_id"]).get("display_name"), inspected_building_id.trim_prefix("building_"), removal_offer["refund"]["wood"], removal_offer["refund"]["stone"], removal_offer["overflow"]["wood"], removal_offer["overflow"]["stone"], removal_offer["workers"], int(removal_offer["food_credit"]) / 120.0, int(removal_offer["material_credit"]) / 120.0, removal_offer["housing_after"], removal_offer["capacity_after"]]
+	removal_dialog.popup_centered(Vector2i(600, 280))
+	_refresh()
+
+
+# 移除确认模块：用稳定ID和预览签名重做校验，成功后同步地图与全部管理视图。
+func _confirm_removal() -> void:
+	if removal_offer.is_empty():
+		return
+	var result: Dictionary = Removal.execute(world, removal_offer["building_id"], removal_command, removal_offer["signature"])
+	_cancel_removal()
+	if result["ok"]:
+		_sync_building_view()
+		_clear_inspection()
+		status_label.text = "已移除建筑：退木材%d、石材%d；请保存战略进度" % [result["refund"]["wood"], result["refund"]["stone"]]
+	else:
+		status_label.text = result["reason"]
+	_refresh()
+
+
+# 取消确认模块：关闭窗口时还原进入窗口前的时间状态，不改变建筑或库存。
+func _cancel_removal() -> void:
+	if removal_offer.is_empty():
+		return
+	removal_dialog.hide()
+	world.paused = removal_was_paused
+	removal_offer = {}
+	removal_command = ""
 	_refresh()

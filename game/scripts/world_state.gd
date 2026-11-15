@@ -1,8 +1,9 @@
-## 文件用途：保存世界日期、人口、资源与建筑实例，并提供v1到v7快照迁移和完整校验。
+## 文件用途：保存世界日期、人口、资源与建筑实例，并提供v1到v8快照迁移和完整校验。
 extends RefCounted
 
 # 状态模块：数值均为待平衡参数，资源以完整单位保存。
 const DAY_TICKS: int = 120
+const Costs = preload("res://scripts/building_costs.gd")
 const Catalog = preload("res://scripts/building_catalog.gd")
 const MaterialLedger = preload("res://scripts/material_ledger.gd")
 const FoodLedger = preload("res://scripts/food_ledger.gd")
@@ -24,9 +25,11 @@ var last_food_ledger: Dictionary = {}
 var last_bill: String = "尚未日结；生产建筑完工并分配工人后可产粮"
 
 # 建筑模块：初始领主厅免费存在，实例ID不复用，回执只记录成功命令。
-var buildings: Array = [{"id": "building_000001", "def_id": "b_hall", "cell": [6, 6], "level": 1, "state": "ready", "work_done": 0, "work_required": 0, "workers": 0, "food_credit": 0, "material_credit": 0}]
+var buildings: Array = [{"id": "building_000001", "def_id": "b_hall", "cell": [6, 6], "level": 1, "state": "ready", "work_done": 0, "work_required": 0, "workers": 0, "food_credit": 0, "material_credit": 0, "paid_cost": {"wood": 0, "stone": 0, "gold": 0}}]
 var next_building_id: int = 2
 var applied_commands: Dictionary = {}
+var retired_buildings: Array = []
+var removal_commands: Dictionary = {}
 
 
 # 日期模块：第0至119秒属于第1日，完成120秒才进入第2日。
@@ -52,7 +55,7 @@ func settle_days() -> void:
 
 # 快照模块：只导出基础数据，不保存节点、数据库连接或脚本引用。
 func snapshot() -> Dictionary:
-	return {"version": 7, "tick": tick, "subsecond": subsecond, "last_settled_day": last_settled_day, "population": population, "dependents": dependents, "builders": builders, "labor_credit": labor_credit, "resources": resources.duplicate(), "speed": speed, "paused": paused, "last_bill": last_bill, "last_food_ledger": last_food_ledger.duplicate(true), "last_material_ledger": last_material_ledger.duplicate(true), "buildings": buildings.duplicate(true), "next_building_id": next_building_id, "applied_commands": applied_commands.duplicate(true)}
+	return {"version": 8, "tick": tick, "subsecond": subsecond, "last_settled_day": last_settled_day, "population": population, "dependents": dependents, "builders": builders, "labor_credit": labor_credit, "resources": resources.duplicate(), "speed": speed, "paused": paused, "last_bill": last_bill, "last_food_ledger": last_food_ledger.duplicate(true), "last_material_ledger": last_material_ledger.duplicate(true), "buildings": buildings.duplicate(true), "next_building_id": next_building_id, "applied_commands": applied_commands.duplicate(true), "retired_buildings": retired_buildings.duplicate(true), "removal_commands": removal_commands.duplicate(true)}
 
 
 # 载入模块：在临时对象中完整校验，失败返回空值，不改变当前世界。
@@ -62,7 +65,7 @@ static func from_snapshot(data: Variant) -> RefCounted:
 	for key: String in ["version", "tick", "last_settled_day", "population", "speed"]:
 		if not _valid_integer(data.get(key), 0, 120000000):
 			return null
-	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7] or int(data["speed"]) not in [1, 2, 4] or data["population"] != 30:
+	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8] or int(data["speed"]) not in [1, 2, 4] or data["population"] != 30:
 		return null
 	if data["last_settled_day"] != int(float(data["tick"]) / DAY_TICKS):
 		return null
@@ -137,11 +140,20 @@ func _restore_buildings(data: Dictionary) -> bool:
 		return false
 	if not _valid_integer(data.get("next_building_id"), 2, 1000000) or not data.get("applied_commands") is Dictionary:
 		return false
+	var retired_raw: Array = []
+	if int(data["version"]) >= 8:
+		if not data.get("retired_buildings") is Array or data["retired_buildings"].size() > 2048 or not data.get("removal_commands") is Dictionary:
+			return false
+		retired_raw = data["retired_buildings"]
 	var records: Array = []
+	var archives: Array = []
 	var by_id: Dictionary = {}
 	var occupied: Dictionary = {}
 	var hall_count: int = 0
-	for raw: Variant in data["buildings"]:
+	var all_records: Array = data["buildings"] + retired_raw
+	for index: int in range(all_records.size()):
+		var raw: Variant = all_records[index]
+		var retired: bool = index >= data["buildings"].size()
 		if not raw is Dictionary or not raw.get("id") is String or not raw.get("def_id") is String:
 			return false
 		var id: String = raw["id"]
@@ -157,7 +169,7 @@ func _restore_buildings(data: Dictionary) -> bool:
 		if not _valid_integer(raw["cell"][0], 0, 15) or not _valid_integer(raw["cell"][1], 0, 15) or not _valid_integer(raw.get("level"), 1, 1) or raw.get("state") not in ["ready", "constructing"]:
 			return false
 		var anchor: Vector2i = Vector2i(int(raw["cell"][0]), int(raw["cell"][1]))
-		var check: Dictionary = Placement.check(anchor, definition.get("footprint"), occupied)
+		var check: Dictionary = Placement.check(anchor, definition.get("footprint"), {} if retired else occupied)
 		if not check["ok"]:
 			return false
 		# 地形存档模块：新增采集建筑须临对应资源，渔场仍须临水；旧普通建筑保留原址。
@@ -165,7 +177,7 @@ func _restore_buildings(data: Dictionary) -> bool:
 			return false
 		if raw["def_id"] == "b_hall":
 			hall_count += 1
-			if id != "building_000001" or anchor != Vector2i(6, 6):
+			if retired or id != "building_000001" or anchor != Vector2i(6, 6):
 				return false
 		# 施工迁移模块：旧v2的即时建筑保留完工状态，新版严格检查状态与进度一致。
 		var done: int = 0
@@ -203,12 +215,23 @@ func _restore_buildings(data: Dictionary) -> bool:
 				return false
 		if int(definition.get("food_per_worker_day")) == 0 and credit != 0:
 			return false
-		var record: Dictionary = {"id": id, "def_id": raw["def_id"], "cell": [anchor.x, anchor.y], "level": 1, "state": raw["state"], "work_done": done, "work_required": required, "workers": workers, "food_credit": credit, "material_credit": material_credit}
-		records.append(record)
+		var paid: Dictionary = Costs.normalize(Costs.LEGACY.get(raw["def_id"], {}))
+		if int(data["version"]) >= 8:
+			if not Costs.valid(raw.get("paid_cost")):
+				return false
+			paid = Costs.normalize(raw["paid_cost"])
+		if raw["def_id"] == "b_hall" and paid != Costs.normalize({}):
+			return false
+		var record: Dictionary = {"id": id, "def_id": raw["def_id"], "cell": [anchor.x, anchor.y], "level": 1, "state": raw["state"], "work_done": done, "work_required": required, "workers": workers, "food_credit": credit, "material_credit": material_credit, "paid_cost": paid}
+		if retired:
+			archives.append(record)
+		else:
+			records.append(record)
 		by_id[id] = record
 		for cell: Vector2i in check["cells"]:
-			occupied[cell] = id
-	if hall_count != 1 or data["applied_commands"].size() != records.size() - 1:
+			if not retired:
+				occupied[cell] = id
+	if hall_count != 1 or data["applied_commands"].size() != all_records.size() - 1:
 		return false
 	var receipts: Dictionary = {}
 	var receipted: Dictionary = {}
@@ -228,6 +251,12 @@ func _restore_buildings(data: Dictionary) -> bool:
 		receipts[command] = {"def_id": record["def_id"], "cell": record["cell"].duplicate(), "building_id": record["id"]}
 		receipted[record["id"]] = true
 	records.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a["id"] < b["id"])
+	if int(data["version"]) >= 8:
+		var restored_removals: Variant = preload("res://scripts/removal_service.gd").restore_history(data["removal_commands"], archives, int(data["tick"]))
+		if restored_removals == null:
+			return false
+		removal_commands = restored_removals
+	retired_buildings = archives
 	buildings = records
 	next_building_id = int(data["next_building_id"])
 	applied_commands = receipts
