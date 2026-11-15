@@ -7,3 +7,6 @@ extends Resource
 @export var footprint: Vector2i = Vector2i.ONE
 @export var cost: Dictionary = {}
 @export var buildable: bool = true
+
+# 施工配置模块：工作量以战略秒计，后续劳动力系统再替换当前单队施工。
+@export var build_work: int = 40

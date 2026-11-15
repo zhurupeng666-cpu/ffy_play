@@ -38,12 +38,14 @@ static func execute(world: RefCounted, definition_id: String, anchor: Vector2i, 
 		return affordability
 	if world.buildings.size() >= 256 or world.next_building_id >= 1000000:
 		return {"ok": false, "code": "LIMIT", "reason": "达到当前原型建筑数量上限"}
+	if int(definition.get("build_work")) <= 0 or int(definition.get("build_work")) > 100000:
+		return {"ok": false, "code": "INVALID_WORK", "reason": "施工工作量配置无效"}
 	var resources: Dictionary = world.resources.duplicate()
 	for key: String in definition.get("cost"):
 		resources[key] -= definition.get("cost")[key]
 	var id: String = "building_%06d" % world.next_building_id
 	var buildings: Array = world.buildings.duplicate(true)
-	buildings.append({"id": id, "def_id": definition_id, "cell": cell, "level": 1, "state": "ready"})
+	buildings.append({"id": id, "def_id": definition_id, "cell": cell, "level": 1, "state": "constructing", "work_done": 0, "work_required": int(definition.get("build_work"))})
 	var receipts: Dictionary = world.applied_commands.duplicate(true)
 	receipts[command_id] = {"def_id": definition_id, "cell": cell, "building_id": id}
 	world.resources = resources

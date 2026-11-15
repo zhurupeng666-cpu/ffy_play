@@ -9,17 +9,28 @@ static func run(world: RefCounted, store: RefCounted, mode: String) -> int:
 	if mode == "write":
 		if not Build.execute(world, "b_house", Vector2i(2, 2), "export-house-1").get("ok", false):
 			return 1
+		world.paused = false
+		var clock: RefCounted = load("res://scripts/strategic_clock.gd").new(world)
+		clock.advance(10)
+		world.paused = true
 		if not store.save_world(world):
 			return 1
 	else:
 		var loaded: RefCounted = store.load_world()
 		if loaded == null or loaded.buildings.size() != 2 or loaded.resources["wood"] != 100 or loaded.resources["gold"] != 290:
 			return 1
-		if not loaded.occupied_cells().has(Vector2i(3, 3)):
+		if loaded.buildings[1]["work_done"] != 10 or loaded.buildings[1]["state"] != "constructing" or not loaded.occupied_cells().has(Vector2i(3, 3)):
 			return 1
 		var before: Dictionary = loaded.snapshot()
 		var result: Dictionary = Build.execute(loaded, "b_house", Vector2i(2, 2), "export-house-1")
 		if not result.get("replayed", false) or loaded.snapshot() != before:
+			return 1
+	if mode == "read":
+		var continued: RefCounted = store.load_world()
+		continued.paused = false
+		var clock: RefCounted = load("res://scripts/strategic_clock.gd").new(continued)
+		clock.advance(30)
+		if continued.buildings[1]["state"] != "ready":
 			return 1
 	print("EXPORT_BUILD_PASS: ", mode)
 	return 0

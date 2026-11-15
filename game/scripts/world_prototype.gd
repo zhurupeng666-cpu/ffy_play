@@ -27,6 +27,8 @@ var town_map: Control
 var map_info: Label
 var placement_label: Label
 var building_label: Label
+var construction_label: Label
+var displayed_building_tick: int = -1
 var pending_build_command: String = ""
 
 
@@ -112,6 +114,7 @@ func _build_ui() -> void:
 	_button(building_actions, "取消", _cancel_preview)
 	placement_label = _label("选择建筑；左键确认会扣材料")
 	building_label = _label("")
+	construction_label = _label("")
 	date_label = _label("")
 	resource_label = _label("")
 	progress = ProgressBar.new()
@@ -128,7 +131,7 @@ func _build_ui() -> void:
 	bill_label = _label("")
 	status_label = _label("新世界已暂停；请选择速度后继续")
 	_label("1日120秒；每日粮食-15、税收+20。数值待平衡。")
-	_label("中央为初始领主厅。左键确认建造；本阶段立即落地，尚无施工、生产与人口效果。")
+	_label("中央为初始领主厅。左键确认建造；单队顺序施工；住宅40、农场80战略秒，数值待平衡。尚无生产与人口效果。")
 	_sync_building_view()
 	_refresh_map_info()
 
@@ -193,7 +196,21 @@ func _refresh() -> void:
 	bill_label.text = world.last_bill
 	pause_button.text = "继续（空格）" if world.paused else "暂停（空格）"
 	town_map.sync_resources(world.resources)
-	building_label.text = "已建建筑：%d座（含初始领主厅）" % world.buildings.size()
+	var ready_count: int = 0
+	var queued_count: int = 0
+	var active_text: String = "无施工任务"
+	for building: Dictionary in world.buildings:
+		if building["state"] == "ready":
+			ready_count += 1
+		else:
+			queued_count += 1
+			if queued_count == 1:
+				active_text = "施工中：%s %d%%" % [Construction.Catalog.find(building["def_id"]).get("display_name"), floori(100.0 * building["work_done"] / building["work_required"])]
+	building_label.text = "建筑%d座：完工%d，待完工%d" % [world.buildings.size(), ready_count, queued_count]
+	construction_label.text = active_text + ("；另有%d座等待" % (queued_count - 1) if queued_count > 1 else "")
+	if displayed_building_tick != world.tick:
+		displayed_building_tick = world.tick
+		town_map.sync_buildings(world.buildings)
 
 
 # 暂停模块：冻结战略时钟但保持界面与保存操作可用。
@@ -305,7 +322,7 @@ func _on_placement_clicked(_result: Dictionary) -> void:
 	town_map.cancel_preview()
 	_refresh()
 	var cost: Dictionary = result["cost"]
-	status_label.text = "建造成功：%s；木材-%d，金币-%d（请保存战略进度）" % [definition.get("display_name"), cost.get("wood", 0), cost.get("gold", 0)]
+	status_label.text = "建造成功：%s工地已入队；木材-%d，金币-%d（请保存）" % [definition.get("display_name"), cost.get("wood", 0), cost.get("gold", 0)]
 
 
 # 取消提示模块：清除尚未提交的命令，不修改已建实例或资源。

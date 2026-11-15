@@ -240,9 +240,11 @@ func _draw_buildings() -> void:
 		var footprint: Vector2i = definition.get("footprint")
 		var colors: Dictionary = {"b_hall": Color(0.30, 0.38, 0.48), "b_house": Color(0.55, 0.43, 0.29), "b_farm": Color(0.30, 0.47, 0.31)}
 		for cell: Vector2i in Placement.footprint_cells(anchor, footprint):
-			draw_colored_polygon(_diamond(cell), colors[record["def_id"]])
+			draw_colored_polygon(_diamond(cell), Color(0.55, 0.45, 0.20) if record["state"] == "constructing" else colors[record["def_id"]])
 		var center: Vector2 = (Grid.cell_to_world(anchor) + Grid.cell_to_world(anchor + footprint - Vector2i.ONE)) * 0.5
 		var label: String = definition.get("display_name")
+		if record["state"] == "constructing":
+			label += " %d%%" % floori(100.0 * record["work_done"] / record["work_required"])
 		var font: Font = ThemeDB.fallback_font
 		var text_size: Vector2 = font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14)
 		draw_string(font, world_to_screen(center) + Vector2(-text_size.x * 0.5, 5), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color.WHITE)

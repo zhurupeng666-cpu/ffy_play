@@ -39,7 +39,8 @@
         "Godot: world UI test",
         "Godot: map test",
         "Godot: placement test",
-        "Godot: construction test"
+        "Godot: construction test",
+        "Godot: work test"
       ],
       "problemMatcher": [],
       "group": "test"
@@ -122,6 +123,20 @@
         "${workspaceFolder}",
         "--script",
         "res://tests/construction_test.gd"
+      ],
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "Godot: work test",
+      "type": "process",
+      "command": "${config:godotTools.editorPath.godot4}",
+      "args": [
+        "--headless",
+        "--path",
+        "${workspaceFolder}",
+        "--script",
+        "res://tests/construction_progress_test.gd"
       ],
       "problemMatcher": [],
       "group": "test"

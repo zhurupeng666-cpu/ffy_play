@@ -15,7 +15,7 @@ var paused: bool = true
 var last_bill: String = "尚未日结；当前仅有居民消耗和基础税收"
 
 # 建筑模块：初始领主厅免费存在，实例ID不复用，回执只记录成功命令。
-var buildings: Array = [{"id": "building_000001", "def_id": "b_hall", "cell": [6, 6], "level": 1, "state": "ready"}]
+var buildings: Array = [{"id": "building_000001", "def_id": "b_hall", "cell": [6, 6], "level": 1, "state": "ready", "work_done": 0, "work_required": 0}]
 var next_building_id: int = 2
 var applied_commands: Dictionary = {}
 
@@ -41,7 +41,7 @@ func settle_days() -> void:
 
 # 快照模块：只导出基础数据，不保存节点、数据库连接或脚本引用。
 func snapshot() -> Dictionary:
-	return {"version": 2, "tick": tick, "subsecond": subsecond, "last_settled_day": last_settled_day, "population": population, "resources": resources.duplicate(), "speed": speed, "paused": paused, "last_bill": last_bill, "buildings": buildings.duplicate(true), "next_building_id": next_building_id, "applied_commands": applied_commands.duplicate(true)}
+	return {"version": 3, "tick": tick, "subsecond": subsecond, "last_settled_day": last_settled_day, "population": population, "resources": resources.duplicate(), "speed": speed, "paused": paused, "last_bill": last_bill, "buildings": buildings.duplicate(true), "next_building_id": next_building_id, "applied_commands": applied_commands.duplicate(true)}
 
 
 # 载入模块：在临时对象中完整校验，失败返回空值，不改变当前世界。
@@ -51,7 +51,7 @@ static func from_snapshot(data: Variant) -> RefCounted:
 	for key: String in ["version", "tick", "last_settled_day", "population", "speed"]:
 		if not _valid_integer(data.get(key), 0, 120000000):
 			return null
-	if int(data["version"]) not in [1, 2] or int(data["speed"]) not in [1, 2, 4] or data["population"] != 30:
+	if int(data["version"]) not in [1, 2, 3] or int(data["speed"]) not in [1, 2, 4] or data["population"] != 30:
 		return null
 	if data["last_settled_day"] != int(float(data["tick"]) / DAY_TICKS):
 		return null
@@ -122,7 +122,7 @@ func _restore_buildings(data: Dictionary) -> bool:
 		var definition: Resource = Catalog.find(raw["def_id"])
 		if definition == null or not raw.get("cell") is Array or raw["cell"].size() != 2:
 			return false
-		if not _valid_integer(raw["cell"][0], 0, 15) or not _valid_integer(raw["cell"][1], 0, 15) or not _valid_integer(raw.get("level"), 1, 1) or raw.get("state") != "ready":
+		if not _valid_integer(raw["cell"][0], 0, 15) or not _valid_integer(raw["cell"][1], 0, 15) or not _valid_integer(raw.get("level"), 1, 1) or raw.get("state") not in ["ready", "constructing"]:
 			return false
 		var anchor: Vector2i = Vector2i(int(raw["cell"][0]), int(raw["cell"][1]))
 		var check: Dictionary = Placement.check(anchor, definition.get("footprint"), occupied)
@@ -132,7 +132,22 @@ func _restore_buildings(data: Dictionary) -> bool:
 			hall_count += 1
 			if id != "building_000001" or anchor != Vector2i(6, 6):
 				return false
-		var record: Dictionary = {"id": id, "def_id": raw["def_id"], "cell": [anchor.x, anchor.y], "level": 1, "state": "ready"}
+		# 施工迁移模块：旧v2的即时建筑保留完工状态，新v3严格检查状态与进度一致。
+		var done: int = 0
+		var required: int = 0
+		if int(data["version"]) == 2:
+			if raw["state"] != "ready":
+				return false
+		else:
+			if not _valid_integer(raw.get("work_required"), 0, 100000) or not _valid_integer(raw.get("work_done"), 0, int(raw.get("work_required", 0))):
+				return false
+			done = int(raw["work_done"])
+			required = int(raw["work_required"])
+			if (raw["state"] == "ready") != (done == required):
+				return false
+			if raw["def_id"] == "b_hall" and (required != 0 or raw["state"] != "ready"):
+				return false
+		var record: Dictionary = {"id": id, "def_id": raw["def_id"], "cell": [anchor.x, anchor.y], "level": 1, "state": raw["state"], "work_done": done, "work_required": required}
 		records.append(record)
 		by_id[id] = record
 		for cell: Vector2i in check["cells"]:
@@ -156,7 +171,18 @@ func _restore_buildings(data: Dictionary) -> bool:
 			return false
 		receipts[command] = {"def_id": record["def_id"], "cell": record["cell"].duplicate(), "building_id": record["id"]}
 		receipted[record["id"]] = true
+	records.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a["id"] < b["id"])
 	buildings = records
 	next_building_id = int(data["next_building_id"])
 	applied_commands = receipts
 	return true
+
+
+# 施工推进模块：单支抽象施工队按实例创建顺序工作，每个战略秒只投入一份工作。
+func advance_construction() -> void:
+	for building: Dictionary in buildings:
+		if building["state"] == "constructing":
+			building["work_done"] = mini(int(building["work_done"]) + 1, int(building["work_required"]))
+			if building["work_done"] == building["work_required"]:
+				building["state"] = "ready"
+			return

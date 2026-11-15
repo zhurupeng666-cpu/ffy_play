@@ -9,3 +9,4 @@ display_name = "领主厅"
 footprint = Vector2i(4, 4)
 cost = {}
 buildable = false
+build_work = 0

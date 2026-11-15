@@ -8,3 +8,4 @@ id = "b_farm"
 display_name = "农场"
 footprint = Vector2i(4, 4)
 cost = {"wood": 25, "gold": 10}
+build_work = 80
