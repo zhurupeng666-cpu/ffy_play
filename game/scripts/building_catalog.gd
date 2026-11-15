@@ -6,6 +6,7 @@ const HOUSE = preload("res://data/buildings/house.tres")
 const FARM = preload("res://data/buildings/farm.tres")
 const RANCH = preload("res://data/buildings/ranch.tres")
 const FISHERY = preload("res://data/buildings/fishery.tres")
+const GRANARY = preload("res://data/buildings/granary.tres")
 const HALL = preload("res://data/buildings/hall.tres")
 
 
@@ -20,6 +21,8 @@ static func find(id: String) -> Resource:
 			return RANCH
 		"b_fishery":
 			return FISHERY
+		"b_granary":
+			return GRANARY
 		"b_hall":
 			return HALL
 	return null

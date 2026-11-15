@@ -1,9 +1,10 @@
-## 文件用途：保存世界日期、人口、资源与建筑实例，并提供v1到v5快照迁移和完整校验。
+## 文件用途：保存世界日期、人口、资源与建筑实例，并提供v1到v6快照迁移和完整校验。
 extends RefCounted
 
 # 状态模块：数值均为待平衡参数，资源以完整单位保存。
 const DAY_TICKS: int = 120
 const Catalog = preload("res://scripts/building_catalog.gd")
+const FoodLedger = preload("res://scripts/food_ledger.gd")
 const Placement = preload("res://scripts/placement_validator.gd")
 var tick: int = 0
 var subsecond: float = 0.0
@@ -17,6 +18,7 @@ var labor_credit: int = 0
 var resources: Dictionary = {"food": 180, "gold": 300, "wood": 120, "stone": 80}
 var speed: int = 1
 var paused: bool = true
+var last_food_ledger: Dictionary = {}
 var last_bill: String = "尚未日结；生产建筑完工并分配工人后可产粮"
 
 # 建筑模块：初始领主厅免费存在，实例ID不复用，回执只记录成功命令。
@@ -30,25 +32,22 @@ func current_day() -> int:
 	return int(tick / float(DAY_TICKS)) + 1
 
 
-# 日结模块：每个完成的日期仅结算一次，粮食不足时不出现负库存。
+# 日结模块：固定先收获再消费，记录可重算的账单，同一天不重复结算。
 func settle_days() -> void:
 	while last_settled_day < current_day() - 1:
-		var harvested: int = collect_food()
-		resources["food"] = mini(1000000000, int(resources["food"]) + harvested)
-		var needed: int = ceili(population * 0.5)
-		var consumed: int = mini(needed, int(resources["food"]))
+		var sources: Dictionary = collect_food()
+		last_food_ledger = FoodLedger.calculate(last_settled_day + 1, int(resources["food"]), food_capacity(), sources, population)
+		resources["food"] = last_food_ledger["closing"]
 		var tax: int = roundi(population * 0.8 * (50.0 / 60.0))
-		resources["food"] -= consumed
 		resources["gold"] += tax
 		last_settled_day += 1
-		last_bill = "第%d日日结：产粮 +%d，消耗 -%d，税收 +%d" % [last_settled_day, harvested, consumed, tax]
-		if consumed < needed:
-			last_bill += "；缺粮 %d（本阶段仅提示）" % (needed - consumed)
-
+		last_bill = "第%d日日结：产粮 +%d（入库%d，溢出%d），消耗 -%d，净变%+d，税收 +%d" % [last_settled_day, last_food_ledger["produced"], last_food_ledger["stored"], last_food_ledger["overflow"], last_food_ledger["consumed"], last_food_ledger["net"], tax]
+		if last_food_ledger["shortage"] > 0:
+			last_bill += "；缺粮 %d（本阶段仅提示）" % last_food_ledger["shortage"]
 
 # 快照模块：只导出基础数据，不保存节点、数据库连接或脚本引用。
 func snapshot() -> Dictionary:
-	return {"version": 5, "tick": tick, "subsecond": subsecond, "last_settled_day": last_settled_day, "population": population, "dependents": dependents, "builders": builders, "labor_credit": labor_credit, "resources": resources.duplicate(), "speed": speed, "paused": paused, "last_bill": last_bill, "buildings": buildings.duplicate(true), "next_building_id": next_building_id, "applied_commands": applied_commands.duplicate(true)}
+	return {"version": 6, "tick": tick, "subsecond": subsecond, "last_settled_day": last_settled_day, "population": population, "dependents": dependents, "builders": builders, "labor_credit": labor_credit, "resources": resources.duplicate(), "speed": speed, "paused": paused, "last_bill": last_bill, "last_food_ledger": last_food_ledger.duplicate(true), "buildings": buildings.duplicate(true), "next_building_id": next_building_id, "applied_commands": applied_commands.duplicate(true)}
 
 
 # 载入模块：在临时对象中完整校验，失败返回空值，不改变当前世界。
@@ -58,7 +57,7 @@ static func from_snapshot(data: Variant) -> RefCounted:
 	for key: String in ["version", "tick", "last_settled_day", "population", "speed"]:
 		if not _valid_integer(data.get(key), 0, 120000000):
 			return null
-	if int(data["version"]) not in [1, 2, 3, 4, 5] or int(data["speed"]) not in [1, 2, 4] or data["population"] != 30:
+	if int(data["version"]) not in [1, 2, 3, 4, 5, 6] or int(data["speed"]) not in [1, 2, 4] or data["population"] != 30:
 		return null
 	if data["last_settled_day"] != int(float(data["tick"]) / DAY_TICKS):
 		return null
@@ -91,6 +90,13 @@ static func from_snapshot(data: Variant) -> RefCounted:
 	state.speed = int(data["speed"])
 	state.paused = data["paused"]
 	state.last_bill = data["last_bill"]
+	# 历史迁移模块：旧档不虚构粮食收支，新版账单完整校验后才恢复。
+	if int(data["version"]) >= 6:
+		if not FoodLedger.valid(data.get("last_food_ledger"), state.last_settled_day, state.population):
+			return null
+		var saved_ledger: Dictionary = data["last_food_ledger"]
+		if not saved_ledger.is_empty():
+			state.last_food_ledger = FoodLedger.calculate(int(saved_ledger["day"]), int(saved_ledger["opening"]), int(saved_ledger["capacity"]), saved_ledger["by_source"], state.population)
 	# 迁移模块：旧战略档没有建筑，保留经济时间并补初始领主厅，不立即覆写磁盘。
 	if int(data["version"]) == 1:
 		return state
@@ -274,10 +280,20 @@ func advance_production() -> void:
 			building["food_credit"] += int(building["workers"]) * rate
 
 
-# 收获模块：仅日结兑付整份粮食，零头跨日保留且不因调岗丢失。
-func collect_food() -> int:
-	var total: int = 0
+# 收获模块：按生产来源统计整份粮食，零头跨日保留，溢出也不重复发放。
+func collect_food() -> Dictionary:
+	var sources: Dictionary = {"b_farm": 0, "b_ranch": 0, "b_fishery": 0}
 	for building: Dictionary in buildings:
-		total += int(int(building["food_credit"]) / float(DAY_TICKS))
-		building["food_credit"] = int(building["food_credit"]) % DAY_TICKS
-	return total
+		if sources.has(building["def_id"]):
+			sources[building["def_id"]] += int(int(building["food_credit"]) / float(DAY_TICKS))
+			building["food_credit"] = int(building["food_credit"]) % DAY_TICKS
+	return sources
+
+
+# 容量模块：基础公共储粮300，每座完工粮仓叠加静态配置容量，工地不计入。
+func food_capacity() -> int:
+	var capacity: int = 300
+	for building: Dictionary in buildings:
+		if building["state"] == "ready":
+			capacity += int(Catalog.find(building["def_id"]).get("food_capacity"))
+	return capacity

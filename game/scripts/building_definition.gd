@@ -15,3 +15,6 @@ extends Resource
 @export var worker_slots: int = 0
 @export var food_per_worker_day: int = 0
 @export var requires_water: bool = false
+
+# 仓储配置模块：只有完工建筑才将此容量计入全镇公共粮仓。
+@export var food_capacity: int = 0

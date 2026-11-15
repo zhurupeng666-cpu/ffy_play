@@ -1,9 +1,11 @@
 ## 文件用途：组织等距地图与战略管理界面，通过独立模块操作视图、世界和存档。
 extends Control
 
+const StorageProbe = preload("res://scripts/storage_export_probe.gd")
 const ProductionProbe = preload("res://scripts/production_export_probe.gd")
 const ConstructionProbe = preload("res://scripts/construction_export_probe.gd")
 const Construction = preload("res://scripts/construction_service.gd")
+const GRANARY = preload("res://data/buildings/granary.tres")
 const HOUSE = preload("res://data/buildings/house.tres")
 const FARM = preload("res://data/buildings/farm.tres")
 const RANCH = preload("res://data/buildings/ranch.tres")
@@ -21,6 +23,10 @@ var store: RefCounted = Store.new()
 var store_path_override: String = ""
 var date_label: Label
 var resource_label: Label
+var storage_label: Label
+var food_detail_label: Label
+var food_detail_button: Button
+var food_details_visible: bool = false
 var bill_label: Label
 var status_label: Label
 var pause_button: Button
@@ -50,6 +56,7 @@ func _ready() -> void:
 	var world_probe: String = ""
 	var build_probe: String = ""
 	var food_probe: String = ""
+	var storage_probe: String = ""
 	if OS.has_feature("portable_test"):
 		for argument: String in OS.get_cmdline_user_args():
 			if argument in ["--verify-world=write", "--verify-world=read"]:
@@ -58,15 +65,19 @@ func _ready() -> void:
 				build_probe = argument.get_slice("=", 1)
 			elif argument in ["--verify-food=write", "--verify-food=read"]:
 				food_probe = argument.get_slice("=", 1)
+			elif argument in ["--verify-storage=write", "--verify-storage=read"]:
+				storage_probe = argument.get_slice("=", 1)
 		if not world_probe.is_empty():
 			store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/world_export.db")
 	if not build_probe.is_empty():
 		store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/building_export.db")
 	if not food_probe.is_empty():
 		store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/food_export.db")
+	if not storage_probe.is_empty():
+		store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/storage_export.db")
 	if not store.open_store(store_path_override):
 		status_label.text = "存档不可用：" + store.error_message
-		if not world_probe.is_empty() or not build_probe.is_empty() or not food_probe.is_empty():
+		if not world_probe.is_empty() or not build_probe.is_empty() or not food_probe.is_empty() or not storage_probe.is_empty():
 			get_tree().quit(1)
 			return
 	_refresh()
@@ -76,6 +87,8 @@ func _ready() -> void:
 		get_tree().quit(ConstructionProbe.run(world, store, build_probe))
 	if not food_probe.is_empty():
 		get_tree().quit(ProductionProbe.run(world, store, food_probe))
+	if not storage_probe.is_empty():
+		get_tree().quit(StorageProbe.run(world, store, storage_probe))
 
 
 # 界面模块：左侧为占位地图，右侧为可滚动管理面板，二者输入互不穿透。
@@ -125,6 +138,7 @@ func _build_ui() -> void:
 	_label("领地管理（占位）")
 	date_label = _label("")
 	resource_label = _label("")
+	storage_label = _label("")
 	progress = ProgressBar.new()
 	progress.max_value = State.DAY_TICKS
 	progress.show_percentage = false
@@ -137,10 +151,13 @@ func _build_ui() -> void:
 	_button(saves, "保存战略进度", _save)
 	_button(saves, "读取战略进度", _load)
 	bill_label = _label("")
+	food_detail_button = _button(_row(), "展开粮食收支", _toggle_food_details)
+	food_detail_label = _label("")
 	status_label = _label("新世界已暂停；请选择速度后继续")
 	var building_actions: HBoxContainer = _row()
 	_button(building_actions, "建住宅 2×2", _start_preview.bind(HOUSE))
 	_button(building_actions, "建农场 4×4", _start_preview.bind(FARM))
+	_button(building_actions, "建粮仓 3×3", _start_preview.bind(GRANARY))
 	var food_actions: HBoxContainer = _row()
 	_button(food_actions, "建牧场 4×4", _start_preview.bind(RANCH))
 	_button(food_actions, "建渔场 3×2", _start_preview.bind(FISHERY))
@@ -224,6 +241,7 @@ func _refresh() -> void:
 	resource_label.text = "人口 %d  | 粮食 %d  | 金币 %d  | 木材 %d  | 石材 %d" % [world.population, world.resources["food"], world.resources["gold"], world.resources["wood"], world.resources["stone"]]
 	progress.value = (world.tick % State.DAY_TICKS) + world.subsecond
 	bill_label.text = world.last_bill
+	_refresh_storage()
 	pause_button.text = "继续（空格）" if world.paused else "暂停（空格）"
 	town_map.sync_resources(world.resources)
 	var ready_count: int = 0
@@ -325,7 +343,7 @@ func _start_preview(definition: Resource) -> void:
 	pending_build_command = Crypto.new().generate_random_bytes(16).hex_encode()
 	town_map.set_preview(definition)
 	var cost: Dictionary = definition.get("cost")
-	status_label.text = "建造%s：木材%d、金币%d；左键确认扣费" % [definition.get("display_name"), cost.get("wood", 0), cost.get("gold", 0)]
+	status_label.text = "建造%s：木材%d、石材%d、金币%d；左键确认扣费" % [definition.get("display_name"), cost.get("wood", 0), cost.get("stone", 0), cost.get("gold", 0)]
 
 
 # 取消入口模块：提供按钮与鼠标右键一致的操作。
@@ -356,7 +374,7 @@ func _on_placement_clicked(_result: Dictionary) -> void:
 	town_map.cancel_preview()
 	_refresh()
 	var cost: Dictionary = result["cost"]
-	status_label.text = "建造成功：%s工地已入队；木材-%d，金币-%d（请保存）" % [definition.get("display_name"), cost.get("wood", 0), cost.get("gold", 0)]
+	status_label.text = "建造成功：%s工地已入队；木材-%d，石材-%d，金币-%d（请保存）" % [definition.get("display_name"), cost.get("wood", 0), cost.get("stone", 0), cost.get("gold", 0)]
 
 
 # 取消提示模块：清除尚未提交的命令，不修改已建实例或资源。
@@ -428,3 +446,28 @@ func _change_producers(delta: int) -> void:
 			else:
 				status_label.text = "分配失败：须完工、未超过岗位上限且有空闲人口"
 	_refresh()
+
+
+# 展开模块：明细显示是界面偏好，不写入战略存档或影响游戏时钟。
+func _toggle_food_details() -> void:
+	food_details_visible = not food_details_visible
+	_refresh_storage()
+
+
+# 粮仓面板模块：容量来自已完工建筑，最近日结账单与当前库存分别展示。
+func _refresh_storage() -> void:
+	var capacity: int = world.food_capacity()
+	var stock: int = int(world.resources["food"])
+	storage_label.text = "储粮 %d / %d" % [stock, capacity]
+	if stock > capacity:
+		storage_label.text += "；旧存粮超容量，新粮暂不入库"
+	elif stock >= capacity - 15:
+		storage_label.text += "；储粮接近上限，请建粮仓"
+	food_detail_button.text = "收起粮食收支" if food_details_visible else "展开粮食收支"
+	food_detail_label.visible = food_details_visible
+	var ledger: Dictionary = world.last_food_ledger
+	if ledger.is_empty():
+		food_detail_label.text = "暂无新版日结明细；完成下一日后生成"
+		return
+	var sources: Dictionary = ledger["by_source"]
+	food_detail_label.text = "第%d日粮食收支\n期初%d，结算时容量%d\n农场+%d / 牧场+%d / 渔场+%d\n产出%d = 入库%d + 溢出%d\n居民需%d，实耗%d，缺粮%d\n期末%d，净变化%+d" % [ledger["day"], ledger["opening"], ledger["capacity"], sources["b_farm"], sources["b_ranch"], sources["b_fishery"], ledger["produced"], ledger["stored"], ledger["overflow"], ledger["needed"], ledger["consumed"], ledger["shortage"], ledger["closing"], ledger["net"]]

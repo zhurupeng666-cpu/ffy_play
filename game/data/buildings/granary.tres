@@ -1,0 +1,12 @@
+[gd_resource type="Resource" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/building_definition.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "b_granary"
+display_name = "粮仓"
+footprint = Vector2i(3, 3)
+cost = {"wood": 25, "stone": 10, "gold": 15}
+build_work = 60
+food_capacity = 300

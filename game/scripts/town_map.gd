@@ -240,7 +240,7 @@ func _draw_buildings() -> void:
 		var definition: Resource = Catalog.find(record["def_id"])
 		var anchor: Vector2i = Vector2i(int(record["cell"][0]), int(record["cell"][1]))
 		var footprint: Vector2i = definition.get("footprint")
-		var colors: Dictionary = {"b_hall": Color(0.30, 0.38, 0.48), "b_house": Color(0.55, 0.43, 0.29), "b_farm": Color(0.30, 0.47, 0.31), "b_ranch": Color(0.52, 0.46, 0.25), "b_fishery": Color(0.20, 0.52, 0.64)}
+		var colors: Dictionary = {"b_granary": Color(0.62, 0.52, 0.22), "b_hall": Color(0.30, 0.38, 0.48), "b_house": Color(0.55, 0.43, 0.29), "b_farm": Color(0.30, 0.47, 0.31), "b_ranch": Color(0.52, 0.46, 0.25), "b_fishery": Color(0.20, 0.52, 0.64)}
 		for cell: Vector2i in Placement.footprint_cells(anchor, footprint):
 			draw_colored_polygon(_diamond(cell), Color(0.55, 0.45, 0.20) if record["state"] == "constructing" else colors[record["def_id"]])
 		var center: Vector2 = (Grid.cell_to_world(anchor) + Grid.cell_to_world(anchor + footprint - Vector2i.ONE)) * 0.5
