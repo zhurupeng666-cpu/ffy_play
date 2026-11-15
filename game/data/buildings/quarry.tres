@@ -1,0 +1,15 @@
+[gd_resource type="Resource" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/building_definition.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "b_quarry"
+display_name = "采石场"
+footprint = Vector2i(3, 3)
+cost = {"wood": 25, "gold": 15}
+build_work = 80
+worker_slots = 3
+material_resource = "stone"
+material_per_worker_day = 5
+required_deposit = "stone"

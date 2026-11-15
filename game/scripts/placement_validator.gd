@@ -33,7 +33,7 @@ static func check(anchor: Vector2i, size: Vector2i, occupied: Dictionary) -> Dic
 static func check_building(anchor: Vector2i, definition: Resource, occupied: Dictionary) -> Dictionary:
 	var result: Dictionary = check(anchor, definition.get("footprint"), occupied)
 	if result["ok"]:
-		var terrain: Dictionary = preload("res://scripts/town_terrain.gd").check(result["cells"], definition.get("requires_water"))
+		var terrain: Dictionary = preload("res://scripts/town_terrain.gd").check(result["cells"], definition.get("requires_water"), definition.get("required_deposit"))
 		if not terrain["ok"]:
 			result["ok"] = false
 			result["code"] = terrain["code"]

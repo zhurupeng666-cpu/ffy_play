@@ -1,0 +1,16 @@
+[gd_resource type="Resource" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/building_definition.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "b_lumber"
+display_name = "伐木场"
+footprint = Vector2i(3, 3)
+cost = {"gold": 10}
+build_work = 60
+worker_slots = 3
+material_resource = "wood"
+material_per_worker_day = 8
+required_deposit = "forest"
+

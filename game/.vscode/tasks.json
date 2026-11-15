@@ -43,7 +43,8 @@
         "Godot: work test",
         "Godot: labor test",
         "Godot: food test",
-        "Godot: storage test"
+        "Godot: storage test",
+        "Godot: material test"
       ],
       "problemMatcher": [],
       "group": "test"
@@ -165,6 +166,14 @@
       "type": "process",
       "command": "${config:godotTools.editorPath.godot4}",
       "args": ["--headless", "--path", "${workspaceFolder}", "--script", "res://tests/storage_test.gd"],
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "Godot: material test",
+      "type": "process",
+      "command": "${config:godotTools.editorPath.godot4}",
+      "args": ["--headless", "--path", "${workspaceFolder}", "--script", "res://tests/material_test.gd"],
       "problemMatcher": [],
       "group": "test"
     }

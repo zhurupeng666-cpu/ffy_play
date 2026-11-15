@@ -18,3 +18,8 @@ extends Resource
 
 # 仓储配置模块：只有完工建筑才将此容量计入全镇公共粮仓。
 @export var food_capacity: int = 0
+
+# 材料生产配置模块：材料类型为空时不产材料，资源点限制由静态地形校验。
+@export var material_resource: String = ""
+@export var material_per_worker_day: int = 0
+@export var required_deposit: String = ""

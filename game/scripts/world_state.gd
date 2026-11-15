@@ -1,9 +1,10 @@
-## 文件用途：保存世界日期、人口、资源与建筑实例，并提供v1到v6快照迁移和完整校验。
+## 文件用途：保存世界日期、人口、资源与建筑实例，并提供v1到v7快照迁移和完整校验。
 extends RefCounted
 
 # 状态模块：数值均为待平衡参数，资源以完整单位保存。
 const DAY_TICKS: int = 120
 const Catalog = preload("res://scripts/building_catalog.gd")
+const MaterialLedger = preload("res://scripts/material_ledger.gd")
 const FoodLedger = preload("res://scripts/food_ledger.gd")
 const Placement = preload("res://scripts/placement_validator.gd")
 var tick: int = 0
@@ -18,11 +19,12 @@ var labor_credit: int = 0
 var resources: Dictionary = {"food": 180, "gold": 300, "wood": 120, "stone": 80}
 var speed: int = 1
 var paused: bool = true
+var last_material_ledger: Dictionary = {}
 var last_food_ledger: Dictionary = {}
 var last_bill: String = "尚未日结；生产建筑完工并分配工人后可产粮"
 
 # 建筑模块：初始领主厅免费存在，实例ID不复用，回执只记录成功命令。
-var buildings: Array = [{"id": "building_000001", "def_id": "b_hall", "cell": [6, 6], "level": 1, "state": "ready", "work_done": 0, "work_required": 0, "workers": 0, "food_credit": 0}]
+var buildings: Array = [{"id": "building_000001", "def_id": "b_hall", "cell": [6, 6], "level": 1, "state": "ready", "work_done": 0, "work_required": 0, "workers": 0, "food_credit": 0, "material_credit": 0}]
 var next_building_id: int = 2
 var applied_commands: Dictionary = {}
 
@@ -38,6 +40,9 @@ func settle_days() -> void:
 		var sources: Dictionary = collect_food()
 		last_food_ledger = FoodLedger.calculate(last_settled_day + 1, int(resources["food"]), food_capacity(), sources, population)
 		resources["food"] = last_food_ledger["closing"]
+		last_material_ledger = MaterialLedger.calculate(last_settled_day + 1, resources, collect_materials())
+		for key: String in MaterialLedger.KEYS:
+			resources[key] = last_material_ledger[key]["closing"]
 		var tax: int = roundi(population * 0.8 * (50.0 / 60.0))
 		resources["gold"] += tax
 		last_settled_day += 1
@@ -47,7 +52,7 @@ func settle_days() -> void:
 
 # 快照模块：只导出基础数据，不保存节点、数据库连接或脚本引用。
 func snapshot() -> Dictionary:
-	return {"version": 6, "tick": tick, "subsecond": subsecond, "last_settled_day": last_settled_day, "population": population, "dependents": dependents, "builders": builders, "labor_credit": labor_credit, "resources": resources.duplicate(), "speed": speed, "paused": paused, "last_bill": last_bill, "last_food_ledger": last_food_ledger.duplicate(true), "buildings": buildings.duplicate(true), "next_building_id": next_building_id, "applied_commands": applied_commands.duplicate(true)}
+	return {"version": 7, "tick": tick, "subsecond": subsecond, "last_settled_day": last_settled_day, "population": population, "dependents": dependents, "builders": builders, "labor_credit": labor_credit, "resources": resources.duplicate(), "speed": speed, "paused": paused, "last_bill": last_bill, "last_food_ledger": last_food_ledger.duplicate(true), "last_material_ledger": last_material_ledger.duplicate(true), "buildings": buildings.duplicate(true), "next_building_id": next_building_id, "applied_commands": applied_commands.duplicate(true)}
 
 
 # 载入模块：在临时对象中完整校验，失败返回空值，不改变当前世界。
@@ -57,7 +62,7 @@ static func from_snapshot(data: Variant) -> RefCounted:
 	for key: String in ["version", "tick", "last_settled_day", "population", "speed"]:
 		if not _valid_integer(data.get(key), 0, 120000000):
 			return null
-	if int(data["version"]) not in [1, 2, 3, 4, 5, 6] or int(data["speed"]) not in [1, 2, 4] or data["population"] != 30:
+	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7] or int(data["speed"]) not in [1, 2, 4] or data["population"] != 30:
 		return null
 	if data["last_settled_day"] != int(float(data["tick"]) / DAY_TICKS):
 		return null
@@ -97,6 +102,11 @@ static func from_snapshot(data: Variant) -> RefCounted:
 		var saved_ledger: Dictionary = data["last_food_ledger"]
 		if not saved_ledger.is_empty():
 			state.last_food_ledger = FoodLedger.calculate(int(saved_ledger["day"]), int(saved_ledger["opening"]), int(saved_ledger["capacity"]), saved_ledger["by_source"], state.population)
+	# 材料账单迁移模块：旧档不补发材料，也不编造历史生产。
+	if int(data["version"]) >= 7:
+		if not MaterialLedger.valid(data.get("last_material_ledger"), state.last_settled_day):
+			return null
+		state.last_material_ledger = MaterialLedger.restore(data["last_material_ledger"])
 	# 迁移模块：旧战略档没有建筑，保留经济时间并补初始领主厅，不立即覆写磁盘。
 	if int(data["version"]) == 1:
 		return state
@@ -150,8 +160,8 @@ func _restore_buildings(data: Dictionary) -> bool:
 		var check: Dictionary = Placement.check(anchor, definition.get("footprint"), occupied)
 		if not check["ok"]:
 			return false
-		# 渔场存档模块：新增渔场仍必须位于岸上临水地块，旧陆地建筑保留原址。
-		if definition.get("requires_water") and not preload("res://scripts/town_terrain.gd").check(check["cells"], true)["ok"]:
+		# 地形存档模块：新增采集建筑须临对应资源，渔场仍须临水；旧普通建筑保留原址。
+		if (definition.get("requires_water") or not str(definition.get("required_deposit")).is_empty()) and not preload("res://scripts/town_terrain.gd").check(check["cells"], definition.get("requires_water"), definition.get("required_deposit"))["ok"]:
 			return false
 		if raw["def_id"] == "b_hall":
 			hall_count += 1
@@ -182,7 +192,18 @@ func _restore_buildings(data: Dictionary) -> bool:
 			credit = int(raw["food_credit"])
 			if (raw["state"] != "ready" or int(definition.get("worker_slots")) == 0) and (workers != 0 or credit != 0):
 				return false
-		var record: Dictionary = {"id": id, "def_id": raw["def_id"], "cell": [anchor.x, anchor.y], "level": 1, "state": raw["state"], "work_done": done, "work_required": required, "workers": workers, "food_credit": credit}
+		# 材料进度模块：新版保存整数信用，非材料建筑和工地不允许持有材料产出。
+		var material_credit: int = 0
+		var material_rate: int = int(definition.get("material_per_worker_day"))
+		if int(data["version"]) >= 7:
+			if not _valid_integer(raw.get("material_credit"), 0, int(definition.get("worker_slots")) * material_rate * DAY_TICKS + DAY_TICKS - 1):
+				return false
+			material_credit = int(raw["material_credit"])
+			if (raw["state"] != "ready" or material_rate == 0) and material_credit != 0:
+				return false
+		if int(definition.get("food_per_worker_day")) == 0 and credit != 0:
+			return false
+		var record: Dictionary = {"id": id, "def_id": raw["def_id"], "cell": [anchor.x, anchor.y], "level": 1, "state": raw["state"], "work_done": done, "work_required": required, "workers": workers, "food_credit": credit, "material_credit": material_credit}
 		records.append(record)
 		by_id[id] = record
 		for cell: Vector2i in check["cells"]:
@@ -278,6 +299,7 @@ func advance_production() -> void:
 		if building["state"] == "ready" and int(building["workers"]) > 0:
 			var rate: int = int(Catalog.find(building["def_id"]).get("food_per_worker_day"))
 			building["food_credit"] += int(building["workers"]) * rate
+			building["material_credit"] += int(building["workers"]) * int(Catalog.find(building["def_id"]).get("material_per_worker_day"))
 
 
 # 收获模块：按生产来源统计整份粮食，零头跨日保留，溢出也不重复发放。
@@ -297,3 +319,14 @@ func food_capacity() -> int:
 		if building["state"] == "ready":
 			capacity += int(Catalog.find(building["def_id"]).get("food_capacity"))
 	return capacity
+
+
+# 材料收获模块：木材和石材独立兑付整数，零头跨日保留，不影响粮食库存。
+func collect_materials() -> Dictionary:
+	var outputs: Dictionary = {"wood": 0, "stone": 0}
+	for building: Dictionary in buildings:
+		var key: String = str(Catalog.find(building["def_id"]).get("material_resource"))
+		if outputs.has(key):
+			outputs[key] += int(int(building["material_credit"]) / float(DAY_TICKS))
+			building["material_credit"] = int(building["material_credit"]) % DAY_TICKS
+	return outputs

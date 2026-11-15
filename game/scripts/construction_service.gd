@@ -45,7 +45,7 @@ static func execute(world: RefCounted, definition_id: String, anchor: Vector2i, 
 		resources[key] -= definition.get("cost")[key]
 	var id: String = "building_%06d" % world.next_building_id
 	var buildings: Array = world.buildings.duplicate(true)
-	buildings.append({"id": id, "def_id": definition_id, "cell": cell, "level": 1, "state": "constructing", "work_done": 0, "work_required": int(definition.get("build_work")), "workers": 0, "food_credit": 0})
+	buildings.append({"id": id, "def_id": definition_id, "cell": cell, "level": 1, "state": "constructing", "work_done": 0, "work_required": int(definition.get("build_work")), "workers": 0, "food_credit": 0, "material_credit": 0})
 	var receipts: Dictionary = world.applied_commands.duplicate(true)
 	receipts[command_id] = {"def_id": definition_id, "cell": cell, "building_id": id}
 	world.resources = resources

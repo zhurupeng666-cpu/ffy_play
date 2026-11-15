@@ -8,6 +8,7 @@ signal placement_changed(result: Dictionary)
 signal placement_clicked(result: Dictionary)
 signal placement_cancelled
 
+const Terrain = preload("res://scripts/town_terrain.gd")
 const Catalog = preload("res://scripts/building_catalog.gd")
 const Construction = preload("res://scripts/construction_service.gd")
 const Placement = preload("res://scripts/placement_validator.gd")
@@ -74,7 +75,12 @@ func _draw() -> void:
 			var shade: Color = Color(0.22, 0.24, 0.25) if (x + y) % 2 == 0 else Color(0.27, 0.29, 0.30)
 			if preload("res://scripts/town_terrain.gd").is_water(cell):
 				shade = Color(0.15, 0.40, 0.65)
+			var deposit: String = Terrain.deposit_at(cell)
+			if not deposit.is_empty():
+				shade = Color(0.16, 0.48, 0.20) if deposit == "forest" else Color(0.63, 0.65, 0.67)
 			draw_colored_polygon(points, shade)
+			if not deposit.is_empty():
+				draw_string(ThemeDB.fallback_font, world_to_screen(Grid.cell_to_world(cell)) + Vector2(-6, 4), "林" if deposit == "forest" else "矿", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE)
 			points.append(points[0])
 			draw_polyline(points, Color(0.40, 0.42, 0.43), 1.0, true)
 	# 占用显示模块：真实建筑的范围由实例推导，并按建筑类型绘制占位块。
@@ -240,7 +246,7 @@ func _draw_buildings() -> void:
 		var definition: Resource = Catalog.find(record["def_id"])
 		var anchor: Vector2i = Vector2i(int(record["cell"][0]), int(record["cell"][1]))
 		var footprint: Vector2i = definition.get("footprint")
-		var colors: Dictionary = {"b_granary": Color(0.62, 0.52, 0.22), "b_hall": Color(0.30, 0.38, 0.48), "b_house": Color(0.55, 0.43, 0.29), "b_farm": Color(0.30, 0.47, 0.31), "b_ranch": Color(0.52, 0.46, 0.25), "b_fishery": Color(0.20, 0.52, 0.64)}
+		var colors: Dictionary = {"b_lumber": Color(0.26, 0.48, 0.22), "b_quarry": Color(0.48, 0.49, 0.51), "b_granary": Color(0.62, 0.52, 0.22), "b_hall": Color(0.30, 0.38, 0.48), "b_house": Color(0.55, 0.43, 0.29), "b_farm": Color(0.30, 0.47, 0.31), "b_ranch": Color(0.52, 0.46, 0.25), "b_fishery": Color(0.20, 0.52, 0.64)}
 		for cell: Vector2i in Placement.footprint_cells(anchor, footprint):
 			draw_colored_polygon(_diamond(cell), Color(0.55, 0.45, 0.20) if record["state"] == "constructing" else colors[record["def_id"]])
 		var center: Vector2 = (Grid.cell_to_world(anchor) + Grid.cell_to_world(anchor + footprint - Vector2i.ONE)) * 0.5
