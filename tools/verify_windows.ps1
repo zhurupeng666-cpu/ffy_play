@@ -15,16 +15,29 @@ foreach ($variant in @('debug', 'release')) {
         $marker = if ($kind -eq 'world') { 'EXPORT_WORLD_PASS' } elseif ($kind -eq 'build') { 'EXPORT_BUILD_PASS' } else { 'EXPORT_SQLITE_PASS' }
         $out = Join-Path $testDirectory "$kind-$mode.stdout.log"
         $err = Join-Path $testDirectory "$kind-$mode.stderr.log"
-        $process = Start-Process -FilePath $executable -ArgumentList @('--headless','--',"--verify-$kind=$mode") -WindowStyle Hidden -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+        # 进程模块：自行持有进程句柄，避免Windows PowerShell丢失快速退出进程的退出码。
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo.FileName = $executable
+        $process.StartInfo.Arguments = "--headless -- --verify-$kind=$mode"
+        $process.StartInfo.UseShellExecute = $false
+        $process.StartInfo.CreateNoWindow = $true
+        $process.StartInfo.RedirectStandardOutput = $true
+        $process.StartInfo.RedirectStandardError = $true
+        $null = $process.Start()
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
         if (-not $process.WaitForExit(20000)) {
             Stop-Process -Id $process.Id
             throw '导出程序测试超时'
         }
-        $process.Refresh()
+        $process.WaitForExit()
+        [IO.File]::WriteAllText($out, $stdoutTask.Result, [Text.UTF8Encoding]::new($true))
+        [IO.File]::WriteAllText($err, $stderrTask.Result, [Text.UTF8Encoding]::new($true))
         $output = Get-Content -LiteralPath $out -Raw
         if ($process.ExitCode -ne 0 -or $output -notmatch ($marker + ': ' + $mode)) {
             throw "导出程序验收失败：$variant / $mode，请检查 $testDirectory"
         }
+        $process.Dispose()
         Write-Output "EXPORT_CHECK_PASS: $variant / $kind / $mode"
     }
 }

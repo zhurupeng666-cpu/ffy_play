@@ -1,4 +1,4 @@
-## 文件用途：保存世界日期、人口、资源与建筑实例，并提供v1到v2快照迁移和完整校验。
+## 文件用途：保存世界日期、人口、资源与建筑实例，并提供v1到v4快照迁移和完整校验。
 extends RefCounted
 
 # 状态模块：数值均为待平衡参数，资源以完整单位保存。
@@ -9,6 +9,11 @@ var tick: int = 0
 var subsecond: float = 0.0
 var last_settled_day: int = 0
 var population: int = 30
+
+# 劳动力模块：居民分为可就业与被抚养人口，施工岗位最多两人，其余保持空闲。
+var dependents: int = 6
+var builders: int = 2
+var labor_credit: int = 0
 var resources: Dictionary = {"food": 180, "gold": 300, "wood": 120, "stone": 80}
 var speed: int = 1
 var paused: bool = true
@@ -41,7 +46,7 @@ func settle_days() -> void:
 
 # 快照模块：只导出基础数据，不保存节点、数据库连接或脚本引用。
 func snapshot() -> Dictionary:
-	return {"version": 3, "tick": tick, "subsecond": subsecond, "last_settled_day": last_settled_day, "population": population, "resources": resources.duplicate(), "speed": speed, "paused": paused, "last_bill": last_bill, "buildings": buildings.duplicate(true), "next_building_id": next_building_id, "applied_commands": applied_commands.duplicate(true)}
+	return {"version": 4, "tick": tick, "subsecond": subsecond, "last_settled_day": last_settled_day, "population": population, "dependents": dependents, "builders": builders, "labor_credit": labor_credit, "resources": resources.duplicate(), "speed": speed, "paused": paused, "last_bill": last_bill, "buildings": buildings.duplicate(true), "next_building_id": next_building_id, "applied_commands": applied_commands.duplicate(true)}
 
 
 # 载入模块：在临时对象中完整校验，失败返回空值，不改变当前世界。
@@ -51,7 +56,7 @@ static func from_snapshot(data: Variant) -> RefCounted:
 	for key: String in ["version", "tick", "last_settled_day", "population", "speed"]:
 		if not _valid_integer(data.get(key), 0, 120000000):
 			return null
-	if int(data["version"]) not in [1, 2, 3] or int(data["speed"]) not in [1, 2, 4] or data["population"] != 30:
+	if int(data["version"]) not in [1, 2, 3, 4] or int(data["speed"]) not in [1, 2, 4] or data["population"] != 30:
 		return null
 	if data["last_settled_day"] != int(float(data["tick"]) / DAY_TICKS):
 		return null
@@ -70,6 +75,15 @@ static func from_snapshot(data: Variant) -> RefCounted:
 	state.subsecond = float(fraction)
 	state.last_settled_day = int(data["last_settled_day"])
 	state.population = int(data["population"])
+	# 迁移模块：旧档默认两名施工工人，保留原进度和速度，不重新扣费。
+	if int(data["version"]) >= 4:
+		if not _valid_integer(data.get("dependents"), 0, state.population) or not _valid_integer(data.get("builders"), 0, 2) or not _valid_integer(data.get("labor_credit"), 0, 1):
+			return null
+		state.dependents = int(data["dependents"])
+		state.builders = int(data["builders"])
+		state.labor_credit = int(data["labor_credit"])
+		if state.builders > state.population - state.dependents:
+			return null
 	for key: String in ["food", "gold", "wood", "stone"]:
 		state.resources[key] = int(data["resources"][key])
 	state.speed = int(data["speed"])
@@ -132,7 +146,7 @@ func _restore_buildings(data: Dictionary) -> bool:
 			hall_count += 1
 			if id != "building_000001" or anchor != Vector2i(6, 6):
 				return false
-		# 施工迁移模块：旧v2的即时建筑保留完工状态，新v3严格检查状态与进度一致。
+		# 施工迁移模块：旧v2的即时建筑保留完工状态，新版严格检查状态与进度一致。
 		var done: int = 0
 		var required: int = 0
 		if int(data["version"]) == 2:
@@ -178,11 +192,40 @@ func _restore_buildings(data: Dictionary) -> bool:
 	return true
 
 
-# 施工推进模块：单支抽象施工队按实例创建顺序工作，每个战略秒只投入一份工作。
+# 施工推进模块：每名工人每战略秒投入半份工作，整数余数避免浮点误差并支持中途存档。
 func advance_construction() -> void:
 	for building: Dictionary in buildings:
 		if building["state"] == "constructing":
+			if builders == 0:
+				return
+			labor_credit += builders
+			if labor_credit < 2:
+				return
+			labor_credit -= 2
 			building["work_done"] = mini(int(building["work_done"]) + 1, int(building["work_required"]))
 			if building["work_done"] == building["work_required"]:
 				building["state"] = "ready"
 			return
+	labor_credit = 0
+
+
+# 分配模块：拒绝超额或负人数，合法调整不增减总人口、不扣金币。
+func assign_builders(count: int) -> bool:
+	if count < 0 or count > 2 or count > population - dependents:
+		return false
+	builders = count
+	return true
+
+
+# 统计模块：施工岗位计入可就业人口，保持人口与岗位守恒。
+func idle_workers() -> int:
+	return population - dependents - builders
+
+
+# 住房模块：只有完工住宅增加容量，未完工工地不提供住房。
+func housing_capacity() -> int:
+	var capacity: int = 30
+	for building: Dictionary in buildings:
+		if building["def_id"] == "b_house" and building["state"] == "ready":
+			capacity += 10
+	return capacity

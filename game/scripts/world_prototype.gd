@@ -28,6 +28,7 @@ var map_info: Label
 var placement_label: Label
 var building_label: Label
 var construction_label: Label
+var labor_label: Label
 var displayed_building_tick: int = -1
 var pending_build_command: String = ""
 
@@ -115,6 +116,10 @@ func _build_ui() -> void:
 	placement_label = _label("选择建筑；左键确认会扣材料")
 	building_label = _label("")
 	construction_label = _label("")
+	labor_label = _label("")
+	var labor_actions: HBoxContainer = _row()
+	_button(labor_actions, "工人 -1", _change_builders.bind(-1))
+	_button(labor_actions, "工人 +1", _change_builders.bind(1))
 	date_label = _label("")
 	resource_label = _label("")
 	progress = ProgressBar.new()
@@ -131,7 +136,7 @@ func _build_ui() -> void:
 	bill_label = _label("")
 	status_label = _label("新世界已暂停；请选择速度后继续")
 	_label("1日120秒；每日粮食-15、税收+20。数值待平衡。")
-	_label("中央为初始领主厅。左键确认建造；单队顺序施工；住宅40、农场80战略秒，数值待平衡。尚无生产与人口效果。")
+	_label("中央为初始领主厅。左键确认建造；单队施工：2人原速、1人半速、0人停工。完工住宅+10容量；暂无人口增长与生产。")
 	_sync_building_view()
 	_refresh_map_info()
 
@@ -207,7 +212,10 @@ func _refresh() -> void:
 			if queued_count == 1:
 				active_text = "施工中：%s %d%%" % [Construction.Catalog.find(building["def_id"]).get("display_name"), floori(100.0 * building["work_done"] / building["work_required"])]
 	building_label.text = "建筑%d座：完工%d，待完工%d" % [world.buildings.size(), ready_count, queued_count]
+	labor_label.text = "人口%d / 住房%d；可就业%d，被抚养%d；施工%d，空闲%d" % [world.population, world.housing_capacity(), world.population - world.dependents, world.dependents, world.builders, world.idle_workers()]
 	construction_label.text = active_text + ("；另有%d座等待" % (queued_count - 1) if queued_count > 1 else "")
+	if queued_count > 0 and world.builders == 0:
+		construction_label.text += "；缺施工工人，已停工"
 	if displayed_building_tick != world.tick:
 		displayed_building_tick = world.tick
 		town_map.sync_buildings(world.buildings)
@@ -336,3 +344,12 @@ func _on_placement_cancelled() -> void:
 func _sync_building_view() -> void:
 	town_map.sync_buildings(world.buildings)
 	town_map.sync_resources(world.resources)
+
+
+# 岗位操作模块：按钮只发出分配请求，守恒与上限由世界模型验证。
+func _change_builders(delta: int) -> void:
+	if world.assign_builders(world.builders + delta):
+		status_label.text = "施工工人已调整为%d；分配会随战略进度保存" % world.builders
+	else:
+		status_label.text = "施工人数需在0至2之间，且不能超过可就业人口"
+	_refresh()

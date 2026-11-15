@@ -40,7 +40,8 @@
         "Godot: map test",
         "Godot: placement test",
         "Godot: construction test",
-        "Godot: work test"
+        "Godot: work test",
+        "Godot: labor test"
       ],
       "problemMatcher": [],
       "group": "test"
@@ -138,6 +139,14 @@
         "--script",
         "res://tests/construction_progress_test.gd"
       ],
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "Godot: labor test",
+      "type": "process",
+      "command": "${config:godotTools.editorPath.godot4}",
+      "args": ["--headless", "--path", "${workspaceFolder}", "--script", "res://tests/labor_test.gd"],
       "problemMatcher": [],
       "group": "test"
     }
