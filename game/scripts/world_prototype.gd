@@ -1,6 +1,8 @@
 ## 文件用途：组织等距地图与战略管理界面，通过独立模块操作视图、世界和存档。
 extends Control
 
+const InspectionProbe = preload("res://scripts/inspection_export_probe.gd")
+const Inspector = preload("res://scripts/building_inspector.gd")
 const MaterialProbe = preload("res://scripts/material_export_probe.gd")
 const StorageProbe = preload("res://scripts/storage_export_probe.gd")
 const ProductionProbe = preload("res://scripts/production_export_probe.gd")
@@ -48,6 +50,12 @@ var producer_detail: Label
 var producer_signature: String = ""
 var displayed_building_tick: int = -1
 var pending_build_command: String = ""
+var inspected_building_id: String = ""
+var management_scroll: ScrollContainer
+var inspection_card: PanelContainer
+var inspection_label: Label
+var inspection_increase: Button
+var inspection_decrease: Button
 
 
 # 启动模块：普通运行进入战略原型，旧导出验收参数仍转入原存档测试场景。
@@ -62,6 +70,7 @@ func _ready() -> void:
 	var food_probe: String = ""
 	var storage_probe: String = ""
 	var material_probe: String = ""
+	var inspection_probe: String = ""
 	if OS.has_feature("portable_test"):
 		for argument: String in OS.get_cmdline_user_args():
 			if argument in ["--verify-world=write", "--verify-world=read"]:
@@ -74,6 +83,8 @@ func _ready() -> void:
 				storage_probe = argument.get_slice("=", 1)
 			elif argument in ["--verify-material=write", "--verify-material=read"]:
 				material_probe = argument.get_slice("=", 1)
+			elif argument in ["--verify-inspect=write", "--verify-inspect=read"]:
+				inspection_probe = argument.get_slice("=", 1)
 		if not world_probe.is_empty():
 			store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/world_export.db")
 	if not build_probe.is_empty():
@@ -84,9 +95,11 @@ func _ready() -> void:
 		store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/storage_export.db")
 	if not material_probe.is_empty():
 		store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/material_export.db")
+	if not inspection_probe.is_empty():
+		store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/inspection_export.db")
 	if not store.open_store(store_path_override):
 		status_label.text = "存档不可用：" + store.error_message
-		if not world_probe.is_empty() or not build_probe.is_empty() or not food_probe.is_empty() or not storage_probe.is_empty() or not material_probe.is_empty():
+		if not world_probe.is_empty() or not build_probe.is_empty() or not food_probe.is_empty() or not storage_probe.is_empty() or not material_probe.is_empty() or not inspection_probe.is_empty():
 			get_tree().quit(1)
 			return
 	_refresh()
@@ -100,6 +113,8 @@ func _ready() -> void:
 		get_tree().quit(StorageProbe.run(world, store, storage_probe))
 	if not material_probe.is_empty():
 		get_tree().quit(MaterialProbe.run(world, store, material_probe))
+	if not inspection_probe.is_empty():
+		get_tree().quit(InspectionProbe.run(self, inspection_probe))
 
 
 # 界面模块：左侧为占位地图，右侧为可滚动管理面板，二者输入互不穿透。
@@ -129,16 +144,17 @@ func _build_ui() -> void:
 	map_column.add_child(map_actions)
 	_button(map_actions, "镜头复位（Home）", town_map.reset_view)
 	var help: Label = Label.new()
-	help.text = "左键建造 / 右键取消 / 中键拖动 / 滚轮缩放\n绿格林地、灰白石矿：对应生产建筑须紧邻资源点"
+	help.text = "左键查看建筑或建造 / 右键取消 / 中键拖动 / 滚轮缩放\n绿格林地、灰白石矿：对应生产建筑须紧邻资源点"
 	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	map_column.add_child(help)
 	town_map.hovered_changed.connect(_on_map_cell_changed)
-	town_map.selected_changed.connect(_on_map_cell_changed)
+	town_map.selected_changed.connect(_on_town_selected)
 	town_map.view_changed.connect(_refresh_map_info)
 	town_map.placement_changed.connect(_on_placement_changed)
 	town_map.placement_clicked.connect(_on_placement_clicked)
 	town_map.placement_cancelled.connect(_on_placement_cancelled)
 	var scroll: ScrollContainer = ScrollContainer.new()
+	management_scroll = scroll
 	scroll.custom_minimum_size.x = 320
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	columns.add_child(scroll)
@@ -161,6 +177,7 @@ func _build_ui() -> void:
 	var saves: HBoxContainer = _row()
 	_button(saves, "保存战略进度", _save)
 	_button(saves, "读取战略进度", _load)
+	_build_inspection_card()
 	bill_label = _label("")
 	food_detail_button = _button(_row(), "展开粮食收支", _toggle_food_details)
 	food_detail_label = _label("")
@@ -187,7 +204,7 @@ func _build_ui() -> void:
 	production_label = _label("")
 	producer_picker = OptionButton.new()
 	panel.add_child(producer_picker)
-	producer_picker.item_selected.connect(func(_index: int) -> void: _refresh_production())
+	producer_picker.item_selected.connect(_on_producer_selected)
 	producer_detail = _label("")
 	var production_actions: HBoxContainer = _row()
 	_button(production_actions, "生产工人 -1", _change_producers.bind(-1))
@@ -252,6 +269,7 @@ func _process(delta: float) -> void:
 
 # 刷新模块：日期、库存与账单全部来自同一份世界数据。
 func _refresh() -> void:
+	_refresh_inspection()
 	date_label.text = "第%d日  %02d时  | %d倍速 | %s" % [world.current_day(), int((world.tick % State.DAY_TICKS) * 24.0 / State.DAY_TICKS), world.speed, "已暂停" if world.paused else "运行中"]
 	resource_label.text = "人口 %d  | 粮食 %d  | 金币 %d  | 木材 %d  | 石材 %d" % [world.population, world.resources["food"], world.resources["gold"], world.resources["wood"], world.resources["stone"]]
 	progress.value = (world.tick % State.DAY_TICKS) + world.subsecond
@@ -303,6 +321,7 @@ func _load() -> void:
 	if candidate == null:
 		status_label.text = store.error_message
 		return
+	_clear_inspection()
 	world = candidate
 	clock = Clock.new(world)
 	town_map.cancel_preview()
@@ -355,6 +374,7 @@ func _verify_export(mode: String) -> int:
 
 # 建筑选择模块：为一次放置生成唯一命令，失败时可调整位置重试。
 func _start_preview(definition: Resource) -> void:
+	_clear_inspection()
 	pending_build_command = Crypto.new().generate_random_bytes(16).hex_encode()
 	town_map.set_preview(definition)
 	var cost: Dictionary = definition.get("cost")
@@ -388,6 +408,7 @@ func _on_placement_clicked(_result: Dictionary) -> void:
 	_sync_building_view()
 	town_map.cancel_preview()
 	_refresh()
+	_inspect_building(str(result["building_id"]), true)
 	var cost: Dictionary = result["cost"]
 	status_label.text = "建造成功：%s工地已入队；木材-%d，石材-%d，金币-%d（请保存）" % [definition.get("display_name"), cost.get("wood", 0), cost.get("stone", 0), cost.get("gold", 0)]
 
@@ -458,6 +479,7 @@ func _change_producers(delta: int) -> void:
 		status_label.text = "请先建造并选择生产建筑"
 		return
 	var id: String = str(producer_picker.get_item_metadata(producer_picker.selected))
+	_on_producer_selected(producer_picker.selected)
 	for building: Dictionary in world.buildings:
 		if building["id"] == id:
 			if world.assign_producers(id, int(building["workers"]) + delta):
@@ -500,3 +522,83 @@ func _production_info(definition: Resource) -> Dictionary:
 	if material.is_empty():
 		return {"unit": "粮", "rate": int(definition.get("food_per_worker_day")), "credit": "food_credit"}
 	return {"unit": "木材" if material == "wood" else "石材", "rate": int(definition.get("material_per_worker_day")), "credit": "material_credit"}
+
+
+# 详情布局模块：沿用管理面板，选中建筑时可直接操作岗位，不另开弹窗。
+func _build_inspection_card() -> void:
+	inspection_card = PanelContainer.new()
+	panel.add_child(inspection_card)
+	var contents: VBoxContainer = VBoxContainer.new()
+	inspection_card.add_child(contents)
+	inspection_label = Label.new()
+	inspection_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	contents.add_child(inspection_label)
+	var actions: HBoxContainer = HBoxContainer.new()
+	contents.add_child(actions)
+	inspection_decrease = _button(actions, "本建筑工人 -1", _change_inspected_workers.bind(-1))
+	inspection_increase = _button(actions, "本建筑工人 +1", _change_inspected_workers.bind(1))
+	_refresh_inspection()
+
+
+# 地图选择模块：仅普通选格触发详情，建筑任一占地格都按权威世界识别。
+func _on_town_selected(cell: Vector2i) -> void:
+	_refresh_map_info()
+	_inspect_building(Inspector.at_cell(world, cell), true)
+
+
+# 下拉选择模块：生产列表与地图详情使用同一建筑ID，避免两处操作不同对象。
+func _on_producer_selected(index: int) -> void:
+	if town_map.active_definition != null:
+		town_map.cancel_preview()
+	_inspect_building(str(producer_picker.get_item_metadata(index)), false)
+	_refresh_production()
+
+
+# 身份绑定模块：只记稳定ID，更新全建筑高亮并同步已有生产列表。
+func _inspect_building(id: String, reveal: bool) -> void:
+	inspected_building_id = id if not Inspector.find(world, id).is_empty() else ""
+	if not inspected_building_id.is_empty() and Inspector.at_cell(world, town_map.selected) != inspected_building_id:
+		var record: Dictionary = Inspector.find(world, inspected_building_id)
+		town_map.selected = Vector2i(int(record["cell"][0]), int(record["cell"][1]))
+	town_map.highlight_building(inspected_building_id)
+	_refresh_map_info()
+	if producer_picker != null:
+		for index: int in range(producer_picker.item_count):
+			if producer_picker.get_item_metadata(index) == inspected_building_id:
+				producer_picker.select(index)
+		_refresh_production()
+	_refresh_inspection()
+	if reveal and not inspected_building_id.is_empty():
+		management_scroll.call_deferred("ensure_control_visible", inspection_card)
+
+
+# 详情刷新模块：施工、暂停、岗位和读档后始终从当前世界重算显示及按钮状态。
+func _refresh_inspection() -> void:
+	if inspection_label == null:
+		return
+	var detail: Dictionary = Inspector.describe(world, inspected_building_id)
+	inspection_label.text = detail["text"]
+	inspection_increase.disabled = not detail["increase"]
+	inspection_decrease.disabled = not detail["decrease"]
+	inspection_increase.get_parent().visible = bool(detail.get("producer", false))
+
+
+# 清理模块：读档或进入建造模式时清除临时选择，不让相同ID误指向新世界建筑。
+func _clear_inspection() -> void:
+	inspected_building_id = ""
+	town_map.selected = Vector2i(-1, -1)
+	town_map.highlight_building("")
+	_refresh_map_info()
+	_refresh_inspection()
+
+
+# 直接分配模块：岗位修改仍由世界校验，禁用按钮之外也不能绕过岗位或人口上限。
+func _change_inspected_workers(delta: int) -> void:
+	var building: Dictionary = Inspector.find(world, inspected_building_id)
+	if building.is_empty():
+		return
+	if world.assign_producers(inspected_building_id, int(building["workers"]) + delta):
+		status_label.text = "本建筑岗位已调整，请保存战略进度"
+	else:
+		status_label.text = "分配失败：须完工且符合岗位与空闲人数限制"
+	_refresh()

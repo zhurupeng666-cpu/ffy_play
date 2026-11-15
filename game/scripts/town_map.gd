@@ -19,6 +19,7 @@ var zoom_level: float = 0.75
 var pan_offset: Vector2 = Vector2.ZERO
 var hovered: Vector2i = Grid.INVALID
 var selected: Vector2i = Grid.INVALID
+var inspected_building_id: String = ""
 var dragging: bool = false
 
 # 建筑视图模块：占用来自世界实例，视图只读并将确认请求交回控制器。
@@ -91,7 +92,7 @@ func _draw() -> void:
 		var color: Color = Color(0.25, 0.85, 0.4, 0.65) if preview_result.get("ok", false) else Color(0.95, 0.22, 0.2, 0.7)
 		for cell: Vector2i in preview_result.get("cells", []):
 			draw_colored_polygon(_diamond(cell), color)
-	if active_definition == null and Grid.contains(selected):
+	if active_definition == null and inspected_building_id.is_empty() and Grid.contains(selected):
 		draw_colored_polygon(_diamond(selected), Color(0.25, 0.75, 0.45, 0.75))
 	if active_definition == null and Grid.contains(hovered):
 		var outline: PackedVector2Array = _diamond(hovered)
@@ -249,6 +250,11 @@ func _draw_buildings() -> void:
 		var colors: Dictionary = {"b_lumber": Color(0.26, 0.48, 0.22), "b_quarry": Color(0.48, 0.49, 0.51), "b_granary": Color(0.62, 0.52, 0.22), "b_hall": Color(0.30, 0.38, 0.48), "b_house": Color(0.55, 0.43, 0.29), "b_farm": Color(0.30, 0.47, 0.31), "b_ranch": Color(0.52, 0.46, 0.25), "b_fishery": Color(0.20, 0.52, 0.64)}
 		for cell: Vector2i in Placement.footprint_cells(anchor, footprint):
 			draw_colored_polygon(_diamond(cell), Color(0.55, 0.45, 0.20) if record["state"] == "constructing" else colors[record["def_id"]])
+		if record["id"] == inspected_building_id:
+			for cell: Vector2i in Placement.footprint_cells(anchor, footprint):
+				var outline: PackedVector2Array = _diamond(cell)
+				outline.append(outline[0])
+				draw_polyline(outline, Color(1.0, 0.82, 0.25), 2.0, true)
 		var center: Vector2 = (Grid.cell_to_world(anchor) + Grid.cell_to_world(anchor + footprint - Vector2i.ONE)) * 0.5
 		var label: String = definition.get("display_name")
 		if record["state"] == "constructing":
@@ -256,3 +262,9 @@ func _draw_buildings() -> void:
 		var font: Font = ThemeDB.fallback_font
 		var text_size: Vector2 = font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14)
 		draw_string(font, world_to_screen(center) + Vector2(-text_size.x * 0.5, 5), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color.WHITE)
+
+
+# 详情高亮模块：仅保存界面选中ID，不改变占地或建筑实例数据。
+func highlight_building(id: String) -> void:
+	inspected_building_id = id
+	queue_redraw()
