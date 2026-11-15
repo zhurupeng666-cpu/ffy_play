@@ -1,6 +1,8 @@
 ## 文件用途：组织等距地图与战略管理界面，通过独立模块操作视图、世界和存档。
 extends Control
 
+const DisbandProbe = preload("res://scripts/army_disband_export_probe.gd")
+const ArmyDisband = preload("res://scripts/army_disband_service.gd")
 const ArmyProbe = preload("res://scripts/army_export_probe.gd")
 const Army = preload("res://scripts/army_service.gd")
 const CivicProbe = preload("res://scripts/civic_export_probe.gd")
@@ -71,6 +73,13 @@ var army_label: Label
 var army_bill_label: Label
 var army_detail_label: Label
 var army_recruit_button: Button
+var army_troop_picker: OptionButton
+var army_disband_button: Button
+var army_disband_dialog: ConfirmationDialog
+var army_disband_offer: Dictionary = {}
+var army_disband_command: String = ""
+var army_disband_was_paused: bool = true
+var army_picker_signature: String = ""
 var removal_dialog: ConfirmationDialog
 var removal_offer: Dictionary = {}
 var removal_command: String = ""
@@ -93,6 +102,7 @@ func _ready() -> void:
 	var removal_probe: String = ""
 	var civic_probe: String = ""
 	var army_probe: String = ""
+	var disband_probe: String = ""
 	if OS.has_feature("portable_test"):
 		for argument: String in OS.get_cmdline_user_args():
 			if argument in ["--verify-world=write", "--verify-world=read"]:
@@ -113,6 +123,8 @@ func _ready() -> void:
 				civic_probe = argument.get_slice("=", 1)
 			elif argument in ["--verify-army=write", "--verify-army=read"]:
 				army_probe = argument.get_slice("=", 1)
+			elif argument in ["--verify-disband=write", "--verify-disband=read"]:
+				disband_probe = argument.get_slice("=", 1)
 		if not world_probe.is_empty():
 			store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/world_export.db")
 	if not build_probe.is_empty():
@@ -131,9 +143,11 @@ func _ready() -> void:
 		store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/civic_export.db")
 	if not army_probe.is_empty():
 		store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/army_export.db")
+	if not disband_probe.is_empty():
+		store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/disband_export.db")
 	if not store.open_store(store_path_override):
 		status_label.text = "存档不可用：" + store.error_message
-		if not world_probe.is_empty() or not build_probe.is_empty() or not food_probe.is_empty() or not storage_probe.is_empty() or not material_probe.is_empty() or not inspection_probe.is_empty() or not removal_probe.is_empty() or not civic_probe.is_empty() or not army_probe.is_empty():
+		if not world_probe.is_empty() or not build_probe.is_empty() or not food_probe.is_empty() or not storage_probe.is_empty() or not material_probe.is_empty() or not inspection_probe.is_empty() or not removal_probe.is_empty() or not civic_probe.is_empty() or not army_probe.is_empty() or not disband_probe.is_empty():
 			get_tree().quit(1)
 			return
 	_refresh()
@@ -155,6 +169,8 @@ func _ready() -> void:
 		get_tree().quit(CivicProbe.run(self, civic_probe))
 	if not army_probe.is_empty():
 		get_tree().quit(ArmyProbe.run(self, army_probe))
+	if not disband_probe.is_empty():
+		get_tree().quit(DisbandProbe.run(self, disband_probe))
 
 
 # 界面模块：左侧为占位地图，右侧为可滚动管理面板，二者输入互不穿透。
@@ -368,6 +384,7 @@ func _save() -> void:
 
 # 读取模块：用校验成功的新世界替换旧引用，避免半读档和重复日结。
 func _load() -> void:
+	_cancel_army_disband()
 	_cancel_removal()
 	var candidate: RefCounted = store.load_world()
 	if candidate == null:
@@ -598,6 +615,22 @@ func _build_inspection_card() -> void:
 	army_detail_label = Label.new()
 	army_detail_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	contents.add_child(army_detail_label)
+	var lifecycle: VBoxContainer = VBoxContainer.new()
+	contents.add_child(lifecycle)
+	army_troop_picker = OptionButton.new()
+	lifecycle.add_child(army_troop_picker)
+	army_troop_picker.item_selected.connect(func(_index: int) -> void: _refresh_army_lifecycle(true))
+	army_disband_button = Button.new()
+	army_disband_button.focus_mode = Control.FOCUS_NONE
+	army_disband_button.pressed.connect(_request_army_disband)
+	lifecycle.add_child(army_disband_button)
+	army_disband_dialog = ConfirmationDialog.new()
+	army_disband_dialog.exclusive = true
+	army_disband_dialog.get_ok_button().text = "确认执行"
+	army_disband_dialog.get_cancel_button().text = "保留部队"
+	army_disband_dialog.confirmed.connect(_confirm_army_disband)
+	army_disband_dialog.canceled.connect(_cancel_army_disband)
+	add_child(army_disband_dialog)
 	inspection_remove = Button.new()
 	inspection_remove.text = "移除建筑"
 	inspection_remove.focus_mode = Control.FOCUS_NONE
@@ -671,6 +704,7 @@ func _refresh_inspection() -> void:
 			if troop["barracks_id"] == inspected_building_id:
 				lines.append("%s 步兵%d人：%s" % [str(troop["id"]).trim_prefix("troop_"), troop["count"], "现役" if troop["state"] == "ready" else "训练%d%%" % floori(100.0 * troop["work_done"] / troop["work_required"])])
 		army_detail_label.text = "\n".join(lines)
+	_refresh_army_lifecycle(military)
 
 
 # 清理模块：读档或进入建造模式时清除临时选择，不让相同ID误指向新世界建筑。
@@ -696,6 +730,8 @@ func _change_inspected_workers(delta: int) -> void:
 
 # 移除预览模块：先冻结世界并列清影响，玩家确认之前不扣减建筑或发放退款。
 func _request_removal() -> void:
+	if not army_disband_offer.is_empty():
+		return
 	var offer: Dictionary = Removal.quote(world, inspected_building_id)
 	if not offer["ok"]:
 		status_label.text = offer["reason"]
@@ -771,6 +807,77 @@ func _refresh_army() -> void:
 		return
 	var ready: int = Army.people(world.troops, false, true)
 	army_label.text = "军队：现役%d人，训练%d人；占城镇劳动力%d" % [ready, Army.people(world.troops) - ready, Army.people(world.troops, true)]
+	if int(world.retired_army_cost["ration_credit"]) > 0 or int(world.retired_army_cost["wage_credit"]) > 0:
+		army_label.text += "\n退役待结：军粮%.2f，军饷%.2f" % [int(world.retired_army_cost["ration_credit"]) / 120.0, int(world.retired_army_cost["wage_credit"]) / 120.0]
 	var bill: Dictionary = world.last_army_ledger
-	army_bill_label.visible = not world.troops.is_empty()
+	army_bill_label.visible = not world.troops.is_empty() or int(world.retired_army_cost["ration_credit"]) > 0 or int(world.retired_army_cost["wage_credit"]) > 0 or (not bill.is_empty() and (int(bill["food_needed"]) > 0 or int(bill["wage_needed"]) > 0))
 	army_bill_label.text = "暂无军需日结；训练及现役每人每日额外军粮1、军饷1，按实际时间累计" if bill.is_empty() else "第%d日军需：军粮-%d/%d，军饷-%d/%d\n缺军粮%d、缺军饷%d（本阶段记录，不逃兵）" % [bill["day"], bill["food_used"], bill["food_needed"], bill["wage_paid"], bill["wage_needed"], bill["food_shortage"], bill["wage_shortage"]]
+
+
+# 军营批次模块：列表只包含当前军营的活动批次，状态变化时重建并保留稳定选择。
+func _refresh_army_lifecycle(military: bool) -> void:
+	army_troop_picker.get_parent().visible = military
+	if not military:
+		return
+	var signature: String = inspected_building_id
+	for troop: Dictionary in world.troops:
+		if troop["barracks_id"] == inspected_building_id:
+			signature += str(troop["id"]) + str(troop["state"])
+	if signature != army_picker_signature:
+		var selected: String = str(army_troop_picker.get_item_metadata(army_troop_picker.selected)) if army_troop_picker.selected >= 0 else ""
+		army_troop_picker.clear()
+		for troop: Dictionary in world.troops:
+			if troop["barracks_id"] == inspected_building_id:
+				army_troop_picker.add_item("%s · %d人 · %s" % [str(troop["id"]).trim_prefix("troop_"), troop["count"], "训练中" if troop["state"] == "training" else "现役"])
+				var index: int = army_troop_picker.item_count - 1
+				army_troop_picker.set_item_metadata(index, troop["id"])
+				if troop["id"] == selected:
+					army_troop_picker.select(index)
+		army_picker_signature = signature
+	army_troop_picker.get_parent().visible = army_troop_picker.item_count > 0
+	if army_troop_picker.selected >= 0:
+		var troop: Dictionary = ArmyDisband.find(world, str(army_troop_picker.get_item_metadata(army_troop_picker.selected)))
+		army_disband_button.text = "取消这批训练" if troop.get("state") == "training" else "解散这批部队"
+
+
+# 退役预览模块：固定所选批次并冻结时间，确认前不退款、不释放人口、不改变军需。
+func _request_army_disband() -> void:
+	if not army_disband_offer.is_empty() or not removal_offer.is_empty() or army_troop_picker.selected < 0:
+		return
+	var id: String = str(army_troop_picker.get_item_metadata(army_troop_picker.selected))
+	var troop: Dictionary = ArmyDisband.find(world, id)
+	if troop.is_empty() or troop["barracks_id"] != inspected_building_id:
+		return
+	var offer: Dictionary = ArmyDisband.quote(world, id)
+	if not offer["ok"]:
+		status_label.text = offer["reason"]
+		return
+	army_disband_was_paused = world.paused
+	world.paused = true
+	army_disband_offer = ArmyDisband.quote(world, id)
+	army_disband_command = Crypto.new().generate_random_bytes(16).hex_encode()
+	army_disband_dialog.title = "确认" + str(offer["action"])
+	army_disband_dialog.dialog_text = "%s %s（%d人）？\n返回空闲劳动力%d人。\n退金币%d、木材%d；上限损失金币%d、木材%d。\n本批次已累计军粮%.2f、军饷%.2f保留到日结。\n执行后不再训练或产生新的军需；批次不能恢复。\n窗口期间时间暂停，执行后请手动保存。" % [offer["action"], id.trim_prefix("troop_"), troop["count"], offer["return_workers"], offer["refund"]["gold"], offer["refund"]["wood"], offer["overflow"]["gold"], offer["overflow"]["wood"], int(offer["ration_credit"]) / 120.0, int(offer["wage_credit"]) / 120.0]
+	army_disband_dialog.popup_centered(Vector2i(600, 280))
+	_refresh()
+
+
+# 退役确认模块：以ID和世界签名重新校验，同步人口、军营编额、退款与待结军需。
+func _confirm_army_disband() -> void:
+	if army_disband_offer.is_empty():
+		return
+	var result: Dictionary = ArmyDisband.execute(world, army_disband_offer["troop_id"], army_disband_command, army_disband_offer["signature"])
+	_cancel_army_disband()
+	status_label.text = "已返还兵源；退金币%d、木材%d，已累计军需留待日结，请保存" % [result["refund"]["gold"], result["refund"]["wood"]] if result["ok"] else str(result["reason"])
+	_refresh()
+
+
+# 保留部队模块：关闭确认窗口恢复原时间状态，不改变部队、资源或未结开销。
+func _cancel_army_disband() -> void:
+	if army_disband_offer.is_empty():
+		return
+	army_disband_dialog.hide()
+	world.paused = army_disband_was_paused
+	army_disband_offer = {}
+	army_disband_command = ""
+	_refresh()

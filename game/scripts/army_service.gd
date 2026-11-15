@@ -1,5 +1,7 @@
 ## 文件用途：管理基础步兵的招募幂等、军营容量、训练、按时服役开销和军事存档校验。
 extends RefCounted
+const Costs = preload("res://scripts/building_costs.gd")
+const Disband = preload("res://scripts/army_disband_service.gd")
 const UNIT = preload("res://data/units/infantry.tres")
 const Build = preload("res://scripts/construction_service.gd")
 const Inspector = preload("res://scripts/building_inspector.gd")
@@ -31,7 +33,7 @@ static func quote(world: RefCounted, barracks: String) -> Dictionary:
 	var used: Dictionary = stationed(world.troops, barracks)
 	if used["training"]:
 		return {"ok": false, "reason": "该军营已有训练批次，请等待完成"}
-	if int(used["count"]) + int(UNIT.batch_size) > int(UNIT.barracks_capacity) or world.troops.size() >= 64 or world.next_troop_id >= 1000000:
+	if int(used["count"]) + int(UNIT.batch_size) > int(UNIT.barracks_capacity) or world.troops.size() >= 64 or world.next_troop_id >= 1000000 or world.troops.size() + world.retired_troops.size() >= 512:
 		return {"ok": false, "reason": "军营编额或当前原型部队数量已满"}
 	if UNIT.use_town_workers and world.idle_workers() < int(UNIT.batch_size):
 		return {"ok": false, "reason": "空闲劳动力不足5人，请先释放生产或施工岗位"}
@@ -54,7 +56,7 @@ static func recruit(world: RefCounted, barracks: String, command: String) -> Dic
 	var id: String = "troop_%06d" % world.next_troop_id
 	var records: Array = world.troops.duplicate(true)
 	var source: String = "town" if UNIT.use_town_workers else "external"
-	records.append({"id": id, "unit_id": UNIT.id, "barracks_id": barracks, "source": source, "count": int(UNIT.batch_size), "state": "training", "work_done": 0, "work_required": int(UNIT.train_work), "ration_credit": 0, "wage_credit": 0})
+	records.append({"id": id, "unit_id": UNIT.id, "barracks_id": barracks, "source": source, "count": int(UNIT.batch_size), "state": "training", "work_done": 0, "work_required": int(UNIT.train_work), "ration_credit": 0, "wage_credit": 0, "paid_cost": Costs.normalize(UNIT.recruit_cost)})
 	var receipts: Dictionary = world.recruit_commands.duplicate(true)
 	receipts[command] = {"troop_id": id, "barracks_id": barracks, "unit_id": UNIT.id, "source": source, "count": int(UNIT.batch_size)}
 	world.resources = resources
@@ -81,8 +83,14 @@ static func calculate_bill(day: int, food: int, gold: int, needed_food: int, nee
 
 # 日结模块：整份开销兑付一次，零头跨日保留，缺额仅记提示且不形成累计债务。
 static func settle(world: RefCounted) -> void:
-	var food: int = 0
-	var wage: int = 0
+	var retired_food: int = int(int(world.retired_army_cost["ration_credit"]) / float(DAY_TICKS))
+	var retired_wage: int = int(int(world.retired_army_cost["wage_credit"]) / float(DAY_TICKS))
+	world.retired_army_cost["ration_credit"] = int(world.retired_army_cost["ration_credit"]) % DAY_TICKS
+	world.retired_army_cost["wage_credit"] = int(world.retired_army_cost["wage_credit"]) % DAY_TICKS
+	world.retired_army_cost["ration_settled"] += retired_food
+	world.retired_army_cost["wage_settled"] += retired_wage
+	var food: int = retired_food
+	var wage: int = retired_wage
 	for record: Dictionary in world.troops:
 		food += int(int(record["ration_credit"]) / float(DAY_TICKS))
 		wage += int(int(record["wage_credit"]) / float(DAY_TICKS))
@@ -117,11 +125,20 @@ static func restore_bill(raw: Variant, world: RefCounted) -> Variant:
 
 # 存档模块：临时校验全部批次、军营引用、编额和回执后才替换新世界军队数据。
 static func restore_world(world: RefCounted, data: Dictionary) -> bool:
-	if not data.get("troops") is Array or data["troops"].size() > 64 or not data.get("recruit_commands") is Dictionary or data["recruit_commands"].size() != data["troops"].size() or not _integer(data.get("next_troop_id"), 1000000) or data["next_troop_id"] < 1:
+	if not data.get("troops") is Array or data["troops"].size() > 64 or not data.get("recruit_commands") is Dictionary or data["recruit_commands"].size() != data["troops"].size() + (data.get("retired_troops", []).size() if int(data["version"]) >= 11 and data.get("retired_troops") is Array else 0) or not _integer(data.get("next_troop_id"), 1000000) or data["next_troop_id"] < 1:
 		return false
+	var retired_raw: Array = []
+	if int(data["version"]) >= 11:
+		if not data.get("retired_troops") is Array or data["retired_troops"].size() + data["troops"].size() > 512:
+			return false
+		retired_raw = data["retired_troops"]
 	var records: Array = []
+	var archives: Array = []
 	var by_id: Dictionary = {}
-	for raw: Variant in data["troops"]:
+	var all_records: Array = data["troops"] + retired_raw
+	for index: int in range(all_records.size()):
+		var raw: Variant = all_records[index]
+		var retired: bool = index >= data["troops"].size()
 		if not raw is Dictionary or not raw.get("id") is String or raw.get("unit_id") != UNIT.id or raw.get("source") not in ["town", "external"] or raw.get("state") not in ["training", "ready"] or not raw.get("barracks_id") is String:
 			return false
 		if raw["source"] != ("town" if UNIT.use_town_workers else "external"):
@@ -130,6 +147,10 @@ static func restore_world(world: RefCounted, data: Dictionary) -> bool:
 		if not suffix.is_valid_int() or int(suffix) < 1 or int(suffix) >= int(data["next_troop_id"]) or raw["id"] != "troop_%06d" % int(suffix) or by_id.has(raw["id"]):
 			return false
 		var barracks: Dictionary = Inspector.find(world, raw["barracks_id"])
+		if retired and barracks.is_empty():
+			for historical: Dictionary in world.retired_buildings:
+				if historical["id"] == raw["barracks_id"]:
+					barracks = historical
 		if barracks.is_empty() or barracks["def_id"] != "b_barracks" or barracks["state"] != "ready":
 			return false
 		if not _integer(raw.get("count"), int(UNIT.batch_size)) or raw["count"] != UNIT.batch_size or not _integer(raw.get("work_required"), 100000) or raw["work_required"] < 1 or not _integer(raw.get("work_done"), int(raw["work_required"])):
@@ -141,10 +162,18 @@ static func restore_world(world: RefCounted, data: Dictionary) -> bool:
 			if not _integer(raw.get(field), int(UNIT.batch_size) * rate * DAY_TICKS + DAY_TICKS - 1):
 				return false
 		var used: Dictionary = stationed(records, raw["barracks_id"])
-		if int(used["count"]) + int(raw["count"]) > int(UNIT.barracks_capacity) or (used["training"] and raw["state"] == "training"):
+		if not retired and (int(used["count"]) + int(raw["count"]) > int(UNIT.barracks_capacity) or (used["training"] and raw["state"] == "training")):
 			return false
-		var record: Dictionary = {"id": raw["id"], "unit_id": raw["unit_id"], "barracks_id": raw["barracks_id"], "source": raw["source"], "count": int(raw["count"]), "state": raw["state"], "work_done": int(raw["work_done"]), "work_required": int(raw["work_required"]), "ration_credit": int(raw["ration_credit"]), "wage_credit": int(raw["wage_credit"])}
-		records.append(record)
+		var paid: Dictionary = Costs.normalize({"wood": 5, "gold": 50})
+		if int(data["version"]) >= 11:
+			if not Costs.valid(raw.get("paid_cost")):
+				return false
+			paid = Costs.normalize(raw["paid_cost"])
+		var record: Dictionary = {"id": raw["id"], "unit_id": raw["unit_id"], "barracks_id": raw["barracks_id"], "source": raw["source"], "count": int(raw["count"]), "state": raw["state"], "work_done": int(raw["work_done"]), "work_required": int(raw["work_required"]), "ration_credit": int(raw["ration_credit"]), "wage_credit": int(raw["wage_credit"]), "paid_cost": paid}
+		if retired:
+			archives.append(record)
+		else:
+			records.append(record)
 		by_id[record["id"]] = record
 	var receipts: Dictionary = {}
 	var seen: Dictionary = {}
@@ -164,9 +193,17 @@ static func restore_world(world: RefCounted, data: Dictionary) -> bool:
 	if ledger == null:
 		return false
 	records.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a["id"] < b["id"])
+	var retirement: Dictionary = {"commands": {}, "pending": {"ration_credit": 0, "wage_credit": 0, "ration_settled": 0, "wage_settled": 0}}
+	if int(data["version"]) >= 11:
+		var restored: Variant = Disband.restore(data.get("disband_commands"), data.get("retired_army_cost"), archives, world.tick)
+		if restored == null:
+			return false
+		retirement = restored
 	world.troops = records
+	world.retired_troops = archives
+	world.disband_commands = retirement["commands"]
+	world.retired_army_cost = retirement["pending"]
 	world.recruit_commands = receipts
 	world.next_troop_id = int(data["next_troop_id"])
 	world.last_army_ledger = ledger
 	return world.idle_workers() >= 0
-

@@ -48,7 +48,8 @@
         "Godot: inspection test",
         "Godot: removal test",
         "Godot: civic test",
-        "Godot: army test"
+        "Godot: army test",
+        "Godot: disband test"
       ],
       "problemMatcher": [],
       "group": "test"
@@ -210,6 +211,14 @@
       "type": "process",
       "command": "${config:godotTools.editorPath.godot4}",
       "args": ["--headless", "--path", "${workspaceFolder}", "--script", "res://tests/army_test.gd"],
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "Godot: disband test",
+      "type": "process",
+      "command": "${config:godotTools.editorPath.godot4}",
+      "args": ["--headless", "--path", "${workspaceFolder}", "--script", "res://tests/army_disband_test.gd"],
       "problemMatcher": [],
       "group": "test"
     }
