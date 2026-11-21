@@ -1,0 +1,13 @@
+[gd_resource type="Resource" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/region_layout.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+home_id = "r_home"
+regions = {
+"r_home": {"title": "边境镇", "position": Vector2(0.23, 0.78), "visibility": "scouted", "owner": "player", "access": "open", "description": "领地首府，可进入城镇建造、生产和管理部队。"},
+"r_woods": {"title": "北部林地", "position": Vector2(0.70, 0.32), "visibility": "known", "owner": "", "access": "blocked", "description": "与边境镇相邻。开放条件为军团完成侦察，侦察功能将在后续版本开放。"},
+"r_fort": {"title": "旧堡", "position": Vector2(0.77, 0.19), "visibility": "hidden", "owner": "", "access": "blocked", "description": "侦察北部林地后揭示。"}
+}
+roads = Array[PackedStringArray]([PackedStringArray("r_home", "r_woods"), PackedStringArray("r_woods", "r_fort")])

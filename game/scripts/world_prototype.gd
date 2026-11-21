@@ -26,6 +26,7 @@ const HOUSE = preload("res://data/buildings/house.tres")
 const FARM = preload("res://data/buildings/farm.tres")
 const RANCH = preload("res://data/buildings/ranch.tres")
 const FISHERY = preload("res://data/buildings/fishery.tres")
+const RegionOverview = preload("res://scripts/region_overview.gd")
 const TownMap = preload("res://scripts/town_map.gd")
 const State = preload("res://scripts/world_state.gd")
 const Clock = preload("res://scripts/strategic_clock.gd")
@@ -53,6 +54,10 @@ var pause_button: Button
 var progress: ProgressBar
 var panel: VBoxContainer
 var town_map: Control
+# 地图导航模块：城镇和区域总览使用同一个世界与时钟。
+var town_view: VBoxContainer
+var region_overview: RegionOverview
+var region_toggle: Button
 var map_info: Label
 var placement_label: Label
 var building_label: Label
@@ -213,22 +218,33 @@ func _build_ui() -> void:
 	map_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	map_column.custom_minimum_size.x = 320
 	columns.add_child(map_column)
+	var navigation: HBoxContainer = HBoxContainer.new()
+	map_column.add_child(navigation)
+	region_toggle = _button(navigation, "区域地图", _toggle_region_view)
+	town_view = VBoxContainer.new()
+	town_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	map_column.add_child(town_view)
+	region_overview = RegionOverview.new()
+	region_overview.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	region_overview.hide()
+	region_overview.town_requested.connect(_show_region_view.bind(false))
+	map_column.add_child(region_overview)
 	var title: Label = Label.new()
 	title.text = "城镇格网（16×16；蓝色为北侧河道）"
-	map_column.add_child(title)
+	town_view.add_child(title)
 	town_map = TownMap.new()
 	town_map.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	town_map.custom_minimum_size = Vector2(320, 200)
-	map_column.add_child(town_map)
+	town_view.add_child(town_map)
 	map_info = Label.new()
-	map_column.add_child(map_info)
+	town_view.add_child(map_info)
 	var map_actions: HBoxContainer = HBoxContainer.new()
-	map_column.add_child(map_actions)
+	town_view.add_child(map_actions)
 	_button(map_actions, "镜头复位（Home）", town_map.reset_view)
 	var help: Label = Label.new()
 	help.text = "左键查看建筑或建造 / 右键取消 / 中键拖动 / 滚轮缩放\n绿格林地、灰白石矿：对应生产建筑须紧邻资源点"
 	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	map_column.add_child(help)
+	town_view.add_child(help)
 	town_map.hovered_changed.connect(_on_map_cell_changed)
 	town_map.selected_changed.connect(_on_town_selected)
 	town_map.view_changed.connect(_refresh_map_info)
@@ -351,6 +367,20 @@ func _button(row: HBoxContainer, text: String, action: Callable) -> Button:
 	return button
 
 
+# 切换入口模块：总览按钮在两个地图视图之间往返。
+func _toggle_region_view() -> void:
+	_show_region_view(not region_overview.visible)
+
+
+# 地图切换模块：退出未确认的建造预览，保留城镇镜头、战略时钟和世界状态。
+func _show_region_view(show_overview: bool) -> void:
+	if show_overview and town_map.active_definition != null:
+		town_map.cancel_preview()
+	region_overview.visible = show_overview
+	town_view.visible = not show_overview
+	region_toggle.text = "返回城镇" if show_overview else "区域地图"
+
+
 # 帧模块：推进固定步时钟并显示结果，界面自身不执行日结。
 func _process(delta: float) -> void:
 	if date_label == null:
@@ -439,7 +469,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		elif event.keycode == KEY_HOME:
 			town_map.reset_view()
 		elif event.keycode == KEY_ESCAPE:
-			if town_map.active_definition != null:
+			if region_overview.visible:
+				_show_region_view(false)
+				get_viewport().set_input_as_handled()
+			elif town_map.active_definition != null:
 				town_map.cancel_preview()
 				get_viewport().set_input_as_handled()
 			else:
@@ -453,6 +486,17 @@ func _exit_tree() -> void:
 
 # 导出验收模块：用独立测试库验证战略快照跨进程恢复与日结连续性。
 func _verify_export(mode: String) -> int:
+	# 区域入口验收：真实导出包可往返，林地锁定且不显示未发现区域。
+	region_toggle.pressed.emit()
+	if not region_overview.visible or town_view.visible or region_overview.markers.has("r_fort"):
+		return 1
+	region_overview.markers["r_woods"].pressed.emit()
+	if not region_overview.enter_button.disabled or not region_overview.detail.text.contains("侦察"):
+		return 1
+	region_overview.markers["r_home"].pressed.emit()
+	region_overview.enter_button.pressed.emit()
+	if not town_view.visible or region_overview.visible:
+		return 1
 	if mode == "write":
 		world.paused = false
 		clock.advance(120.0)
@@ -474,6 +518,7 @@ func _verify_export(mode: String) -> int:
 
 # 建筑选择模块：为一次放置生成唯一命令，失败时可调整位置重试。
 func _start_preview(definition: Resource) -> void:
+	_show_region_view(false)
 	_clear_inspection()
 	pending_build_command = Crypto.new().generate_random_bytes(16).hex_encode()
 	town_map.set_preview(definition)
