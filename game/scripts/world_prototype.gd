@@ -832,17 +832,22 @@ func _recruit_infantry() -> void:
 	_refresh()
 
 
-# 军事面板模块：现役与训练人数分开，开销不足只在本阶段记录说明，不擅自扣兵。
+# 军事面板模块：显示现役、训练、当前士气及上次军需结算造成的士气变化。
 func _refresh_army() -> void:
 	if army_label == null:
 		return
 	var ready: int = Army.people(world.troops, false, true)
 	army_label.text = "军队：现役%d人，训练%d人；占城镇劳动力%d" % [ready, Army.people(world.troops) - ready, Army.people(world.troops, true)]
+	if not world.troops.is_empty():
+		army_label.text += "\n全军士气 %d/%d" % [world.army_morale, Army.Morale.MAXIMUM]
 	if int(world.retired_army_cost["ration_credit"]) > 0 or int(world.retired_army_cost["wage_credit"]) > 0:
 		army_label.text += "\n退役待结：军粮%.2f，军饷%.2f" % [int(world.retired_army_cost["ration_credit"]) / 120.0, int(world.retired_army_cost["wage_credit"]) / 120.0]
 	var bill: Dictionary = world.last_army_ledger
 	army_bill_label.visible = not world.troops.is_empty() or int(world.retired_army_cost["ration_credit"]) > 0 or int(world.retired_army_cost["wage_credit"]) > 0 or (not bill.is_empty() and (int(bill["food_needed"]) > 0 or int(bill["wage_needed"]) > 0))
-	army_bill_label.text = "暂无军需日结；训练及现役每人每日额外军粮1、军饷1，按实际时间累计" if bill.is_empty() else "第%d日军需：军粮-%d/%d，军饷-%d/%d\n缺军粮%d、缺军饷%d（本阶段记录，不逃兵）" % [bill["day"], bill["food_used"], bill["food_needed"], bill["wage_paid"], bill["wage_needed"], bill["food_shortage"], bill["wage_shortage"]]
+	army_bill_label.text = "暂无军需日结；训练及现役每人每日额外军粮1、军饷1，按实际时间累计" if bill.is_empty() else "第%d日军需：军粮-%d/%d，军饷-%d/%d\n缺军粮%d、缺军饷%d" % [bill["day"], bill["food_used"], bill["food_needed"], bill["wage_paid"], bill["wage_needed"], bill["food_shortage"], bill["wage_shortage"]]
+	if world.last_morale_before != null:
+		var delta: int = world.army_morale - int(world.last_morale_before)
+		army_bill_label.text += "\n士气 %d → %d（%+d）" % [world.last_morale_before, world.army_morale, delta]
 
 
 # 军营批次模块：列表只包含当前军营的活动批次，状态变化时重建并保留稳定选择。

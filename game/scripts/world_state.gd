@@ -1,4 +1,4 @@
-## 文件用途：保存世界日期、人口、资源与建筑实例，并提供v1到v12快照迁移和完整校验。
+## 文件用途：保存世界日期、人口、资源与建筑实例，并提供v1到v13快照迁移和完整校验。
 extends RefCounted
 
 # 状态模块：数值均为待平衡参数，资源以完整单位保存。
@@ -36,6 +36,9 @@ var retired_army_cost: Dictionary = {"ration_credit": 0, "wage_credit": 0, "rati
 var recruit_commands: Dictionary = {}
 var next_troop_id: int = 1
 var last_army_ledger: Dictionary = {}
+# 士气模块：全军共用一份士气，上次日结未适用时没有结算前数值。
+var army_morale: int = Army.Morale.INITIAL
+var last_morale_before: Variant = null
 var last_material_ledger: Dictionary = {}
 var last_food_ledger: Dictionary = {}
 var last_bill: String = "尚未日结；生产建筑完工并分配工人后可产粮"
@@ -76,7 +79,7 @@ func settle_days() -> void:
 
 # 快照模块：只导出基础数据，不保存节点、数据库连接或脚本引用。
 func snapshot() -> Dictionary:
-	return {"version": 12, "tick": tick, "subsecond": subsecond, "last_settled_day": last_settled_day, "population": population, "dependents": dependents, "builders": builders, "labor_credit": labor_credit, "resources": resources.duplicate(), "speed": speed, "paused": paused, "tax_policy": tax_policy, "satisfaction": satisfaction, "last_civic_ledger": last_civic_ledger.duplicate(true), "troops": troops.duplicate(true), "legions": legions.duplicate(true), "legion_create_commands": legion_create_commands.duplicate(), "next_legion_id": next_legion_id, "retired_troops": retired_troops.duplicate(true), "disband_commands": disband_commands.duplicate(true), "retired_army_cost": retired_army_cost.duplicate(), "recruit_commands": recruit_commands.duplicate(true), "next_troop_id": next_troop_id, "last_army_ledger": last_army_ledger.duplicate(true), "last_bill": last_bill, "last_food_ledger": last_food_ledger.duplicate(true), "last_material_ledger": last_material_ledger.duplicate(true), "buildings": buildings.duplicate(true), "next_building_id": next_building_id, "applied_commands": applied_commands.duplicate(true), "retired_buildings": retired_buildings.duplicate(true), "removal_commands": removal_commands.duplicate(true)}
+	return {"version": 13, "tick": tick, "subsecond": subsecond, "last_settled_day": last_settled_day, "population": population, "dependents": dependents, "builders": builders, "labor_credit": labor_credit, "resources": resources.duplicate(), "speed": speed, "paused": paused, "tax_policy": tax_policy, "satisfaction": satisfaction, "last_civic_ledger": last_civic_ledger.duplicate(true), "troops": troops.duplicate(true), "legions": legions.duplicate(true), "legion_create_commands": legion_create_commands.duplicate(), "next_legion_id": next_legion_id, "retired_troops": retired_troops.duplicate(true), "disband_commands": disband_commands.duplicate(true), "retired_army_cost": retired_army_cost.duplicate(), "recruit_commands": recruit_commands.duplicate(true), "next_troop_id": next_troop_id, "last_army_ledger": last_army_ledger.duplicate(true), "army_morale": army_morale, "last_morale_before": last_morale_before, "last_bill": last_bill, "last_food_ledger": last_food_ledger.duplicate(true), "last_material_ledger": last_material_ledger.duplicate(true), "buildings": buildings.duplicate(true), "next_building_id": next_building_id, "applied_commands": applied_commands.duplicate(true), "retired_buildings": retired_buildings.duplicate(true), "removal_commands": removal_commands.duplicate(true)}
 
 
 # 载入模块：在临时对象中完整校验，失败返回空值，不改变当前世界。
@@ -86,7 +89,7 @@ static func from_snapshot(data: Variant) -> RefCounted:
 	for key: String in ["version", "tick", "last_settled_day", "population", "speed"]:
 		if not _valid_integer(data.get(key), 0, 120000000):
 			return null
-	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] or int(data["speed"]) not in [1, 2, 4] or data["population"] != 30:
+	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] or int(data["speed"]) not in [1, 2, 4] or data["population"] != 30:
 		return null
 	if data["last_settled_day"] != int(float(data["tick"]) / DAY_TICKS):
 		return null
@@ -149,6 +152,19 @@ static func from_snapshot(data: Variant) -> RefCounted:
 		return null
 	if int(data["version"]) >= 12 and not Legions.restore_world(state, data):
 		return null
+	# 士气迁移模块：旧档从初始士气开始，已记录的新档涨跌须能用当日军需复算。
+	if int(data["version"]) >= 13:
+		if not data.has("last_morale_before") or not _valid_integer(data.get("army_morale"), 0, Army.Morale.MAXIMUM):
+			return null
+		var before: Variant = data["last_morale_before"]
+		state.army_morale = int(data["army_morale"])
+		if before != null:
+			var bill: Dictionary = state.last_army_ledger
+			if not _valid_integer(before, 0, Army.Morale.MAXIMUM) or bill.is_empty():
+				return null
+			if int(bill["food_needed"]) + int(bill["wage_needed"]) == 0 or Army.Morale.after(int(before), bill) != state.army_morale:
+				return null
+			state.last_morale_before = int(before)
 	if state.idle_workers() < 0:
 		return null
 	return state

@@ -1,5 +1,6 @@
 ## 文件用途：管理基础步兵的招募幂等、军营容量、训练、按时服役开销和军事存档校验。
 extends RefCounted
+const Morale = preload("res://scripts/army_morale.gd")
 const Costs = preload("res://scripts/building_costs.gd")
 const Disband = preload("res://scripts/army_disband_service.gd")
 const UNIT = preload("res://data/units/infantry.tres")
@@ -81,7 +82,7 @@ static func calculate_bill(day: int, food: int, gold: int, needed_food: int, nee
 	var paid: int = mini(gold, needed_wage)
 	return {"day": day, "food_needed": needed_food, "food_used": used, "food_shortage": needed_food - used, "wage_needed": needed_wage, "wage_paid": paid, "wage_shortage": needed_wage - paid, "food_before": food, "food_after": food - used, "gold_before": gold, "gold_after": gold - paid}
 
-# 日结模块：整份开销兑付一次，零头跨日保留，缺额仅记提示且不形成累计债务。
+# 日结模块：整份开销兑付一次，零头跨日保留，并用实付账单结算士气。
 static func settle(world: RefCounted) -> void:
 	var retired_food: int = int(int(world.retired_army_cost["ration_credit"]) / float(DAY_TICKS))
 	var retired_wage: int = int(int(world.retired_army_cost["wage_credit"]) / float(DAY_TICKS))
@@ -99,6 +100,7 @@ static func settle(world: RefCounted) -> void:
 	world.last_army_ledger = calculate_bill(world.last_settled_day + 1, int(world.resources["food"]), int(world.resources["gold"]), food, wage)
 	world.resources["food"] = world.last_army_ledger["food_after"]
 	world.resources["gold"] = world.last_army_ledger["gold_after"]
+	Morale.settle(world, food > retired_food or wage > retired_wage)
 
 # 数值模块：只接受有限非负整数，防止坏档的小数、空值或溢出。
 static func _integer(value: Variant, maximum: int) -> bool:

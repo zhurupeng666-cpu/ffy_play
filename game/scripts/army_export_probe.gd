@@ -38,5 +38,19 @@ static func run(main: Control, mode: String) -> int:
 		var reopened: RefCounted = main.store.load_world()
 		if reopened == null or reopened.troops != main.world.troops or reopened.last_army_ledger != main.world.last_army_ledger:
 			return 1
+		# 士气验收模块：独立读进程触发实际短缺，核对面板与再次存读档。
+		var supplied_morale: int = main.world.army_morale
+		main.world.resources["food"] = 0
+		main.world.paused = false
+		main.clock.advance(120)
+		main.world.paused = true
+		main._refresh()
+		if supplied_morale != 64 or main.world.army_morale != 52 or not main.army_bill_label.text.contains("士气 64 → 52（-12）") or main.world.idle_workers() != 17:
+			return 1
+		if not main.store.save_world(main.world):
+			return 1
+		reopened = main.store.load_world()
+		if reopened == null or reopened.army_morale != 52 or reopened.last_morale_before != 64:
+			return 1
 	print("EXPORT_ARMY_PASS: ", mode)
 	return 0

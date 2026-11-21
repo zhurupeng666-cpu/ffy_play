@@ -119,6 +119,28 @@ func _run() -> void:
 	world.paused = false
 	Clock.new(world).advance(120)
 	_check(world.resources["food"] == 0 and world.resources["gold"] == 0 and world.last_army_ledger["food_shortage"] == 5 and world.last_army_ledger["wage_shortage"] == 5 and Army.people(world.troops) == 5 and State.from_snapshot(world.snapshot()) != null, "军需不足出现负数、丢兵或不能存档")
+	# 士气模块：验证短缺比例、跨日恢复、同日不重算与旧档迁移。
+	_check(world.army_morale == 40 and world.last_morale_before == 60, "两项全缺应扣20士气")
+	var morale_save: Dictionary = world.snapshot()
+	var morale_loaded: RefCounted = State.from_snapshot(morale_save)
+	_check(morale_loaded != null and morale_loaded.army_morale == 40 and morale_loaded.last_morale_before == 60, "士气日结存档恢复失败")
+	world.settle_days()
+	_check(world.army_morale == 40, "同一天重复扣士气")
+	morale_save["army_morale"] = 39
+	_check(State.from_snapshot(morale_save) == null, "接受与军需账单不符的士气")
+	morale_save["version"] = 12
+	morale_save.erase("army_morale")
+	morale_save.erase("last_morale_before")
+	morale_loaded = State.from_snapshot(morale_save)
+	_check(morale_loaded != null and morale_loaded.army_morale == 60 and morale_loaded.last_morale_before == null, "旧档应从60士气开始")
+	world.resources["food"] = 17
+	world.resources["gold"] = 10
+	Clock.new(world).advance(120)
+	_check(world.last_army_ledger["food_shortage"] == 3 and world.army_morale == 32, "部分短缺扣分向上取整错误")
+	world.resources["food"] = 30
+	world.resources["gold"] = 10
+	Clock.new(world).advance(120)
+	_check(world.army_morale == 34 and world.last_morale_before == 32 and world.idle_workers() == 17, "供给恢复未加士气或兵员变化")
 	# 坏档模块：军营引用、兵源来源、人数、进度、回执和账目均必须一致。
 	var bad: Dictionary = loaded.snapshot()
 	bad["troops"][0]["barracks_id"] = "building_000001"
