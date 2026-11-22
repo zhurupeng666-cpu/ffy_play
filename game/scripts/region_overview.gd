@@ -2,6 +2,7 @@
 extends VBoxContainer
 
 signal town_requested
+const March = preload("res://scripts/region_march.gd")
 const Scout = preload("res://scripts/region_scout.gd")
 const LAYOUT = Scout.LAYOUT
 
@@ -17,6 +18,7 @@ var scout_shortcut: Button
 var scout_row: HBoxContainer
 var scout_picker: OptionButton
 var scout_button: Button
+var march_button: Button
 var legion_labels: Dictionary = {}
 
 # 界面模块：建立路线画布、区域标记和随选择切换的详情。
@@ -64,6 +66,11 @@ func _ready() -> void:
 	scout_button.text = "派遣侦察（粮食 %d）" % LAYOUT.scout_food
 	scout_button.pressed.connect(_dispatch_scout)
 	scout_row.add_child(scout_button)
+	march_button = Button.new()
+	march_button.focus_mode = Control.FOCUS_NONE
+	march_button.pressed.connect(_dispatch_march)
+	scout_row.add_child(march_button)
+	march_button.hide()
 	# 操作区放在地图上方，方便直接查看和派遣。
 	move_child(detail, 1)
 	move_child(enter_button, 2)
@@ -141,7 +148,10 @@ func _refresh_scout() -> void:
 	scout_row.visible = world != null and selected_id == Scout.WOODS
 	if world == null or selected_id != Scout.WOODS:
 		return
-	scout_picker.visible = world.woods_scout.is_empty()
+	var discovered: bool = Scout.complete(world)
+	scout_picker.visible = not Scout.busy(world)
+	scout_button.visible = not discovered
+	march_button.visible = discovered
 	if Scout.busy(world):
 		scout_button.disabled = true
 		scout_button.text = "侦察进行中"
@@ -150,7 +160,7 @@ func _refresh_scout() -> void:
 	elif Scout.complete(world):
 		scout_button.disabled = true
 		scout_button.text = "侦察已完成"
-		detail.text = "北部林地 ｜ 已侦察 · 未占领\n已发现旧堡，地图上可查看通往旧堡的道路。"
+		_refresh_march()
 	else:
 		_update_scout_picker()
 		var id: String = _selected_legion()
@@ -159,6 +169,38 @@ func _refresh_scout() -> void:
 		scout_button.disabled = not blocked.is_empty()
 		var hint: String = blocked if not blocked.is_empty() else "耗时 %d 战略秒" % LAYOUT.scout_ticks
 		detail.text += "\n" + hint
+
+# 行军面板：根据军团的路程与驻地显示下一条可执行的命令。
+func _refresh_march() -> void:
+	_update_scout_picker()
+	var id: String = _selected_legion()
+	var target: String = _march_target(id)
+	var remaining: int = March.remaining(world, id)
+	var location: String = LAYOUT.regions[March.destination(world, id)]["title"]
+	var briefing: String = "北部林地 ｜ 已侦察 · 未占领"
+	if remaining > 0:
+		march_button.text = "行军中"
+		march_button.disabled = true
+		detail.text = "%s\n前往%s，剩余 %d 战略秒。" % [briefing, location, remaining]
+		return
+	march_button.text = "调回边境镇" if target == LAYOUT.home_id else "前往北部林地"
+	var blocked: String = March.reason(world, id, target)
+	march_button.disabled = not blocked.is_empty()
+	if not blocked.is_empty():
+		detail.text = briefing + "\n" + blocked
+	else:
+		detail.text = "%s\n军团驻地为%s。单程 %d 战略秒。" % [briefing, location, LAYOUT.march_ticks]
+
+# 路线选择：驻扎林地时可以返回主城，否则可从主城前往林地。
+func _march_target(legion_id: String) -> String:
+	return LAYOUT.home_id if March.destination(world, legion_id) == Scout.WOODS else Scout.WOODS
+
+# 命令入口：只在林地界面处理请求，服务层再次检查可达性。
+func _dispatch_march() -> void:
+	if world != null and is_visible_in_tree() and selected_id == Scout.WOODS:
+		var id: String = _selected_legion()
+		March.dispatch(world, id, _march_target(id))
+		sync(world)
 
 # 名单模块：编制变化才重建选项，保留仍可用的军团选择。
 func _update_scout_picker() -> void:

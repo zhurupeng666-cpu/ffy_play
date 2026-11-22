@@ -4,6 +4,7 @@ const Army = preload("res://scripts/army_service.gd")
 const Disband = preload("res://scripts/army_disband_service.gd")
 const Build = preload("res://scripts/construction_service.gd")
 const Legions = preload("res://scripts/legion_service.gd")
+const March = preload("res://scripts/region_march.gd")
 const Scout = preload("res://scripts/region_scout.gd")
 const State = preload("res://scripts/world_state.gd")
 
@@ -109,6 +110,8 @@ func _check_scout(main: Control) -> bool:
 	overview.sync(main.world)
 	if not Scout.complete(main.world) or not overview.markers.has(Scout.FORT) or overview.scout_button.text != "侦察已完成" or not Disband.quote(main.world, troop)["ok"]:
 		return false
+	if not _check_march(main, id, troop):
+		return false
 	Legions.dissolve(main.world, id)
 	main._save()
 	main._load()
@@ -119,3 +122,51 @@ func _check_scout(main: Control) -> bool:
 	legacy.erase("woods_scout")
 	var migrated: RefCounted = State.from_snapshot(legacy)
 	return migrated != null and migrated.woods_scout.is_empty()
+
+
+# 行军验收：用真实面板往返，验证途中存档、驻地、锁定、旧档迁移与返回解锁。
+func _check_march(main: Control, legion_id: String, troop_id: String) -> bool:
+	var overview: Control = main.region_overview
+	if not overview.march_button.is_visible_in_tree() or overview.march_button.disabled:
+		return false
+	if March.dispatch(main.world, legion_id, Scout.FORT):
+		return false
+	var food: int = main.world.resources["food"]
+	overview.march_button.pressed.emit()
+	overview.march_button.pressed.emit()
+	if March.remaining(main.world, legion_id) != 120 or main.world.resources["food"] != food:
+		return false
+	if Legions.set_count(main.world, legion_id, troop_id, 0)["ok"] or Disband.quote(main.world, troop_id)["ok"]:
+		return false
+	main.world.paused = false
+	main.clock.advance(60)
+	main.world.paused = true
+	main._save()
+	main._load()
+	if March.remaining(main.world, legion_id) != 60 or not overview.detail.text.contains("剩余 60"):
+		return false
+	var legacy: Dictionary = main.world.snapshot()
+	legacy["version"] = 14
+	legacy.erase("legion_trips")
+	var migrated: RefCounted = State.from_snapshot(legacy)
+	if migrated == null or not migrated.legion_trips.is_empty() or not Scout.complete(migrated):
+		return false
+	main.world.paused = false
+	main.clock.advance(60)
+	main.world.paused = true
+	overview.sync(main.world)
+	if not March.away(main.world, legion_id) or overview.march_button.text != "调回边境镇":
+		return false
+	if Legions.dissolve(main.world, legion_id)["ok"]:
+		return false
+	main._save()
+	main._load()
+	if not overview.detail.text.contains("驻地为北部林地"):
+		return false
+	overview.march_button.pressed.emit()
+	main.world.paused = false
+	main.clock.advance(120)
+	main.world.paused = true
+	overview.sync(main.world)
+	return main.world.legion_trips.is_empty() and Disband.quote(main.world, troop_id)["ok"] \
+		and overview.march_button.text == "前往北部林地"

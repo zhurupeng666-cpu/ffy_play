@@ -1,5 +1,6 @@
 ## 文件用途：按固定一秒逻辑步推进战略时间，支持暂停及倍速，避免卡顿跳过日结。
 extends RefCounted
+const March = preload("res://scripts/region_march.gd")
 const Army = preload("res://scripts/army_service.gd")
 
 # 引用模块：时钟只持有权威世界状态，不维护另一份日期或资源。
@@ -19,6 +20,7 @@ func advance(real_seconds: float) -> void:
 	while state.subsecond >= 1.0:
 		state.subsecond -= 1.0
 		state.tick += 1
+		March.advance(state)
 		Army.advance(state)
 		state.advance_production()
 		state.advance_construction()

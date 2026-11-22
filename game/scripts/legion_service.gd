@@ -1,5 +1,6 @@
 ## 文件用途：按人数自由编组现役部队，管理军团身份、成员约束与存档，不重复计算人口或军需。
 extends RefCounted
+const March = preload("res://scripts/region_march.gd")
 const Scout = preload("res://scripts/region_scout.gd")
 const SETTINGS = preload("res://data/military/legion_settings.tres")
 
@@ -57,6 +58,8 @@ static func create(world: RefCounted, command: String) -> Dictionary:
 
 # 编制命令模块：设置本军团从某批次划入的绝对人数，相同请求幂等，0表示移出。
 static func set_count(world: RefCounted, legion_id: String, troop_id: String, count: int) -> Dictionary:
+	if March.away(world, legion_id):
+		return {"ok": false, "reason": "军团驻外或正在行军，回城后可调整编制"}
 	if Scout.busy(world, legion_id):
 		return {"ok": false, "reason": "军团正在侦察，归队后可调整编制"}
 	var legion: Dictionary = find(world, legion_id)
@@ -89,6 +92,8 @@ static func set_count(world: RefCounted, legion_id: String, troop_id: String, co
 
 # 撤销编制模块：保留军团历史，部队仍现役且维护照常，不归还城镇兵源。
 static func dissolve(world: RefCounted, id: String, expected: Dictionary = {}) -> Dictionary:
+	if March.away(world, id):
+		return {"ok": false, "reason": "军团驻外或正在行军，回城后可撤销编制"}
 	if Scout.busy(world, id):
 		return {"ok": false, "reason": "军团正在侦察，归队后可撤销编制"}
 	if not expected.is_empty() and expected != world.snapshot():

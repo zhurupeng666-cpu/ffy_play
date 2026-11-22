@@ -1,5 +1,6 @@
 ## 文件用途：原子取消训练或解散整批部队，按实付费用退款并保留未结军需与幂等历史。
 extends RefCounted
+const March = preload("res://scripts/region_march.gd")
 const Scout = preload("res://scripts/region_scout.gd")
 const Legions = preload("res://scripts/legion_service.gd")
 const LIMIT: int = 1000000000
@@ -21,6 +22,8 @@ static func refundable(troop: Dictionary) -> Dictionary:
 
 # 预览模块：说明释放人数、退款和保留到日结的军需，不立即改变世界。
 static func quote(world: RefCounted, id: String) -> Dictionary:
+	if March.uses_troop(world, id):
+		return {"ok": false, "reason": "该批部队有士兵驻外或正在行军，回城后可解散"}
 	if Scout.uses_troop(world, id):
 		return {"ok": false, "reason": "该批部队有士兵正在侦察，归队后可解散"}
 	var troop: Dictionary = find(world, id)
