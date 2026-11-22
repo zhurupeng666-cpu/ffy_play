@@ -60,7 +60,7 @@ func _run() -> void:
 	if not passed:
 		push_error("战略界面保存读取联动失败")
 	else:
-		print("WORLD_UI_PASS: scene, regions, scouting, march, battle, pause, save, load, resource display")
+		print("WORLD_UI_PASS: scene, regions, scouting, march, battle, territory yield, pause, save, load, resource display")
 	quit(0 if passed else 1)
 
 
@@ -121,6 +121,7 @@ func _check_scout(main: Control) -> bool:
 	var legacy: Dictionary = main.world.snapshot()
 	legacy["version"] = 13
 	legacy.erase("woods_scout")
+	legacy["last_material_ledger"].erase("woods_wood")
 	var migrated: RefCounted = State.from_snapshot(legacy)
 	return migrated != null and migrated.woods_scout.is_empty()
 
@@ -208,8 +209,11 @@ func _check_battle(main: Control, legion_id: String, troop_id: String) -> bool:
 	overview.march_button.pressed.emit()
 	main.world.paused = false
 	main.clock.advance(120)
+	# 把胜利对局放在日初附近，以便分别核对占领日和首个完整日。
+	main.clock.advance(120 - main.world.tick % 120 + 5)
 	main.world.paused = true
 	overview.sync(main.world)
+	var wood_before: int = main.world.resources["wood"]
 	overview.battle_button.pressed.emit()
 	main.world.paused = false
 	main.clock.advance(8)
@@ -222,14 +226,41 @@ func _check_battle(main: Control, legion_id: String, troop_id: String) -> bool:
 	if Battle.report(main.world) != battle_before:
 		return false
 	main.world.paused = false
-	main.clock.advance(160)
+	for _second: int in range(90):
+		if Battle.report(main.world)["status"] != "running":
+			break
+		main.clock.advance(1)
 	main.world.paused = true
 	overview.sync(main.world)
 	if Battle.report(main.world)["status"] != "victory" or not overview.detail.text.contains("己方控制"):
 		return false
+	if main.world.resources["wood"] != wood_before:
+		return false
 	overview.march_button.pressed.emit()
+	main.world.paused = false
+	main.clock.advance(120 - main.world.tick % 120)
+	if main.world.resources["wood"] != wood_before or main.world.last_material_ledger.has("woods_wood"):
+		return false
+	main.clock.advance(120)
+	main.world.paused = true
+	main._refresh()
+	var bill: Dictionary = main.world.last_material_ledger
+	if main.world.resources["wood"] != wood_before + 5 or bill.get("woods_wood") != 5:
+		return false
+	if not main.material_bill_label.text.contains("北部林地 5") or not main.world.legion_trips.is_empty():
+		return false
+	main._save()
+	main._load()
+	main.world.settle_days()
+	if main.world.last_material_ledger != bill or main.world.resources["wood"] != wood_before + 5:
+		return false
+	var invalid: Dictionary = main.world.snapshot()
+	invalid["last_material_ledger"]["woods_wood"] = 6
+	if State.from_snapshot(invalid) != null:
+		return false
+	main.world.resources["wood"] = 999999998
 	main.world.paused = false
 	main.clock.advance(120)
 	main.world.paused = true
-	overview.sync(main.world)
-	return main.world.legion_trips.is_empty() and Battle.report(main.world)["status"] == "victory"
+	bill = main.world.last_material_ledger
+	return bill.get("woods_wood") == 5 and bill["wood"]["stored"] == 2 and bill["wood"]["overflow"] == 3

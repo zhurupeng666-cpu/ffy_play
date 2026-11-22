@@ -12,3 +12,5 @@ extends Resource
 @export var march_ticks: int = 120
 # 遭遇参数：北部林地初始守军人数。
 @export var woods_guards: int = 6
+# 领地收益参数：控制林地后每个完整战略日上缴的木材。
+@export var woods_wood_per_day: int = 5

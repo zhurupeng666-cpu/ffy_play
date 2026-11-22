@@ -220,7 +220,7 @@ func _battle_summary(report: Dictionary) -> String:
 		"running":
 			return "\n自动交战中　己方战力 %d　守军战力 %d" % [report["allies"], report["enemies"]]
 		"victory":
-			return "\n战斗胜利，北部林地已由己方控制。"
+			return "\n林地上缴木材 +%d/日，从占领后的首个完整日结算。" % LAYOUT.woods_wood_per_day
 		"defeat":
 			return "\n战斗失利。可调回城镇整编，再派军团迎战。"
 	return "\n林地有 %d 名守军。" % LAYOUT.woods_guards

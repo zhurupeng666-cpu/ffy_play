@@ -10,13 +10,15 @@ const ROUND_TICKS: int = 4
 const MAX_MORALE: int = 100
 
 # 战况模块：用出战快照和经过时间复算战力，读档后继承相同对局。
-static func report(world: RefCounted) -> Dictionary:
+static func report(world: RefCounted, at_tick: int = -1) -> Dictionary:
 	var record: Dictionary = world.woods_battle
-	if record.is_empty():
+	if at_tick < 0:
+		at_tick = world.tick
+	if record.is_empty() or at_tick < int(record["started"]):
 		return {"status": "idle"}
 	var allies: int = int(record["people"]) * POWER_PER_PERSON
 	var enemies: int = int(record["guards"]) * POWER_PER_PERSON
-	var rounds: int = int((world.tick - int(record["started"])) / float(ROUND_TICKS))
+	var rounds: int = int((at_tick - int(record["started"])) / float(ROUND_TICKS))
 	var morale_factor: float = 0.8 + int(record["morale"]) / 250.0
 	for _round: int in range(mini(rounds, allies + enemies)):
 		var ally_attack: int = maxi(1, roundi(ceili(allies / float(POWER_PER_PERSON)) * morale_factor))

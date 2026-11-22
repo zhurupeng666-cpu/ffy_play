@@ -655,6 +655,10 @@ func _refresh_storage() -> void:
 		storage_label.text += "；储粮接近上限，请建粮仓"
 	var material_bill: Dictionary = world.last_material_ledger
 	material_bill_label.text = "暂无材料日结；伐木场与采石场完工后分配工人" if material_bill.is_empty() else "第%d日材料：木材入库+%d，石材入库+%d；溢出木%d、石%d" % [material_bill["day"], material_bill["wood"]["stored"], material_bill["stone"]["stored"], material_bill["wood"]["overflow"], material_bill["stone"]["overflow"]]
+	if material_bill.has("woods_wood"):
+		var woods_wood: int = material_bill["woods_wood"]
+		var local_wood: int = int(material_bill["wood"]["produced"]) - woods_wood
+		material_bill_label.text += "\n木材产量：伐木场 %d，北部林地 %d" % [local_wood, woods_wood]
 	food_detail_button.text = "收起粮食收支" if food_details_visible else "展开粮食收支"
 	food_detail_label.visible = food_details_visible
 	var ledger: Dictionary = world.last_food_ledger
