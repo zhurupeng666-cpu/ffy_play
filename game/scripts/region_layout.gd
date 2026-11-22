@@ -17,3 +17,5 @@ extends Resource
 # 旧堡攻城参数：初始城门战力与守军数量。
 @export var fort_gate_power: int = 30
 @export var fort_guards: int = 5
+# 旧堡收益参数：控制后每个完整战略日上缴的金币。
+@export var fort_gold_per_day: int = 5

@@ -273,7 +273,7 @@ func _siege_summary(siege: Dictionary) -> String:
 			var stage: String = "攻击城门" if int(siege["gate"]) > 0 else "城门已破，迎战守军"
 			return "\n%s ｜ 城门 %d ｜ 己方战力 %d ｜ 守军战力 %d" % [stage, siege["gate"], siege["allies"], siege["enemies"]]
 		"victory":
-			return "\n攻城胜利，旧堡已由己方控制。"
+			return "\n旧堡已由己方控制。每个完整战略日上缴金币 %d。" % LAYOUT.fort_gold_per_day
 		"defeat":
 			return "\n攻城失利。可以再次攻城，或返回林地。"
 	return ""

@@ -875,6 +875,9 @@ func _refresh_civic() -> void:
 		civic_bill_label.text = "暂无政务日结；低税恢复、高税损耗满意度，缺粮额外扣分"
 		return
 	civic_bill_label.text = "第%d日%s：税收入库%d，溢出%d\n满意度%d→%d；税率%+d、供粮恢复+%d、缺粮-%d" % [bill["day"], Civic.policy_name(bill["policy"]), bill["tax_stored"], bill["tax_overflow"], bill["before"], bill["after"], bill["policy_delta"], bill["recovery"], bill["food_penalty"]]
+	if bill.has("fort_gold"):
+		var fort: Dictionary = bill["fort_gold"]
+		civic_bill_label.text += "\n旧堡金币入库 +%d（应得 %d，溢出 %d）" % [fort["stored"], fort["income"], fort["overflow"]]
 
 
 # 招募入口模块：每次明确操作生成新命令，由军队服务校验费用、兵源和军营编额。

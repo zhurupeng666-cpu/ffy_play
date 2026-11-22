@@ -6,8 +6,8 @@ const Scout = Field.Scout
 const LAYOUT = Field.LAYOUT
 
 # 战况模块：旧堡与林地共用战力结算，城门存在时先承受进攻。
-static func report(world: RefCounted) -> Dictionary:
-	return Field.simulate(world.fort_siege, world.tick)
+static func report(world: RefCounted, at_tick: int = -1) -> Dictionary:
+	return Field.simulate(world.fort_siege, world.tick if at_tick < 0 else at_tick)
 
 # 位置模块：必须已在堡外驻扎，不能在途中开战。
 static func at_fort(world: RefCounted, legion_id: String, at_tick: int) -> bool:

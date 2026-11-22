@@ -61,7 +61,7 @@ func _run() -> void:
 	if not passed:
 		push_error("战略界面保存读取联动失败")
 	else:
-		print("WORLD_UI_PASS: scene, regions, scouting, march, battle, territory yield, fort siege, pause, save, load, resource display")
+		print("WORLD_UI_PASS: scene, regions, scouting, march, battle, territory yield, fort siege, fort gold, pause, save, load, resource display")
 	quit(0 if passed else 1)
 
 
@@ -112,17 +112,18 @@ func _check_scout(main: Control) -> bool:
 	overview.sync(main.world)
 	if not Scout.complete(main.world) or not overview.markers.has(Scout.FORT) or overview.scout_button.text != "侦察已完成" or not Disband.quote(main.world, troop)["ok"]:
 		return false
-	if not _check_march(main, id, troop) or not _check_battle(main, id, troop):
+	if not _check_march(main, id, troop):
+		return false
+	var legacy: Dictionary = main.world.snapshot()
+	if not _check_battle(main, id, troop):
 		return false
 	Legions.dissolve(main.world, id)
 	main._save()
 	main._load()
 	if not Scout.complete(main.world) or not overview.markers.has(Scout.FORT):
 		return false
-	var legacy: Dictionary = main.world.snapshot()
 	legacy["version"] = 13
 	legacy.erase("woods_scout")
-	legacy["last_material_ledger"].erase("woods_wood")
 	var migrated: RefCounted = State.from_snapshot(legacy)
 	return migrated != null and migrated.woods_scout.is_empty()
 
@@ -331,6 +332,11 @@ func _check_siege(main: Control, legion_id: String) -> bool:
 	var overview: Control = main.region_overview
 	if overview.battle_button.disabled or not overview.battle_button.is_visible_in_tree():
 		return false
+	# 将攻城放在日初，区分胜利当日账单及首个完整的控制日。
+	main.world.paused = false
+	main.clock.advance(120 - main.world.tick % 120 + 5)
+	main.world.paused = true
+	overview.sync(main.world)
 	overview.battle_button.pressed.emit()
 	if not Siege.busy(main.world, legion_id) or March.dispatch(main.world, legion_id, Scout.WOODS):
 		return false
@@ -345,8 +351,50 @@ func _check_siege(main: Control, legion_id: String) -> bool:
 	if Siege.report(main.world) != report or not overview.detail.text.contains("攻击城门"):
 		return false
 	main.world.paused = false
-	main.clock.advance(160)
+	for _second: int in range(90):
+		if Siege.report(main.world)["status"] != "running":
+			break
+		main.clock.advance(1)
 	main.world.paused = true
 	overview.sync(main.world)
-	return Siege.report(main.world)["status"] == "victory" \
-		and overview.markers[Scout.FORT].text.contains("己方控制") and not overview.march_button.disabled
+	if Siege.report(main.world)["status"] != "victory" or not overview.markers[Scout.FORT].text.contains("己方控制"):
+		return false
+	return _check_fort_gold(main) and not overview.march_button.disabled
+
+
+# 收益验收：核对首日延迟、与军饷衔接、溢出及读档后不重复计费。
+func _check_fort_gold(main: Control) -> bool:
+	main.world.paused = false
+	main.clock.advance(120 - main.world.tick % 120)
+	if main.world.last_civic_ledger.has("fort_gold"):
+		return false
+	var legacy: Dictionary = main.world.snapshot()
+	legacy["version"] = 19
+	var migrated: RefCounted = State.from_snapshot(legacy)
+	if migrated == null or Siege.report(migrated)["status"] != "victory":
+		return false
+	main.clock.advance(120)
+	main.world.paused = true
+	main._refresh()
+	var bill: Dictionary = main.world.last_civic_ledger
+	var source: Dictionary = bill.get("fort_gold", {})
+	if source != {"income": 5, "stored": 5, "overflow": 0} or not main.civic_bill_label.text.contains("旧堡金币入库 +5"):
+		return false
+	var before_wages: int = int(bill["gold_before"]) + int(bill["tax_stored"]) + 5
+	var wages: Dictionary = main.world.last_army_ledger
+	if wages["gold_before"] != before_wages or main.world.resources["gold"] != before_wages - int(wages["wage_paid"]):
+		return false
+	main._save()
+	main._load()
+	main.world.settle_days()
+	if main.world.last_civic_ledger != bill or main.world.resources["gold"] != before_wages - int(wages["wage_paid"]):
+		return false
+	var invalid: Dictionary = main.world.snapshot()
+	invalid["last_civic_ledger"]["fort_gold"]["overflow"] = 5
+	if State.from_snapshot(invalid) != null:
+		return false
+	main.world.resources["gold"] = 1000000000
+	main.world.paused = false
+	main.clock.advance(120)
+	main.world.paused = true
+	return main.world.last_civic_ledger["fort_gold"] == {"income": 5, "stored": 0, "overflow": 5}
