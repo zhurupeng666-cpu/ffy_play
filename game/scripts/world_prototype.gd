@@ -495,7 +495,7 @@ func _verify_export(mode: String) -> int:
 	if not region_overview.visible or town_view.visible or region_overview.markers.has("r_fort"):
 		return 1
 	region_overview.markers["r_woods"].pressed.emit()
-	if not region_overview.enter_button.disabled or not region_overview.detail.text.contains("侦察"):
+	if not region_overview.enter_button.disabled or not region_overview.scout_button.is_visible_in_tree() or not region_overview.scout_button.disabled:
 		return 1
 	region_overview.markers["r_home"].pressed.emit()
 	region_overview.enter_button.pressed.emit()

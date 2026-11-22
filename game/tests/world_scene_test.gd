@@ -33,9 +33,12 @@ func _run() -> void:
 	main._start_preview(load("res://data/buildings/house.tres"))
 	main.region_toggle.pressed.emit()
 	var overview: Control = main.region_overview
-	overview.markers["r_woods"].pressed.emit()
+	overview.scout_shortcut.pressed.emit()
+	var scout_entry_visible: bool = overview.scout_button.is_visible_in_tree() and overview.scout_button.disabled
+	scout_entry_visible = scout_entry_visible and overview.detail.text.contains("现役士兵")
+	scout_entry_visible = scout_entry_visible and overview.scout_row.get_index() < overview.board.get_index()
 	overview.enter_button.pressed.emit()
-	var region_safe: bool = overview.visible and not main.town_view.visible \
+	var region_safe: bool = scout_entry_visible and overview.visible and not main.town_view.visible \
 		and main.town_map.active_definition == null and overview.enter_button.disabled \
 		and not overview.markers.has("r_fort") and before_map == main.world.snapshot()
 	overview.markers["r_home"].pressed.emit()
@@ -85,7 +88,7 @@ func _check_scout(main: Control) -> bool:
 	overview.sync(main.world)
 	overview.scout_button.pressed.emit()
 	overview.scout_button.pressed.emit()
-	if main.world.resources["food"] != food - 2 or not Scout.busy(main.world, id):
+	if main.world.resources["food"] != food - 2 or not Scout.busy(main.world, id) or overview.scout_button.text != "侦察进行中":
 		return false
 	if Legions.set_count(main.world, id, troop, 0)["ok"] or Legions.dissolve(main.world, id)["ok"] or Disband.quote(main.world, troop)["ok"]:
 		return false
@@ -104,7 +107,7 @@ func _check_scout(main: Control) -> bool:
 	main.clock.advance(1)
 	main.world.paused = true
 	overview.sync(main.world)
-	if not Scout.complete(main.world) or not overview.markers.has(Scout.FORT) or not Disband.quote(main.world, troop)["ok"]:
+	if not Scout.complete(main.world) or not overview.markers.has(Scout.FORT) or overview.scout_button.text != "侦察已完成" or not Disband.quote(main.world, troop)["ok"]:
 		return false
 	Legions.dissolve(main.world, id)
 	main._save()

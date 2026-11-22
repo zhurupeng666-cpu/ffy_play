@@ -13,6 +13,7 @@ var detail: Label
 var enter_button: Button
 # 侦察控件模块：世界状态由主界面绑定，选择项和布局留在视图。
 var world: RefCounted
+var scout_shortcut: Button
 var scout_row: HBoxContainer
 var scout_picker: OptionButton
 var scout_button: Button
@@ -20,9 +21,17 @@ var legion_labels: Dictionary = {}
 
 # 界面模块：建立路线画布、区域标记和随选择切换的详情。
 func _ready() -> void:
+	var heading: HBoxContainer = HBoxContainer.new()
+	add_child(heading)
 	var title: Label = Label.new()
 	title.text = "边境区域总览"
-	add_child(title)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	heading.add_child(title)
+	scout_shortcut = Button.new()
+	scout_shortcut.focus_mode = Control.FOCUS_NONE
+	scout_shortcut.text = "林地侦察"
+	scout_shortcut.pressed.connect(select_region.bind(Scout.WOODS))
+	heading.add_child(scout_shortcut)
 	board = Control.new()
 	board.custom_minimum_size = Vector2(320, 220)
 	board.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -55,6 +64,10 @@ func _ready() -> void:
 	scout_button.text = "派遣侦察（粮食 %d）" % LAYOUT.scout_food
 	scout_button.pressed.connect(_dispatch_scout)
 	scout_row.add_child(scout_button)
+	# 操作区放在地图上方，方便直接查看和派遣。
+	move_child(detail, 1)
+	move_child(enter_button, 2)
+	move_child(scout_row, 3)
 	scout_row.hide()
 	select_region(LAYOUT.home_id)
 	_place_markers()
@@ -100,6 +113,7 @@ func select_region(id: String) -> void:
 	for marker_id: String in markers:
 		markers[marker_id].set_pressed_no_signal(marker_id == id)
 	detail.text = "%s ｜ %s\n%s" % [region["title"], _status(id), region["description"]]
+	enter_button.visible = id != Scout.WOODS
 	enter_button.disabled = id != LAYOUT.home_id or region["access"] != "open"
 	enter_button.text = "未开放" if enter_button.disabled else "进入边境镇"
 	_refresh_scout()
@@ -124,18 +138,24 @@ func sync(state: RefCounted) -> void:
 
 # 状态模块：按战略剩余时间显示进度，到期后显示已揭示区域。
 func _refresh_scout() -> void:
-	scout_row.visible = world != null and selected_id == Scout.WOODS and world.woods_scout.is_empty()
+	scout_row.visible = world != null and selected_id == Scout.WOODS
 	if world == null or selected_id != Scout.WOODS:
 		return
+	scout_picker.visible = world.woods_scout.is_empty()
 	if Scout.busy(world):
+		scout_button.disabled = true
+		scout_button.text = "侦察进行中"
 		var remaining: int = int(world.woods_scout["arrives"]) - world.tick
 		detail.text = "北部林地 ｜ 侦察中\n还需 %d 战略秒。军团归队后揭示侦察结果。" % remaining
 	elif Scout.complete(world):
+		scout_button.disabled = true
+		scout_button.text = "侦察已完成"
 		detail.text = "北部林地 ｜ 已侦察 · 未占领\n已发现旧堡，地图上可查看通往旧堡的道路。"
 	else:
 		_update_scout_picker()
 		var id: String = _selected_legion()
 		var blocked: String = Scout.reason(world, id)
+		scout_button.text = "派遣侦察（粮食 %d）" % LAYOUT.scout_food
 		scout_button.disabled = not blocked.is_empty()
 		var hint: String = blocked if not blocked.is_empty() else "耗时 %d 战略秒" % LAYOUT.scout_ticks
 		detail.text += "\n" + hint
