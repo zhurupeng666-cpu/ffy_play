@@ -106,7 +106,7 @@ func _status(id: String) -> String:
 	var region: Dictionary = LAYOUT.regions[id]
 	if world != null:
 		if id == Scout.FORT:
-			return "已发现 · 待进军" if Battle.report(world)["status"] == "victory" else "已发现 · 未开放"
+			return "道路开放" if March.fort_access(world) else "已发现 · 未开放"
 		if id == Scout.WOODS:
 			if Battle.report(world)["status"] == "victory":
 				return "己方控制"
@@ -129,12 +129,13 @@ func select_region(id: String) -> void:
 	for marker_id: String in markers:
 		markers[marker_id].set_pressed_no_signal(marker_id == id)
 	detail.text = "%s ｜ %s\n%s" % [region["title"], _status(id), region["description"]]
-	if id == Scout.FORT and world != null and Battle.report(world)["status"] == "victory":
-		detail.text = "旧堡 ｜ 已发现 · 待进军\n林地已由己方控制。旧堡是下一处进军目标。"
-	enter_button.visible = id != Scout.WOODS
+	enter_button.visible = id == LAYOUT.home_id
 	enter_button.disabled = id != LAYOUT.home_id or region["access"] != "open"
 	enter_button.text = "未开放" if enter_button.disabled else "进入边境镇"
-	_refresh_scout()
+	if id == Scout.FORT:
+		_refresh_fort()
+	else:
+		_refresh_scout()
 
 # 世界同步模块：发现旧堡时显示标记与道路，读入较早进度时恢复对应地图。
 func sync(state: RefCounted) -> void:
@@ -184,6 +185,34 @@ func _refresh_scout() -> void:
 		var hint: String = blocked if not blocked.is_empty() else "耗时 %d 战略秒" % LAYOUT.scout_ticks
 		detail.text += "\n" + hint
 
+# 旧堡面板：供驻林地军团前进，或从堡外原路撤回。
+func _refresh_fort() -> void:
+	scout_row.visible = world != null
+	scout_button.hide()
+	battle_button.hide()
+	scout_picker.show()
+	march_button.show()
+	if world == null:
+		return
+	_update_scout_picker()
+	var id: String = _selected_legion()
+	var target: String = _march_target(id)
+	var remaining: int = March.remaining(world, id)
+	var location: String = LAYOUT.regions[March.destination(world, id)]["title"]
+	var blocked: String = March.reason(world, id, target)
+	march_button.text = "返回北部林地" if target == Scout.WOODS else "前往旧堡"
+	march_button.disabled = not blocked.is_empty()
+	if not March.fort_access(world):
+		detail.text = "旧堡 ｜ 道路未开放\n需先取得北部林地控制权。"
+	elif remaining > 0:
+		detail.text = "旧堡 ｜ 道路开放\n前往%s，剩余 %d 战略秒。" % [location, remaining]
+	elif location == LAYOUT.regions[Scout.FORT]["title"]:
+		detail.text = "旧堡 ｜ 军团已抵达堡外\n可沿原路返回北部林地。"
+	else:
+		detail.text = "旧堡 ｜ 道路开放\n军团驻地为%s。请从北部林地出发。" % location
+		if not blocked.is_empty():
+			detail.text += "\n" + blocked
+
 # 行军面板：根据军团的路程与驻地显示下一条可执行的命令。
 func _refresh_march() -> void:
 	_update_scout_picker()
@@ -231,13 +260,16 @@ func _start_battle() -> void:
 		Battle.start(world, _selected_legion())
 		sync(world)
 
-# 路线选择：驻扎林地时可以返回主城，否则可从主城前往林地。
+# 路线选择：林地视图负责回城与回林地，旧堡视图负责林地到堡外。
 func _march_target(legion_id: String) -> String:
-	return LAYOUT.home_id if March.destination(world, legion_id) == Scout.WOODS else Scout.WOODS
+	var origin: String = March.destination(world, legion_id)
+	if selected_id == Scout.FORT:
+		return Scout.WOODS if origin == Scout.FORT else Scout.FORT
+	return LAYOUT.home_id if origin == Scout.WOODS else Scout.WOODS
 
-# 命令入口：只在林地界面处理请求，服务层再次检查可达性。
+# 命令入口：在林地或旧堡界面处理请求，由服务层复查路线。
 func _dispatch_march() -> void:
-	if world != null and is_visible_in_tree() and selected_id == Scout.WOODS:
+	if world != null and is_visible_in_tree() and selected_id in [Scout.WOODS, Scout.FORT]:
 		var id: String = _selected_legion()
 		March.dispatch(world, id, _march_target(id))
 		sync(world)

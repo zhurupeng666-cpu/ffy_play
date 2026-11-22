@@ -191,7 +191,7 @@ func _check_battle(main: Control, legion_id: String, troop_id: String) -> bool:
 	main.clock.advance(160)
 	main.world.paused = true
 	overview.sync(main.world)
-	if Battle.report(main.world)["status"] != "defeat":
+	if Battle.report(main.world)["status"] != "defeat" or March.dispatch(main.world, legion_id, Scout.FORT):
 		return false
 	overview.march_button.pressed.emit()
 	main.world.paused = false
@@ -263,4 +263,61 @@ func _check_battle(main: Control, legion_id: String, troop_id: String) -> bool:
 	main.clock.advance(120)
 	main.world.paused = true
 	bill = main.world.last_material_ledger
-	return bill.get("woods_wood") == 5 and bill["wood"]["stored"] == 2 and bill["wood"]["overflow"] == 3
+	if bill.get("woods_wood") != 5 or bill["wood"]["stored"] != 2 or bill["wood"]["overflow"] != 3:
+		return false
+	return _check_fort_route(main, legion_id)
+
+
+# 旧堡验收：在真实区域界面检查中转、旧版迁移、途中存读档和返程。
+func _check_fort_route(main: Control, legion_id: String) -> bool:
+	var overview: Control = main.region_overview
+	overview.markers[Scout.FORT].pressed.emit()
+	if not overview.march_button.disabled or March.dispatch(main.world, legion_id, Scout.FORT):
+		return false
+	overview.markers[Scout.WOODS].pressed.emit()
+	overview.march_button.pressed.emit()
+	var legacy: Dictionary = main.world.snapshot()
+	legacy["version"] = 17
+	legacy["legion_trips"][legion_id].erase("origin")
+	var migrated: RefCounted = State.from_snapshot(legacy)
+	if migrated == null or migrated.legion_trips[legion_id]["origin"] != Scout.LAYOUT.home_id:
+		return false
+	main.world.paused = false
+	main.clock.advance(120)
+	main.world.paused = true
+	overview.markers[Scout.FORT].pressed.emit()
+	if overview.march_button.disabled or overview.march_button.text != "前往旧堡":
+		return false
+	overview.march_button.pressed.emit()
+	var invalid: Dictionary = main.world.snapshot()
+	invalid["legion_trips"][legion_id]["origin"] = Scout.LAYOUT.home_id
+	if State.from_snapshot(invalid) != null:
+		return false
+	main.world.paused = false
+	main.clock.advance(60)
+	main.world.paused = true
+	main._save()
+	main._load()
+	if March.remaining(main.world, legion_id) != 60 or not overview.detail.text.contains("剩余 60"):
+		return false
+	main.world.paused = false
+	main.clock.advance(60)
+	main.world.paused = true
+	overview.sync(main.world)
+	if not overview.detail.text.contains("抵达堡外") or overview.march_button.text != "返回北部林地":
+		return false
+	if March.dispatch(main.world, legion_id, Scout.LAYOUT.home_id):
+		return false
+	overview.march_button.pressed.emit()
+	main.world.paused = false
+	main.clock.advance(120)
+	main.world.paused = true
+	overview.markers[Scout.WOODS].pressed.emit()
+	if not overview.detail.text.contains("驻地为北部林地"):
+		return false
+	overview.march_button.pressed.emit()
+	main.world.paused = false
+	main.clock.advance(120)
+	main.world.paused = true
+	overview.sync(main.world)
+	return main.world.legion_trips.is_empty()

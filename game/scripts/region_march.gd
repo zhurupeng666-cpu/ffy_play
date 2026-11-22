@@ -1,4 +1,4 @@
-## 文件用途：记录军团沿边境镇与北部林地道路往返的行程，并验证存档中的军团位置。
+## 文件用途：根据区域道路与控制权派遣军团，并验证途中的路线和驻地。
 extends RefCounted
 
 const Battle = preload("res://scripts/woods_battle.gd")
@@ -29,19 +29,37 @@ static func uses_troop(world: RefCounted, troop_id: String) -> bool:
 				return true
 	return false
 
-# 派遣校验模块：侦察完成后开放双向邻接道路，行军中必须等到抵达。
+# 邻接模块：道路支持双向通行，军团每次只走一条相邻道路。
+static func adjacent(origin: String, target: String) -> bool:
+	for road: PackedStringArray in LAYOUT.roads:
+		if origin in road and target in road and origin != target:
+			return true
+	return false
+
+# 旧堡路线模块：林地在出发时已由己方控制，才允许通过相邻道路。
+static func fort_access(world: RefCounted, at_tick: int = -1) -> bool:
+	return Battle.report(world, at_tick)["status"] == "victory"
+
+# 派遣校验模块：校验驻地、领地控制权和当前行程。
 static func reason(world: RefCounted, legion_id: String, target: String) -> String:
 	if not Scout.complete(world):
 		return "需先完成北部林地侦察"
-	if target not in [LAYOUT.home_id, Scout.WOODS]:
-		return "这条道路尚未开放"
+	if not LAYOUT.regions.has(target):
+		return "目的地区域不存在"
 	if Battle.busy(world, legion_id):
 		return "军团正在交战，战斗结束后可调动"
 	if remaining(world, legion_id) > 0:
 		return "军团正在行军"
 	for legion: Dictionary in world.legions:
 		if legion["id"] == legion_id and legion["state"] == "active" and not legion["members"].is_empty():
-			return "军团已在该区域" if target == destination(world, legion_id) else ""
+			var origin: String = destination(world, legion_id)
+			if target == origin:
+				return "军团已在该区域"
+			if not adjacent(origin, target):
+				return "两地不相邻，需经北部林地中转"
+			if (target == Scout.FORT or origin == Scout.FORT) and not fort_access(world):
+				return "需先取得北部林地控制权"
+			return ""
 	return "请选择有现役士兵的军团"
 
 # 派遣模块：每个军团单独计时，原有居民口粮和军需按日结算。
@@ -49,20 +67,21 @@ static func dispatch(world: RefCounted, legion_id: String, target: String) -> bo
 	if not reason(world, legion_id, target).is_empty():
 		return false
 	world.legion_trips[legion_id] = {
+		"origin": destination(world, legion_id),
 		"target": target,
 		"started": world.tick,
 		"arrives": world.tick + LAYOUT.march_ticks,
 	}
 	return true
 
-# 归队模块：回城即释放行程记录，驻扎在林地的记录继续保存。
+# 归队模块：回城即释放行程记录，驻外军团的位置继续保存。
 static func advance(world: RefCounted) -> void:
 	for id: String in world.legion_trips.keys():
 		if destination(world, id) == LAYOUT.home_id and remaining(world, id) == 0:
 			world.legion_trips.erase(id)
 
 # 存档校验模块：只接受现役军团、已侦察路线和合理的战略时间戳。
-static func restore(world: RefCounted, raw: Variant) -> bool:
+static func restore(world: RefCounted, raw: Variant, legacy: bool) -> bool:
 	if not raw is Dictionary or raw.size() > world.legions.size():
 		return false
 	if raw.is_empty():
@@ -76,10 +95,17 @@ static func restore(world: RefCounted, raw: Variant) -> bool:
 	var trips: Dictionary = {}
 	for id: Variant in raw:
 		var trip: Variant = raw[id]
-		if not active.has(id) or not trip is Dictionary or trip.size() != 3:
+		if not active.has(id) or not trip is Dictionary or trip.size() != (3 if legacy else 4):
 			return false
 		var target: Variant = trip.get("target")
-		if target not in [LAYOUT.home_id, Scout.WOODS]:
+		if not target is String:
+			return false
+		var origin: Variant = trip.get("origin")
+		if legacy:
+			if target not in [LAYOUT.home_id, Scout.WOODS]:
+				return false
+			origin = Scout.WOODS if target == LAYOUT.home_id else LAYOUT.home_id
+		if not origin is String or not adjacent(origin, target):
 			return false
 		for key: String in ["started", "arrives"]:
 			var value: Variant = trip.get(key)
@@ -92,6 +118,13 @@ static func restore(world: RefCounted, raw: Variant) -> bool:
 			return false
 		if target == LAYOUT.home_id and arrives <= world.tick:
 			return false
-		trips[id] = {"target": target, "started": started, "arrives": arrives}
+		trips[id] = {"origin": origin, "target": target, "started": started, "arrives": arrives}
 	world.legion_trips = trips
+	return true
+
+# 控制权校验模块：战果恢复后，再校验存档中的旧堡道路是否已经开放。
+static func valid_fort_trips(world: RefCounted) -> bool:
+	for trip: Dictionary in world.legion_trips.values():
+		if Scout.FORT in [trip["origin"], trip["target"]] and not fort_access(world, trip["started"]):
+			return false
 	return true
