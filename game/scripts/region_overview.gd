@@ -3,6 +3,7 @@ extends VBoxContainer
 
 signal town_requested
 const Battle = preload("res://scripts/woods_battle.gd")
+const Siege = preload("res://scripts/fort_siege.gd")
 const March = preload("res://scripts/region_march.gd")
 const Scout = preload("res://scripts/region_scout.gd")
 const LAYOUT = Scout.LAYOUT
@@ -106,6 +107,11 @@ func _status(id: String) -> String:
 	var region: Dictionary = LAYOUT.regions[id]
 	if world != null:
 		if id == Scout.FORT:
+			var status: String = Siege.report(world)["status"]
+			if status == "victory":
+				return "己方控制"
+			if status == "running":
+				return "攻城中"
 			return "道路开放" if March.fort_access(world) else "已发现 · 未开放"
 		if id == Scout.WOODS:
 			if Battle.report(world)["status"] == "victory":
@@ -185,7 +191,7 @@ func _refresh_scout() -> void:
 		var hint: String = blocked if not blocked.is_empty() else "耗时 %d 战略秒" % LAYOUT.scout_ticks
 		detail.text += "\n" + hint
 
-# 旧堡面板：供驻林地军团前进，或从堡外原路撤回。
+# 旧堡面板：展示军团通行、攻城阶段与旧堡归属。
 func _refresh_fort() -> void:
 	scout_row.visible = world != null
 	scout_button.hide()
@@ -200,6 +206,11 @@ func _refresh_fort() -> void:
 	var remaining: int = March.remaining(world, id)
 	var location: String = LAYOUT.regions[March.destination(world, id)]["title"]
 	var blocked: String = March.reason(world, id, target)
+	var siege: Dictionary = Siege.report(world)
+	var status: String = siege["status"]
+	battle_button.visible = March.fort_access(world) and status != "victory"
+	battle_button.disabled = not Siege.reason(world, id, status).is_empty()
+	battle_button.text = "攻城中" if status == "running" else "发起攻城"
 	march_button.text = "返回北部林地" if target == Scout.WOODS else "前往旧堡"
 	march_button.disabled = not blocked.is_empty()
 	if not March.fort_access(world):
@@ -212,6 +223,7 @@ func _refresh_fort() -> void:
 		detail.text = "旧堡 ｜ 道路开放\n军团驻地为%s。请从北部林地出发。" % location
 		if not blocked.is_empty():
 			detail.text += "\n" + blocked
+	detail.text += _siege_summary(siege)
 
 # 行军面板：根据军团的路程与驻地显示下一条可执行的命令。
 func _refresh_march() -> void:
@@ -254,11 +266,27 @@ func _battle_summary(report: Dictionary) -> String:
 			return "\n战斗失利。可调回城镇整编，再派军团迎战。"
 	return "\n林地有 %d 名守军。" % LAYOUT.woods_guards
 
-# 开战入口：只在林地视图请求遭遇战，规则层重新验证驻地。
+# 旧堡战况：分阶段显示城门与守军，结束后显示胜败和控制权。
+func _siege_summary(siege: Dictionary) -> String:
+	match siege["status"]:
+		"running":
+			var stage: String = "攻击城门" if int(siege["gate"]) > 0 else "城门已破，迎战守军"
+			return "\n%s ｜ 城门 %d ｜ 己方战力 %d ｜ 守军战力 %d" % [stage, siege["gate"], siege["allies"], siege["enemies"]]
+		"victory":
+			return "\n攻城胜利，旧堡已由己方控制。"
+		"defeat":
+			return "\n攻城失利。可以再次攻城，或返回林地。"
+	return ""
+
+# 开战入口：按选区发出战斗请求，由对应规则复查军团驻地。
 func _start_battle() -> void:
-	if world != null and is_visible_in_tree() and selected_id == Scout.WOODS:
+	if world == null or not is_visible_in_tree():
+		return
+	if selected_id == Scout.WOODS:
 		Battle.start(world, _selected_legion())
-		sync(world)
+	elif selected_id == Scout.FORT:
+		Siege.start(world, _selected_legion())
+	sync(world)
 
 # 路线选择：林地视图负责回城与回林地，旧堡视图负责林地到堡外。
 func _march_target(legion_id: String) -> String:

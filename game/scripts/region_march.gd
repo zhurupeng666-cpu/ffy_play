@@ -1,6 +1,7 @@
 ## 文件用途：根据区域道路与控制权派遣军团，并验证途中的路线和驻地。
 extends RefCounted
 
+const Siege = preload("res://scripts/fort_siege.gd")
 const Battle = preload("res://scripts/woods_battle.gd")
 const Scout = preload("res://scripts/region_scout.gd")
 const LAYOUT = Scout.LAYOUT
@@ -46,7 +47,7 @@ static func reason(world: RefCounted, legion_id: String, target: String) -> Stri
 		return "需先完成北部林地侦察"
 	if not LAYOUT.regions.has(target):
 		return "目的地区域不存在"
-	if Battle.busy(world, legion_id):
+	if Battle.busy(world, legion_id) or Siege.busy(world, legion_id):
 		return "军团正在交战，战斗结束后可调动"
 	if remaining(world, legion_id) > 0:
 		return "军团正在行军"

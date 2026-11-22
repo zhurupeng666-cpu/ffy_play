@@ -14,3 +14,6 @@ extends Resource
 @export var woods_guards: int = 6
 # 领地收益参数：控制林地后每个完整战略日上缴的木材。
 @export var woods_wood_per_day: int = 5
+# 旧堡攻城参数：初始城门战力与守军数量。
+@export var fort_gate_power: int = 30
+@export var fort_guards: int = 5

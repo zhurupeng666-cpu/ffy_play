@@ -5,6 +5,7 @@ const Disband = preload("res://scripts/army_disband_service.gd")
 const Build = preload("res://scripts/construction_service.gd")
 const Legions = preload("res://scripts/legion_service.gd")
 const Battle = preload("res://scripts/woods_battle.gd")
+const Siege = preload("res://scripts/fort_siege.gd")
 const March = preload("res://scripts/region_march.gd")
 const Scout = preload("res://scripts/region_scout.gd")
 const State = preload("res://scripts/world_state.gd")
@@ -60,7 +61,7 @@ func _run() -> void:
 	if not passed:
 		push_error("战略界面保存读取联动失败")
 	else:
-		print("WORLD_UI_PASS: scene, regions, scouting, march, battle, territory yield, pause, save, load, resource display")
+		print("WORLD_UI_PASS: scene, regions, scouting, march, battle, territory yield, fort siege, pause, save, load, resource display")
 	quit(0 if passed else 1)
 
 
@@ -306,7 +307,7 @@ func _check_fort_route(main: Control, legion_id: String) -> bool:
 	overview.sync(main.world)
 	if not overview.detail.text.contains("抵达堡外") or overview.march_button.text != "返回北部林地":
 		return false
-	if March.dispatch(main.world, legion_id, Scout.LAYOUT.home_id):
+	if March.dispatch(main.world, legion_id, Scout.LAYOUT.home_id) or not _check_siege(main, legion_id):
 		return false
 	overview.march_button.pressed.emit()
 	main.world.paused = false
@@ -320,4 +321,32 @@ func _check_fort_route(main: Control, legion_id: String) -> bool:
 	main.clock.advance(120)
 	main.world.paused = true
 	overview.sync(main.world)
-	return main.world.legion_trips.is_empty()
+	main._save()
+	main._load()
+	return main.world.legion_trips.is_empty() and Siege.report(main.world)["status"] == "victory"
+
+
+# 攻城验收：校验城门承伤顺序、途中锁定、战斗恢复和胜利标记。
+func _check_siege(main: Control, legion_id: String) -> bool:
+	var overview: Control = main.region_overview
+	if overview.battle_button.disabled or not overview.battle_button.is_visible_in_tree():
+		return false
+	overview.battle_button.pressed.emit()
+	if not Siege.busy(main.world, legion_id) or March.dispatch(main.world, legion_id, Scout.WOODS):
+		return false
+	main.world.paused = false
+	main.clock.advance(4)
+	main.world.paused = true
+	var report: Dictionary = Siege.report(main.world)
+	if report["gate"] >= Siege.LAYOUT.fort_gate_power or report["enemies"] != Siege.LAYOUT.fort_guards * 10:
+		return false
+	main._save()
+	main._load()
+	if Siege.report(main.world) != report or not overview.detail.text.contains("攻击城门"):
+		return false
+	main.world.paused = false
+	main.clock.advance(160)
+	main.world.paused = true
+	overview.sync(main.world)
+	return Siege.report(main.world)["status"] == "victory" \
+		and overview.markers[Scout.FORT].text.contains("己方控制") and not overview.march_button.disabled

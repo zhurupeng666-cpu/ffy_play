@@ -11,20 +11,25 @@ const MAX_MORALE: int = 100
 
 # 战况模块：用出战快照和经过时间复算战力，读档后继承相同对局。
 static func report(world: RefCounted, at_tick: int = -1) -> Dictionary:
-	var record: Dictionary = world.woods_battle
-	if at_tick < 0:
-		at_tick = world.tick
+	return simulate(world.woods_battle, world.tick if at_tick < 0 else at_tick)
+
+# 通用战力模块：守军每轮反击，攻方先打城门，再打守军。
+static func simulate(record: Dictionary, at_tick: int) -> Dictionary:
 	if record.is_empty() or at_tick < int(record["started"]):
 		return {"status": "idle"}
 	var allies: int = int(record["people"]) * POWER_PER_PERSON
 	var enemies: int = int(record["guards"]) * POWER_PER_PERSON
+	var gate: int = int(record.get("gate", 0))
 	var rounds: int = int((at_tick - int(record["started"])) / float(ROUND_TICKS))
 	var morale_factor: float = 0.8 + int(record["morale"]) / 250.0
-	for _round: int in range(mini(rounds, allies + enemies)):
+	for _round: int in range(mini(rounds, allies + enemies + gate)):
 		var ally_attack: int = maxi(1, roundi(ceili(allies / float(POWER_PER_PERSON)) * morale_factor))
 		var enemy_attack: int = ceili(enemies / float(POWER_PER_PERSON))
 		allies = maxi(0, allies - enemy_attack)
-		enemies = maxi(0, enemies - ally_attack)
+		if gate > 0:
+			gate = maxi(0, gate - ally_attack)
+		else:
+			enemies = maxi(0, enemies - ally_attack)
 		if allies == 0 or enemies == 0:
 			break
 	var status: String = "running"
@@ -32,7 +37,7 @@ static func report(world: RefCounted, at_tick: int = -1) -> Dictionary:
 		status = "defeat"
 	elif enemies == 0:
 		status = "victory"
-	return {"status": status, "allies": allies, "enemies": enemies}
+	return {"status": status, "allies": allies, "enemies": enemies, "gate": gate}
 
 # 出战校验模块：只有已抵达林地的现役军团可迎战当地守军。
 static func reason(world: RefCounted, legion_id: String, status: String) -> String:
@@ -52,9 +57,7 @@ static func start(world: RefCounted, legion_id: String) -> bool:
 	for legion: Dictionary in world.legions:
 		if legion["id"] != legion_id or legion["state"] != "active":
 			continue
-		var people: int = 0
-		for member: Dictionary in legion["members"]:
-			people += int(member["count"])
+		var people: int = member_count(legion)
 		if people == 0:
 			return false
 		world.woods_battle = {"legion_id": legion_id, "people": people, "guards": LAYOUT.woods_guards, "morale": world.army_morale, "started": world.tick}
@@ -65,21 +68,36 @@ static func start(world: RefCounted, legion_id: String) -> bool:
 static func busy(world: RefCounted, legion_id: String) -> bool:
 	return world.woods_battle.get("legion_id") == legion_id and report(world)["status"] == "running"
 
-# 存档模块：校验已侦察前提、参战快照和仍在交战军团的驻地。
-static func restore(world: RefCounted, raw: Variant) -> bool:
-	if not raw is Dictionary:
+# 兵员模块：从军团编制读取参战人数。
+static func member_count(legion: Dictionary) -> int:
+	var people: int = 0
+	for member: Dictionary in legion["members"]:
+		people += int(member["count"])
+	return people
+
+# 战斗快照模块：校验冻结的兵力、士气及已提交的开战时间。
+static func valid_snapshot(raw: Dictionary, earliest: int, latest: int, siege: bool = false) -> bool:
+	if raw.size() != (6 if siege else 5) or not raw.get("legion_id") is String:
 		return false
-	if raw.is_empty():
-		return true
-	if not Scout.complete(world) or raw.size() != 5 or not raw.get("legion_id") is String:
-		return false
-	var limits: Dictionary = {"people": Vector2i(1, 20), "guards": Vector2i(1, 20), "morale": Vector2i(0, MAX_MORALE), "started": Vector2i(int(world.woods_scout["arrives"]), world.tick)}
+	var limits: Dictionary = {"people": Vector2i(1, 20), "guards": Vector2i(1, 20), "morale": Vector2i(0, MAX_MORALE), "started": Vector2i(earliest, latest)}
+	if siege:
+		limits["gate"] = Vector2i(1, 200)
 	for key: String in limits:
 		var value: Variant = raw.get(key)
 		var bounds: Vector2i = limits[key]
 		if typeof(value) not in [TYPE_INT, TYPE_FLOAT] or not is_finite(float(value)) \
 			or value < bounds.x or value > bounds.y or floor(float(value)) != value:
 			return false
+	return true
+
+# 存档模块：校验已侦察前提、参战快照和仍在交战军团的驻地。
+static func restore(world: RefCounted, raw: Variant) -> bool:
+	if not raw is Dictionary:
+		return false
+	if raw.is_empty():
+		return true
+	if not Scout.complete(world) or not valid_snapshot(raw, int(world.woods_scout["arrives"]), world.tick):
+		return false
 	for legion: Dictionary in world.legions:
 		if legion["id"] != raw["legion_id"]:
 			continue
@@ -87,9 +105,7 @@ static func restore(world: RefCounted, raw: Variant) -> bool:
 		if not busy(world, raw["legion_id"]):
 			return true
 		var trip: Dictionary = world.legion_trips.get(raw["legion_id"], {})
-		var people: int = 0
-		for member: Dictionary in legion["members"]:
-			people += int(member["count"])
+		var people: int = member_count(legion)
 		return legion["state"] == "active" and people == int(raw["people"]) \
 			and trip.get("target") == Scout.WOODS and int(trip["arrives"]) <= int(raw["started"])
 	return false
