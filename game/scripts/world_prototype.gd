@@ -376,6 +376,8 @@ func _toggle_region_view() -> void:
 func _show_region_view(show_overview: bool) -> void:
 	if show_overview and town_map.active_definition != null:
 		town_map.cancel_preview()
+	if show_overview:
+		region_overview.sync(world)
 	region_overview.visible = show_overview
 	town_view.visible = not show_overview
 	region_toggle.text = "返回城镇" if show_overview else "区域地图"
@@ -391,6 +393,8 @@ func _process(delta: float) -> void:
 
 # 刷新模块：日期、库存与账单全部来自同一份世界数据。
 func _refresh() -> void:
+	if region_overview.visible:
+		region_overview.sync(world)
 	_refresh_legions()
 	_refresh_army()
 	_refresh_civic()

@@ -5,3 +5,6 @@ extends Resource
 @export var home_id: String
 @export var regions: Dictionary
 @export var roads: Array[PackedStringArray]
+# 侦察参数：费用在出发时结算，耗时以战略秒计算。
+@export var scout_food: int = 2
+@export var scout_ticks: int = 120

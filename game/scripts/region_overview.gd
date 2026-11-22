@@ -1,8 +1,9 @@
-## 文件用途：绘制区域道路、选择可见地区并提供城镇进入按钮。
+## 文件用途：绘制区域道路与侦察进度，提供军团派遣和城镇入口。
 extends VBoxContainer
 
 signal town_requested
-const LAYOUT = preload("res://data/regions/frontier.tres")
+const Scout = preload("res://scripts/region_scout.gd")
+const LAYOUT = Scout.LAYOUT
 
 # 视图模块：只保存当前选择，所有地区数据取自区域配置。
 var selected_id: String = ""
@@ -10,6 +11,12 @@ var markers: Dictionary = {}
 var board: Control
 var detail: Label
 var enter_button: Button
+# 侦察控件模块：世界状态由主界面绑定，选择项和布局留在视图。
+var world: RefCounted
+var scout_row: HBoxContainer
+var scout_picker: OptionButton
+var scout_button: Button
+var legion_labels: Dictionary = {}
 
 # 界面模块：建立路线画布、区域标记和随选择切换的详情。
 func _ready() -> void:
@@ -26,14 +33,7 @@ func _ready() -> void:
 		var region: Dictionary = LAYOUT.regions[id]
 		if region["visibility"] == "hidden":
 			continue
-		var marker: Button = Button.new()
-		marker.text = "%s\n%s" % [region["title"], _status(region)]
-		marker.custom_minimum_size = Vector2(110, 54)
-		marker.toggle_mode = true
-		marker.focus_mode = Control.FOCUS_NONE
-		marker.pressed.connect(select_region.bind(id))
-		board.add_child(marker)
-		markers[id] = marker
+		_add_marker(id)
 	detail = Label.new()
 	detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	detail.custom_minimum_size.y = 64
@@ -43,11 +43,48 @@ func _ready() -> void:
 	enter_button.text = "进入边境镇"
 	enter_button.pressed.connect(_enter_region)
 	add_child(enter_button)
+	scout_row = HBoxContainer.new()
+	add_child(scout_row)
+	scout_picker = OptionButton.new()
+	scout_picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scout_picker.focus_mode = Control.FOCUS_NONE
+	scout_picker.item_selected.connect(_on_scout_legion_selected)
+	scout_row.add_child(scout_picker)
+	scout_button = Button.new()
+	scout_button.focus_mode = Control.FOCUS_NONE
+	scout_button.text = "派遣侦察（粮食 %d）" % LAYOUT.scout_food
+	scout_button.pressed.connect(_dispatch_scout)
+	scout_row.add_child(scout_button)
+	scout_row.hide()
 	select_region(LAYOUT.home_id)
 	_place_markers()
 
-# 状态模块：用可见性、归属和通行权给区域标注简明状态。
-func _status(region: Dictionary) -> String:
+# 标记模块：只为已知区域创建可点击的地图节点。
+func _add_marker(id: String) -> void:
+	var marker: Button = Button.new()
+	marker.custom_minimum_size = Vector2(110, 54)
+	marker.toggle_mode = true
+	marker.focus_mode = Control.FOCUS_NONE
+	marker.pressed.connect(select_region.bind(id))
+	board.add_child(marker)
+	markers[id] = marker
+	_update_marker(id)
+
+# 标注模块：选择和完成状态改变时更新对应区域名称。
+func _update_marker(id: String) -> void:
+	markers[id].text = "%s\n%s" % [LAYOUT.regions[id]["title"], _status(id)]
+
+# 状态模块：合并静态地图状态和侦察结果。
+func _status(id: String) -> String:
+	var region: Dictionary = LAYOUT.regions[id]
+	if world != null:
+		if id == Scout.FORT:
+			return "已发现 · 未开放"
+		if id == Scout.WOODS:
+			if Scout.complete(world):
+				return "已侦察 · 未占领"
+			if Scout.busy(world):
+				return "侦察中"
 	if region["owner"] == "player" and region["access"] == "open":
 		return "己方 · 开放"
 	if region["visibility"] == "known":
@@ -62,9 +99,87 @@ func select_region(id: String) -> void:
 	var region: Dictionary = LAYOUT.regions[id]
 	for marker_id: String in markers:
 		markers[marker_id].set_pressed_no_signal(marker_id == id)
-	detail.text = "%s ｜ %s\n%s" % [region["title"], _status(region), region["description"]]
+	detail.text = "%s ｜ %s\n%s" % [region["title"], _status(id), region["description"]]
 	enter_button.disabled = id != LAYOUT.home_id or region["access"] != "open"
 	enter_button.text = "未开放" if enter_button.disabled else "进入边境镇"
+	_refresh_scout()
+
+# 世界同步模块：发现旧堡时显示标记与道路，读入较早进度时恢复对应地图。
+func sync(state: RefCounted) -> void:
+	world = state
+	var discovered: bool = Scout.complete(world)
+	if discovered != markers.has(Scout.FORT):
+		if discovered:
+			_add_marker(Scout.FORT)
+		else:
+			var marker: Button = markers[Scout.FORT]
+			marker.hide()
+			marker.queue_free()
+			markers.erase(Scout.FORT)
+			if selected_id == Scout.FORT:
+				selected_id = LAYOUT.home_id
+		_place_markers()
+	_update_marker(Scout.WOODS)
+	select_region(selected_id)
+
+# 状态模块：按战略剩余时间显示进度，到期后显示已揭示区域。
+func _refresh_scout() -> void:
+	scout_row.visible = world != null and selected_id == Scout.WOODS and world.woods_scout.is_empty()
+	if world == null or selected_id != Scout.WOODS:
+		return
+	if Scout.busy(world):
+		var remaining: int = int(world.woods_scout["arrives"]) - world.tick
+		detail.text = "北部林地 ｜ 侦察中\n还需 %d 战略秒。军团归队后揭示侦察结果。" % remaining
+	elif Scout.complete(world):
+		detail.text = "北部林地 ｜ 已侦察 · 未占领\n已发现旧堡，地图上可查看通往旧堡的道路。"
+	else:
+		_update_scout_picker()
+		var id: String = _selected_legion()
+		var blocked: String = Scout.reason(world, id)
+		scout_button.disabled = not blocked.is_empty()
+		var hint: String = blocked if not blocked.is_empty() else "耗时 %d 战略秒" % LAYOUT.scout_ticks
+		detail.text += "\n" + hint
+
+# 名单模块：编制变化才重建选项，保留仍可用的军团选择。
+func _update_scout_picker() -> void:
+	var current: Dictionary = {}
+	for legion: Dictionary in world.legions:
+		if legion["state"] == "active" and not legion["members"].is_empty():
+			var people: int = 0
+			for member: Dictionary in legion["members"]:
+				people += int(member["count"])
+			current[legion["id"]] = "%s · %d人" % [legion["name"], people]
+	if current == legion_labels and scout_picker.item_count > 0:
+		return
+	var previous: String = _selected_legion()
+	legion_labels = current
+	scout_picker.clear()
+	for id: String in current:
+		scout_picker.add_item(current[id])
+		var index: int = scout_picker.item_count - 1
+		scout_picker.set_item_metadata(index, id)
+		if id == previous:
+			scout_picker.select(index)
+	scout_picker.disabled = current.is_empty()
+	if current.is_empty():
+		scout_picker.add_item("暂无可派遣军团")
+		scout_picker.set_item_metadata(0, "")
+
+# 取值模块：空队列或占位项返回空 ID，交由规则模块判断。
+func _selected_legion() -> String:
+	if scout_picker.selected < 0:
+		return ""
+	return str(scout_picker.get_item_metadata(scout_picker.selected))
+
+# 选择模块：即时刷新派遣条件和按钮状态。
+func _on_scout_legion_selected(_index: int) -> void:
+	select_region(selected_id)
+
+# 派遣入口模块：地图关闭或切到其他地区后，不再响应派遣操作。
+func _dispatch_scout() -> void:
+	if world != null and is_visible_in_tree() and selected_id == Scout.WOODS:
+		Scout.dispatch(world, _selected_legion())
+		sync(world)
 
 # 进入模块：只接受配置为开放的主城，避免绕过界面禁用状态。
 func _enter_region() -> void:
