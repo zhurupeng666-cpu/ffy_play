@@ -230,7 +230,7 @@ func _build_ui() -> void:
 	region_overview.town_requested.connect(_show_region_view.bind(false))
 	map_column.add_child(region_overview)
 	var title: Label = Label.new()
-	title.text = "城镇格网（16×16；蓝色为北侧河道）"
+	title.text = "边境镇 · 城镇地图"
 	town_view.add_child(title)
 	town_map = TownMap.new()
 	town_map.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -242,7 +242,7 @@ func _build_ui() -> void:
 	town_view.add_child(map_actions)
 	_button(map_actions, "镜头复位（Home）", town_map.reset_view)
 	var help: Label = Label.new()
-	help.text = "左键查看建筑或建造 / 右键取消 / 中键拖动 / 滚轮缩放\n绿格林地、灰白石矿：对应生产建筑须紧邻资源点"
+	help.text = "左键查看建筑或建造 / 右键取消 / 中键拖动 / 滚轮缩放\n伐木场须紧邻林地，采石场须紧邻石矿"
 	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	town_view.add_child(help)
 	town_map.hovered_changed.connect(_on_map_cell_changed)
@@ -260,7 +260,7 @@ func _build_ui() -> void:
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	panel.add_theme_constant_override("separation", 8)
 	scroll.add_child(panel)
-	_label("领地管理（占位）")
+	_label("领地管理")
 	date_label = _label("")
 	resource_label = _label("")
 	storage_label = _label("")

@@ -1,4 +1,4 @@
-## 文件用途：绘制占位等距地图，处理高亮选格、镜头拖动和鼠标中心缩放。
+## 文件用途：绘制城镇等距地图，处理高亮选格、镜头拖动和鼠标中心缩放。
 extends Control
 
 signal hovered_changed(cell: Vector2i)
@@ -8,6 +8,7 @@ signal placement_changed(result: Dictionary)
 signal placement_clicked(result: Dictionary)
 signal placement_cancelled
 
+const Art = preload("res://scripts/town_art.gd")
 const Terrain = preload("res://scripts/town_terrain.gd")
 const Catalog = preload("res://scripts/building_catalog.gd")
 const Construction = preload("res://scripts/construction_service.gd")
@@ -15,7 +16,8 @@ const Placement = preload("res://scripts/placement_validator.gd")
 const Grid = preload("res://scripts/isometric_grid.gd")
 
 # 视图状态模块：镜头与选格属于界面状态，不写入战略存档。
-var zoom_level: float = 0.75
+var zoom_level: float = 0.5
+var fitting_overview: bool = true
 var pan_offset: Vector2 = Vector2.ZERO
 var hovered: Vector2i = Grid.INVALID
 var selected: Vector2i = Grid.INVALID
@@ -66,38 +68,35 @@ func _diamond(cell: Vector2i) -> PackedVector2Array:
 	return points
 
 
-# 绘制模块：仅在输入或尺寸改变时重绘，纯色地块不代表正式地形美术。
+# 绘制模块：先铺地形和地基，再绘资源与建筑，最后叠加交互反馈。
 func _draw() -> void:
-	draw_rect(Rect2(Vector2.ZERO, size), Color(0.10, 0.11, 0.12))
+	draw_rect(Rect2(Vector2.ZERO, size), Color("#182720"))
 	for y: int in range(Grid.SIZE.y):
 		for x: int in range(Grid.SIZE.x):
 			var cell: Vector2i = Vector2i(x, y)
-			var points: PackedVector2Array = _diamond(cell)
-			var shade: Color = Color(0.22, 0.24, 0.25) if (x + y) % 2 == 0 else Color(0.27, 0.29, 0.30)
-			if preload("res://scripts/town_terrain.gd").is_water(cell):
-				shade = Color(0.15, 0.40, 0.65)
-			var deposit: String = Terrain.deposit_at(cell)
-			if not deposit.is_empty():
-				shade = Color(0.16, 0.48, 0.20) if deposit == "forest" else Color(0.63, 0.65, 0.67)
-			draw_colored_polygon(points, shade)
-			if not deposit.is_empty():
-				draw_string(ThemeDB.fallback_font, world_to_screen(Grid.cell_to_world(cell)) + Vector2(-6, 4), "林" if deposit == "forest" else "矿", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE)
-			points.append(points[0])
-			draw_polyline(points, Color(0.40, 0.42, 0.43), 1.0, true)
-	# 占用显示模块：真实建筑的范围由实例推导，并按建筑类型绘制占位块。
-	for cell: Vector2i in occupied_cells:
-		draw_colored_polygon(_diamond(cell), Color(0.30, 0.38, 0.48, 0.9))
-	_draw_buildings()
+			Art.terrain(self, cell, _diamond(cell), Terrain.is_water(cell))
+	for record: Dictionary in placed_buildings:
+		_draw_foundation(record)
+	_draw_map_objects()
+	_draw_building_feedback()
 	if active_definition != null and Grid.contains(hovered):
-		var color: Color = Color(0.25, 0.85, 0.4, 0.65) if preview_result.get("ok", false) else Color(0.95, 0.22, 0.2, 0.7)
+		var valid: bool = preview_result.get("ok", false)
+		var tint: Color = Color("#51d88580") if valid else Color("#f454508a")
+		var edge: Color = Color("#a2f7a5") if valid else Color("#ff8877")
 		for cell: Vector2i in preview_result.get("cells", []):
-			draw_colored_polygon(_diamond(cell), color)
+			draw_colored_polygon(_diamond(cell), tint)
+			_outline_cell(cell, edge, 1.5)
 	if active_definition == null and inspected_building_id.is_empty() and Grid.contains(selected):
-		draw_colored_polygon(_diamond(selected), Color(0.25, 0.75, 0.45, 0.75))
+		draw_colored_polygon(_diamond(selected), Color("#4bdb8d65"))
 	if active_definition == null and Grid.contains(hovered):
-		var outline: PackedVector2Array = _diamond(hovered)
-		outline.append(outline[0])
-		draw_polyline(outline, Color(1.0, 0.82, 0.25), 2.0, true)
+		_outline_cell(hovered, Color("#ffd56a"), 2.0)
+
+
+# 格线模块：在美术上方绘制悬停、选区与建造预览边界。
+func _outline_cell(cell: Vector2i, color: Color, width: float) -> void:
+	var outline: PackedVector2Array = _diamond(cell)
+	outline.append(outline[0])
+	draw_polyline(outline, color, width, false)
 
 
 # 悬停模块：仅在目标格改变时通知管理界面。
@@ -132,6 +131,7 @@ func _gui_input(event: InputEvent) -> void:
 		accept_event()
 	elif event is InputEventMouseMotion:
 		if dragging:
+			fitting_overview = false
 			pan_offset += event.relative
 			view_changed.emit()
 		_update_hover(event.position)
@@ -147,6 +147,7 @@ func _input(event: InputEvent) -> void:
 # 缩放模块：保持鼠标所指世界位置固定，倍率限制在50%至200%。
 func _apply_zoom(mouse: Vector2, factor: float) -> void:
 	var anchor: Vector2 = screen_to_world(mouse)
+	fitting_overview = false
 	zoom_level = clampf(zoom_level * factor, 0.5, 2.0)
 	pan_offset = mouse - size * 0.5 - (anchor - Grid.center()) * zoom_level
 	_update_hover(mouse)
@@ -155,15 +156,26 @@ func _apply_zoom(mouse: Vector2, factor: float) -> void:
 
 # 复位模块：镜头回到地图中心，保留用户已经选中的地块。
 func reset_view() -> void:
-	zoom_level = 0.75
+	fitting_overview = true
+	zoom_level = _overview_zoom()
 	pan_offset = Vector2.ZERO
 	dragging = false
 	_update_hover(get_local_mouse_position())
 	view_changed.emit()
 
 
-# 尺寸模块：窗口变化后重算悬停位置并重绘。
+# 总览尺度模块：用完整菱形宽高适应窗口，保留一圈画面边距。
+func _overview_zoom() -> float:
+	var span: Vector2 = float(Grid.SIZE.x + Grid.SIZE.y) * Grid.HALF
+	var available: Vector2 = size - Vector2(32, 36)
+	return clampf(minf(available.x / span.x, available.y / span.y), 0.5, 0.75)
+
+
+# 尺寸模块：总览模式适应变化，手动拖动或缩放后保留镜头。
 func _on_resized() -> void:
+	if fitting_overview:
+		zoom_level = _overview_zoom()
+		view_changed.emit()
 	_update_hover(get_local_mouse_position())
 
 
@@ -241,27 +253,72 @@ func sync_resources(resources: Dictionary) -> void:
 	queue_redraw()
 
 
-# 建筑绘制模块：用色块和名称表示真实实例，暂不确定正式像素美术。
-func _draw_buildings() -> void:
+# 地基模块：按真实占地上色，工地与已完工建筑使用不同地面。
+func _draw_foundation(record: Dictionary) -> void:
+	var anchor: Vector2i = Vector2i(int(record["cell"][0]), int(record["cell"][1]))
+	var footprint: Vector2i = Catalog.find(record["def_id"]).get("footprint")
+	var constructing: bool = record["state"] == "constructing"
+	var tint: Color = Color("#826340") if constructing else Color("#73664a")
+	if not constructing and record["def_id"] in ["b_farm", "b_ranch"]:
+		tint = Color("#786747") if record["def_id"] == "b_farm" else Color("#687343")
+	for cell: Vector2i in Placement.footprint_cells(anchor, footprint):
+		draw_colored_polygon(_diamond(cell), tint)
+		_outline_cell(cell, Color("#473e3288"), 1.0)
+
+
+# 深度模块：按等距投影纵坐标绘制场景物件，近处覆盖远处。
+func _draw_map_objects() -> void:
+	var objects: Array[Dictionary] = []
+	for y: int in range(Grid.SIZE.y):
+		for x: int in range(Grid.SIZE.x):
+			var cell: Vector2i = Vector2i(x, y)
+			var deposit: String = Terrain.deposit_at(cell)
+			if not deposit.is_empty():
+				objects.append({"center": Grid.cell_to_world(cell), "deposit": deposit})
+	for record: Dictionary in placed_buildings:
+		objects.append({"center": _building_center(record), "record": record})
+	objects.sort_custom(_farther_first)
+	for item: Dictionary in objects:
+		var center: Vector2 = item["center"]
+		if item.has("deposit"):
+			Art.deposit(self, center, item["deposit"])
+		elif item["record"]["state"] == "constructing":
+			Art.site(self, center)
+		else:
+			Art.building(self, item["record"]["def_id"], center)
+
+
+# 排序模块：深度相同时按横坐标固定绘制顺序。
+func _farther_first(left: Dictionary, right: Dictionary) -> bool:
+	var a: Vector2 = left["center"]
+	var b: Vector2 = right["center"]
+	return a.x < b.x if a.y == b.y else a.y < b.y
+
+
+# 坐标模块：美术和名称使用建筑占地的投影中心。
+func _building_center(record: Dictionary) -> Vector2:
+	var anchor: Vector2i = Vector2i(int(record["cell"][0]), int(record["cell"][1]))
+	var footprint: Vector2i = Catalog.find(record["def_id"]).get("footprint")
+	return (Grid.cell_to_world(anchor) + Grid.cell_to_world(anchor + footprint - Vector2i.ONE)) * 0.5
+
+
+# 标牌模块：在画面顶部叠加建筑名称、施工进度和选中边界。
+func _draw_building_feedback() -> void:
 	for record: Dictionary in placed_buildings:
 		var definition: Resource = Catalog.find(record["def_id"])
-		var anchor: Vector2i = Vector2i(int(record["cell"][0]), int(record["cell"][1]))
-		var footprint: Vector2i = definition.get("footprint")
-		var colors: Dictionary = {"b_barracks": Color(0.55, 0.29, 0.27), "b_lumber": Color(0.26, 0.48, 0.22), "b_quarry": Color(0.48, 0.49, 0.51), "b_granary": Color(0.62, 0.52, 0.22), "b_hall": Color(0.30, 0.38, 0.48), "b_house": Color(0.55, 0.43, 0.29), "b_farm": Color(0.30, 0.47, 0.31), "b_ranch": Color(0.52, 0.46, 0.25), "b_fishery": Color(0.20, 0.52, 0.64)}
-		for cell: Vector2i in Placement.footprint_cells(anchor, footprint):
-			draw_colored_polygon(_diamond(cell), Color(0.55, 0.45, 0.20) if record["state"] == "constructing" else colors[record["def_id"]])
 		if record["id"] == inspected_building_id:
-			for cell: Vector2i in Placement.footprint_cells(anchor, footprint):
-				var outline: PackedVector2Array = _diamond(cell)
-				outline.append(outline[0])
-				draw_polyline(outline, Color(1.0, 0.82, 0.25), 2.0, true)
-		var center: Vector2 = (Grid.cell_to_world(anchor) + Grid.cell_to_world(anchor + footprint - Vector2i.ONE)) * 0.5
+			var anchor: Vector2i = Vector2i(int(record["cell"][0]), int(record["cell"][1]))
+			for cell: Vector2i in Placement.footprint_cells(anchor, definition.get("footprint")):
+				_outline_cell(cell, Color("#ffd56a"), 2.0)
 		var label: String = definition.get("display_name")
 		if record["state"] == "constructing":
 			label += " %d%%" % floori(100.0 * record["work_done"] / record["work_required"])
 		var font: Font = ThemeDB.fallback_font
 		var text_size: Vector2 = font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14)
-		draw_string(font, world_to_screen(center) + Vector2(-text_size.x * 0.5, 5), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color.WHITE)
+		var baseline: Vector2 = world_to_screen(_building_center(record) + Vector2(0, 25)).round()
+		var origin: Vector2 = baseline - Vector2(text_size.x * 0.5, 0)
+		draw_rect(Rect2(origin - Vector2(5, 14), Vector2(text_size.x + 10, 18)), Color("#202720dd"))
+		draw_string(font, origin, label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color("#fff0cc"))
 
 
 # 详情高亮模块：仅保存界面选中ID，不改变占地或建筑实例数据。

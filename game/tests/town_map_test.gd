@@ -56,7 +56,8 @@ func _run() -> void:
 	_check(map.selected == cell, "左键选择错误")
 	map.pan_offset = Vector2(120, 80)
 	map.reset_view()
-	_check(map.selected == cell and map.pan_offset == Vector2.ZERO and is_equal_approx(map.zoom_level, 0.75), "镜头复位改变选择或未复位")
+	var overview: float = (map.size.x - 32.0) / (Grid.HALF.x * (Grid.SIZE.x + Grid.SIZE.y))
+	_check(map.selected == cell and map.pan_offset == Vector2.ZERO and is_equal_approx(map.zoom_level, overview), "镜头复位未适配全图或改变选择")
 	click.button_index = MOUSE_BUTTON_RIGHT
 	map._gui_input(click)
 	_check(map.selected == Grid.INVALID, "右键取消选择失败")
