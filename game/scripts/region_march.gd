@@ -1,6 +1,7 @@
 ## 文件用途：记录军团沿边境镇与北部林地道路往返的行程，并验证存档中的军团位置。
 extends RefCounted
 
+const Battle = preload("res://scripts/woods_battle.gd")
 const Scout = preload("res://scripts/region_scout.gd")
 const LAYOUT = Scout.LAYOUT
 
@@ -34,6 +35,8 @@ static func reason(world: RefCounted, legion_id: String, target: String) -> Stri
 		return "需先完成北部林地侦察"
 	if target not in [LAYOUT.home_id, Scout.WOODS]:
 		return "这条道路尚未开放"
+	if Battle.busy(world, legion_id):
+		return "军团正在交战，战斗结束后可调动"
 	if remaining(world, legion_id) > 0:
 		return "军团正在行军"
 	for legion: Dictionary in world.legions:

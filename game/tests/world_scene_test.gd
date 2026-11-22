@@ -4,6 +4,7 @@ const Army = preload("res://scripts/army_service.gd")
 const Disband = preload("res://scripts/army_disband_service.gd")
 const Build = preload("res://scripts/construction_service.gd")
 const Legions = preload("res://scripts/legion_service.gd")
+const Battle = preload("res://scripts/woods_battle.gd")
 const March = preload("res://scripts/region_march.gd")
 const Scout = preload("res://scripts/region_scout.gd")
 const State = preload("res://scripts/world_state.gd")
@@ -59,7 +60,7 @@ func _run() -> void:
 	if not passed:
 		push_error("战略界面保存读取联动失败")
 	else:
-		print("WORLD_UI_PASS: scene, regions, scouting, pause, save, load, resource display")
+		print("WORLD_UI_PASS: scene, regions, scouting, march, battle, pause, save, load, resource display")
 	quit(0 if passed else 1)
 
 
@@ -110,7 +111,7 @@ func _check_scout(main: Control) -> bool:
 	overview.sync(main.world)
 	if not Scout.complete(main.world) or not overview.markers.has(Scout.FORT) or overview.scout_button.text != "侦察已完成" or not Disband.quote(main.world, troop)["ok"]:
 		return false
-	if not _check_march(main, id, troop):
+	if not _check_march(main, id, troop) or not _check_battle(main, id, troop):
 		return false
 	Legions.dissolve(main.world, id)
 	main._save()
@@ -170,3 +171,65 @@ func _check_march(main: Control, legion_id: String, troop_id: String) -> bool:
 	overview.sync(main.world)
 	return main.world.legion_trips.is_empty() and Disband.quote(main.world, troop_id)["ok"] \
 		and overview.march_button.text == "前往北部林地"
+
+
+# 遭遇验收：验证出战位置、失利、战中读档、胜利归属和回城后的战果。
+func _check_battle(main: Control, legion_id: String, troop_id: String) -> bool:
+	var overview: Control = main.region_overview
+	if Battle.start(main.world, legion_id) or not overview.battle_button.disabled:
+		return false
+	overview.march_button.pressed.emit()
+	main.world.paused = false
+	main.clock.advance(120)
+	main.world.paused = true
+	overview.sync(main.world)
+	overview.battle_button.pressed.emit()
+	if not Battle.busy(main.world, legion_id) or not overview.march_button.disabled:
+		return false
+	main.world.paused = false
+	main.clock.advance(160)
+	main.world.paused = true
+	overview.sync(main.world)
+	if Battle.report(main.world)["status"] != "defeat":
+		return false
+	overview.march_button.pressed.emit()
+	main.world.paused = false
+	main.clock.advance(120)
+	var reinforcement: Dictionary = Army.recruit(main.world, "building_000002", "woods-reinforcement")
+	if not reinforcement["ok"]:
+		return false
+	main.clock.advance(60)
+	main.world.paused = true
+	if not Legions.set_count(main.world, legion_id, troop_id, 5)["ok"]:
+		return false
+	if not Legions.set_count(main.world, legion_id, reinforcement["troop_id"], 5)["ok"]:
+		return false
+	overview.sync(main.world)
+	overview.march_button.pressed.emit()
+	main.world.paused = false
+	main.clock.advance(120)
+	main.world.paused = true
+	overview.sync(main.world)
+	overview.battle_button.pressed.emit()
+	main.world.paused = false
+	main.clock.advance(8)
+	main.world.paused = true
+	var battle_before: Dictionary = Battle.report(main.world)
+	if battle_before["status"] != "running" or battle_before["allies"] >= 100:
+		return false
+	main._save()
+	main._load()
+	if Battle.report(main.world) != battle_before:
+		return false
+	main.world.paused = false
+	main.clock.advance(160)
+	main.world.paused = true
+	overview.sync(main.world)
+	if Battle.report(main.world)["status"] != "victory" or not overview.detail.text.contains("己方控制"):
+		return false
+	overview.march_button.pressed.emit()
+	main.world.paused = false
+	main.clock.advance(120)
+	main.world.paused = true
+	overview.sync(main.world)
+	return main.world.legion_trips.is_empty() and Battle.report(main.world)["status"] == "victory"

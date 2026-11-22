@@ -10,3 +10,5 @@ extends Resource
 @export var scout_ticks: int = 120
 # 行军参数：相邻区域单程所需战略秒数。
 @export var march_ticks: int = 120
+# 遭遇参数：北部林地初始守军人数。
+@export var woods_guards: int = 6

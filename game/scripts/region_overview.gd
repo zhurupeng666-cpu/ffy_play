@@ -2,6 +2,7 @@
 extends VBoxContainer
 
 signal town_requested
+const Battle = preload("res://scripts/woods_battle.gd")
 const March = preload("res://scripts/region_march.gd")
 const Scout = preload("res://scripts/region_scout.gd")
 const LAYOUT = Scout.LAYOUT
@@ -19,6 +20,7 @@ var scout_row: HBoxContainer
 var scout_picker: OptionButton
 var scout_button: Button
 var march_button: Button
+var battle_button: Button
 var legion_labels: Dictionary = {}
 
 # 界面模块：建立路线画布、区域标记和随选择切换的详情。
@@ -71,6 +73,11 @@ func _ready() -> void:
 	march_button.pressed.connect(_dispatch_march)
 	scout_row.add_child(march_button)
 	march_button.hide()
+	battle_button = Button.new()
+	battle_button.focus_mode = Control.FOCUS_NONE
+	battle_button.pressed.connect(_start_battle)
+	scout_row.add_child(battle_button)
+	battle_button.hide()
 	# 操作区放在地图上方，方便直接查看和派遣。
 	move_child(detail, 1)
 	move_child(enter_button, 2)
@@ -99,8 +106,10 @@ func _status(id: String) -> String:
 	var region: Dictionary = LAYOUT.regions[id]
 	if world != null:
 		if id == Scout.FORT:
-			return "已发现 · 未开放"
+			return "已发现 · 待进军" if Battle.report(world)["status"] == "victory" else "已发现 · 未开放"
 		if id == Scout.WOODS:
+			if Battle.report(world)["status"] == "victory":
+				return "己方控制"
 			if Scout.complete(world):
 				return "已侦察 · 未占领"
 			if Scout.busy(world):
@@ -120,6 +129,8 @@ func select_region(id: String) -> void:
 	for marker_id: String in markers:
 		markers[marker_id].set_pressed_no_signal(marker_id == id)
 	detail.text = "%s ｜ %s\n%s" % [region["title"], _status(id), region["description"]]
+	if id == Scout.FORT and world != null and Battle.report(world)["status"] == "victory":
+		detail.text = "旧堡 ｜ 已发现 · 待进军\n林地已由己方控制。旧堡是下一处进军目标。"
 	enter_button.visible = id != Scout.WOODS
 	enter_button.disabled = id != LAYOUT.home_id or region["access"] != "open"
 	enter_button.text = "未开放" if enter_button.disabled else "进入边境镇"
@@ -141,6 +152,8 @@ func sync(state: RefCounted) -> void:
 				selected_id = LAYOUT.home_id
 		_place_markers()
 	_update_marker(Scout.WOODS)
+	if discovered:
+		_update_marker(Scout.FORT)
 	select_region(selected_id)
 
 # 状态模块：按战略剩余时间显示进度，到期后显示已揭示区域。
@@ -152,6 +165,7 @@ func _refresh_scout() -> void:
 	scout_picker.visible = not Scout.busy(world)
 	scout_button.visible = not discovered
 	march_button.visible = discovered
+	battle_button.visible = discovered
 	if Scout.busy(world):
 		scout_button.disabled = true
 		scout_button.text = "侦察进行中"
@@ -177,19 +191,45 @@ func _refresh_march() -> void:
 	var target: String = _march_target(id)
 	var remaining: int = March.remaining(world, id)
 	var location: String = LAYOUT.regions[March.destination(world, id)]["title"]
-	var briefing: String = "北部林地 ｜ 已侦察 · 未占领"
+	var report: Dictionary = Battle.report(world)
+	var briefing: String = "北部林地 ｜ 己方控制" if report["status"] == "victory" else "北部林地 ｜ 已侦察 · 未占领"
+	_refresh_battle(id, report)
 	if remaining > 0:
 		march_button.text = "行军中"
 		march_button.disabled = true
-		detail.text = "%s\n前往%s，剩余 %d 战略秒。" % [briefing, location, remaining]
+		detail.text = "%s\n前往%s，剩余 %d 战略秒。" % [briefing, location, remaining] + _battle_summary(report)
 		return
 	march_button.text = "调回边境镇" if target == LAYOUT.home_id else "前往北部林地"
 	var blocked: String = March.reason(world, id, target)
 	march_button.disabled = not blocked.is_empty()
 	if not blocked.is_empty():
-		detail.text = briefing + "\n" + blocked
+		detail.text = briefing + "\n" + blocked + _battle_summary(report)
 	else:
-		detail.text = "%s\n军团驻地为%s。单程 %d 战略秒。" % [briefing, location, LAYOUT.march_ticks]
+		detail.text = "%s\n军团驻地为%s。单程 %d 战略秒。" % [briefing, location, LAYOUT.march_ticks] + _battle_summary(report)
+
+# 遭遇指令：派驻林地的军团可迎战，开战后暂停调动参战军团。
+func _refresh_battle(legion_id: String, report: Dictionary) -> void:
+	var status: String = report["status"]
+	battle_button.visible = status != "victory"
+	battle_button.disabled = not Battle.reason(world, legion_id, status).is_empty()
+	battle_button.text = "交战中" if status == "running" else "迎战守军"
+
+# 战况反馈：显示双方剩余战力、结果和胜利后的控制权。
+func _battle_summary(report: Dictionary) -> String:
+	match report["status"]:
+		"running":
+			return "\n自动交战中　己方战力 %d　守军战力 %d" % [report["allies"], report["enemies"]]
+		"victory":
+			return "\n战斗胜利，北部林地已由己方控制。"
+		"defeat":
+			return "\n战斗失利。可调回城镇整编，再派军团迎战。"
+	return "\n林地有 %d 名守军。" % LAYOUT.woods_guards
+
+# 开战入口：只在林地视图请求遭遇战，规则层重新验证驻地。
+func _start_battle() -> void:
+	if world != null and is_visible_in_tree() and selected_id == Scout.WOODS:
+		Battle.start(world, _selected_legion())
+		sync(world)
 
 # 路线选择：驻扎林地时可以返回主城，否则可从主城前往林地。
 func _march_target(legion_id: String) -> String:

@@ -1,8 +1,9 @@
-## 文件用途：保存世界日期、人口、资源与建筑实例，并提供v1到v15快照迁移和完整校验。
+## 文件用途：保存世界日期、人口、资源与建筑实例，并提供v1到v16快照迁移和完整校验。
 extends RefCounted
 
 # 状态模块：数值均为待平衡参数，资源以完整单位保存。
 const DAY_TICKS: int = 120
+const Battle = preload("res://scripts/woods_battle.gd")
 const March = preload("res://scripts/region_march.gd")
 const Scout = preload("res://scripts/region_scout.gd")
 const Legions = preload("res://scripts/legion_service.gd")
@@ -36,6 +37,8 @@ var next_legion_id: int = 1
 var woods_scout: Dictionary = {}
 # 行军模块：记录正在途中或驻扎林地的军团，边境镇为默认驻地。
 var legion_trips: Dictionary = {}
+# 遭遇快照：保存出战条件，由战略时间推算当前战况和林地归属。
+var woods_battle: Dictionary = {}
 var retired_troops: Array = []
 var disband_commands: Dictionary = {}
 var retired_army_cost: Dictionary = {"ration_credit": 0, "wage_credit": 0, "ration_settled": 0, "wage_settled": 0}
@@ -85,7 +88,7 @@ func settle_days() -> void:
 
 # 快照模块：只导出基础数据，不保存节点、数据库连接或脚本引用。
 func snapshot() -> Dictionary:
-	return {"version": 15, "legion_trips": legion_trips.duplicate(true), "woods_scout": woods_scout.duplicate(), "tick": tick, "subsecond": subsecond, "last_settled_day": last_settled_day, "population": population, "dependents": dependents, "builders": builders, "labor_credit": labor_credit, "resources": resources.duplicate(), "speed": speed, "paused": paused, "tax_policy": tax_policy, "satisfaction": satisfaction, "last_civic_ledger": last_civic_ledger.duplicate(true), "troops": troops.duplicate(true), "legions": legions.duplicate(true), "legion_create_commands": legion_create_commands.duplicate(), "next_legion_id": next_legion_id, "retired_troops": retired_troops.duplicate(true), "disband_commands": disband_commands.duplicate(true), "retired_army_cost": retired_army_cost.duplicate(), "recruit_commands": recruit_commands.duplicate(true), "next_troop_id": next_troop_id, "last_army_ledger": last_army_ledger.duplicate(true), "army_morale": army_morale, "last_morale_before": last_morale_before, "last_bill": last_bill, "last_food_ledger": last_food_ledger.duplicate(true), "last_material_ledger": last_material_ledger.duplicate(true), "buildings": buildings.duplicate(true), "next_building_id": next_building_id, "applied_commands": applied_commands.duplicate(true), "retired_buildings": retired_buildings.duplicate(true), "removal_commands": removal_commands.duplicate(true)}
+	return {"version": 16, "woods_battle": woods_battle.duplicate(), "legion_trips": legion_trips.duplicate(true), "woods_scout": woods_scout.duplicate(), "tick": tick, "subsecond": subsecond, "last_settled_day": last_settled_day, "population": population, "dependents": dependents, "builders": builders, "labor_credit": labor_credit, "resources": resources.duplicate(), "speed": speed, "paused": paused, "tax_policy": tax_policy, "satisfaction": satisfaction, "last_civic_ledger": last_civic_ledger.duplicate(true), "troops": troops.duplicate(true), "legions": legions.duplicate(true), "legion_create_commands": legion_create_commands.duplicate(), "next_legion_id": next_legion_id, "retired_troops": retired_troops.duplicate(true), "disband_commands": disband_commands.duplicate(true), "retired_army_cost": retired_army_cost.duplicate(), "recruit_commands": recruit_commands.duplicate(true), "next_troop_id": next_troop_id, "last_army_ledger": last_army_ledger.duplicate(true), "army_morale": army_morale, "last_morale_before": last_morale_before, "last_bill": last_bill, "last_food_ledger": last_food_ledger.duplicate(true), "last_material_ledger": last_material_ledger.duplicate(true), "buildings": buildings.duplicate(true), "next_building_id": next_building_id, "applied_commands": applied_commands.duplicate(true), "retired_buildings": retired_buildings.duplicate(true), "removal_commands": removal_commands.duplicate(true)}
 
 
 # 载入模块：在临时对象中完整校验，失败返回空值，不改变当前世界。
@@ -95,7 +98,7 @@ static func from_snapshot(data: Variant) -> RefCounted:
 	for key: String in ["version", "tick", "last_settled_day", "population", "speed"]:
 		if not _valid_integer(data.get(key), 0, 120000000):
 			return null
-	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] or int(data["speed"]) not in [1, 2, 4] or data["population"] != 30:
+	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16] or int(data["speed"]) not in [1, 2, 4] or data["population"] != 30:
 		return null
 	if data["last_settled_day"] != int(float(data["tick"]) / DAY_TICKS):
 		return null
@@ -176,6 +179,9 @@ static func from_snapshot(data: Variant) -> RefCounted:
 		return null
 	# 行军迁移模块：旧档军团从边境镇出发，新档恢复途中与驻地。
 	if int(data["version"]) >= 15 and not March.restore(state, data.get("legion_trips")):
+		return null
+	# 战斗迁移模块：旧档默认未交战，恢复要等军团、侦察与驻地先完成。
+	if int(data["version"]) >= 16 and not Battle.restore(state, data.get("woods_battle")):
 		return null
 	if state.idle_workers() < 0:
 		return null
