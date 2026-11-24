@@ -11,16 +11,17 @@ static func _poly(canvas: Control, center: Vector2, offsets: Array, color: Color
 	var points: PackedVector2Array = []
 	var face: PackedVector2Array = []
 	for offset: Vector2 in offsets:
-		face.append(center + offset)
-		points.append(canvas.world_to_screen(center + offset).round())
+		var point: Vector2 = center + offset
+		face.append(canvas.art_origin + (point - canvas.art_origin) * canvas.art_scale)
+		points.append(canvas.art_point(point))
 	canvas.remember_building_face(face)
-	canvas.draw_colored_polygon(points, color)
+	canvas.art_canvas.draw_colored_polygon(points, color)
 
 # 细节模块：小矩形跟随镜头缩放，使用整数屏幕坐标对齐。
 static func _pixel(canvas: Control, center: Vector2, offset: Vector2, extent: Vector2, color: Color) -> void:
-	var start: Vector2 = canvas.world_to_screen(center + offset).round()
-	var end: Vector2 = canvas.world_to_screen(center + offset + extent).round()
-	canvas.draw_rect(Rect2(start, end - start), color)
+	var start: Vector2 = canvas.art_point(center + offset)
+	var end: Vector2 = canvas.art_point(center + offset + extent)
+	canvas.art_canvas.draw_rect(Rect2(start, end - start), color)
 
 # 地块模块：草地采用固定纹理变化，河格绘制浅滩和水纹。
 static func terrain(canvas: Control, cell: Vector2i, points: PackedVector2Array, water: bool) -> void:
@@ -29,23 +30,25 @@ static func terrain(canvas: Control, cell: Vector2i, points: PackedVector2Array,
 	if canvas.zoom_level < 0.23:
 		# 远景只保留土地色带，减少绘制并让整张地图可读。
 		var band: int = posmod(floori(cell.x / 5.0) + floori(cell.y / 4.0), Grass.size())
-		canvas.draw_colored_polygon(points, Water[1] if water else Grass[band])
+		canvas.art_canvas.draw_colored_polygon(points, Water[1] if water else Grass[band])
 		return
 	if water:
-		canvas.draw_colored_polygon(points, Water[seed % Water.size()])
+		canvas.art_canvas.draw_colored_polygon(points, Water[seed % Water.size()])
 		_poly(canvas, center, [Vector2(0, 16), Vector2(32, 0), Vector2(27, 0), Vector2(-3, 14)], Color("#508391"))
 		_pixel(canvas, center, Vector2(seed % 12 - 12, -4), Vector2(12, 2), Color("#4a8a9a"))
 		_pixel(canvas, center, Vector2(0, 4), Vector2(10, 2), Color("#396f82"))
 	else:
-		canvas.draw_colored_polygon(points, Grass[seed % Grass.size()])
+		canvas.art_canvas.draw_colored_polygon(points, Grass[seed % Grass.size()])
 		_pixel(canvas, center, Vector2(seed % 22 - 13, seed % 7 - 6), Vector2(4, 2), Color("#799653"))
 		_pixel(canvas, center, Vector2(9 - seed % 17, 3), Vector2(3, 2), Color("#455932"))
 	var outline: PackedVector2Array = points.duplicate()
 	outline.append(points[0])
-	canvas.draw_polyline(outline, Color("#24382465"), 1.0, false)
+	canvas.art_canvas.draw_polyline(outline, Color("#24382465"), 1.0, false)
 
 # 林矿模块：用树冠、树干与分面岩石表达资源，轮廓不参与点击判断。
 static func deposit(canvas: Control, center: Vector2, kind: String) -> void:
+	canvas.art_origin = center
+	canvas.art_scale = 1.8 if kind == "forest" else 2.2
 	if kind == "forest":
 		_tree(canvas, center + Vector2(-10, -3), Color("#315738"))
 		_tree(canvas, center + Vector2(10, 0), Color("#3b6741"))
@@ -53,6 +56,7 @@ static func deposit(canvas: Control, center: Vector2, kind: String) -> void:
 	elif kind == "stone":
 		_rock(canvas, center + Vector2(-8, 4))
 		_rock(canvas, center + Vector2(8, -1))
+	canvas.art_scale = 1.0
 
 # 树木模块：用两侧深浅树冠和树干构成紧凑松树。
 static func _tree(canvas: Control, at: Vector2, green: Color) -> void:
@@ -73,7 +77,7 @@ static func site(canvas: Control, center: Vector2) -> void:
 	_logs(canvas, center + Vector2(4, -1))
 
 # 建筑模块：依据用途组合主楼、塔楼、侧棚和生产设施。
-static func building(canvas: Control, id: String, center: Vector2, time: float, troops: Vector2i, spread: float = 1.0) -> void:
+static func building(canvas: Control, id: String, center: Vector2, spread: float = 1.0) -> void:
 	match id:
 		"b_hall":
 			_house(canvas, center + Vector2(0, -10), 42, 35, Color("#526b86"), Color("#baa98e"), "stone")
@@ -90,17 +94,17 @@ static func building(canvas: Control, id: String, center: Vector2, time: float, 
 					var plot: Vector2 = center + offset
 					if Rect2(Vector2.ZERO, canvas.size).grow(120 * canvas.zoom_level).has_point(canvas.world_to_screen(plot)):
 						_fields(canvas, plot)
-			_house(canvas, center + Vector2(-65 * spread, -10), 27, 18, Color("#a45d3b"), Color("#c69b63"), "timber")
+			_house(canvas, center + Vector2(-65 * spread, -10), 27, 18, Color("#a45d3b"), Color("#c69b63"), "timber", 2.85 if spread > 1.0 else 1.42)
 		"b_ranch":
-			_ranch(canvas, center, time, spread)
+			_ranch(canvas, center, spread)
 		"b_barracks":
-			_barracks(canvas, center, time, troops, spread)
+			_barracks(canvas, center, spread)
 		"b_granary":
-			_house(canvas, center + Vector2(-6, -5), 36, 30, Color("#ad783b"), Color("#d0ae73"), "store")
+			_house(canvas, center + Vector2(-6, -5), 36, 30, Color("#ad783b"), Color("#d0ae73"), "store", 2.2 if spread > 1.0 else 1.45)
 			for offset: Vector2 in [Vector2(-23, 12), Vector2(-15, 16), Vector2(23, 9)]:
 				_crate(canvas, center + offset)
 			if spread > 1.0:
-				_house(canvas, center + Vector2(44 * spread, 4), 38, 26, Color("#936838"), Color("#bc9866"), "store")
+				_house(canvas, center + Vector2(44 * spread, 4), 38, 26, Color("#936838"), Color("#bc9866"), "store", 2.1)
 				for offset: Vector2 in [Vector2(41, 40), Vector2(58, 36), Vector2(76, 32), Vector2(96, 23)]:
 					_crate(canvas, center + offset)
 		"b_lumber":
@@ -123,7 +127,7 @@ static func building(canvas: Control, id: String, center: Vector2, time: float, 
 
 # 线条模块：描边与木梁使用同一镜头刻度和像素对齐。
 static func _stroke(canvas: Control, center: Vector2, a: Vector2, b: Vector2, color: Color, width: float = 2.0) -> void:
-	canvas.draw_line(canvas.world_to_screen(center + a).round(), canvas.world_to_screen(center + b).round(), color, maxf(1.0, width * canvas.zoom_level), false)
+	canvas.art_canvas.draw_line(canvas.art_point(center + a), canvas.art_point(center + b), color, maxf(1.0, width * canvas.zoom_level * canvas.art_scale), false)
 
 # 立面模块：按墙面的斜边定位门窗、梁柱和石缝，使构件服从透视。
 static func _wall(canvas: Control, center: Vector2, a: Vector2, b: Vector2, height: int, wall: Color, mode: String, front: bool) -> void:
@@ -169,7 +173,9 @@ static func _wall_opening(canvas: Control, center: Vector2, a: Vector2, b: Vecto
 		_pixel(canvas, center, middle + (low + high) * 0.5 + Vector2(2, 0), Vector2(2, 2), Color("#e1ae61"))
 
 # 房屋模块：根据同一屋基构建双坡屋顶、三角山墙、滴水线和墙体。
-static func _house(canvas: Control, center: Vector2, span: int, height: int, roof: Color, wall: Color, mode: String) -> void:
+static func _house(canvas: Control, center: Vector2, span: int, height: int, roof: Color, wall: Color, mode: String, model_scale: float = 1.45) -> void:
+	canvas.art_origin = center
+	canvas.art_scale = model_scale
 	var west: Vector2 = Vector2(-span, -3)
 	var south: Vector2 = Vector2(5, span * 0.42)
 	var east: Vector2 = Vector2(span, 3)
@@ -198,6 +204,7 @@ static func _house(canvas: Control, center: Vector2, span: int, height: int, roo
 		_chimney(canvas, center + back_ridge.lerp(front_ridge, 0.28))
 	if mode == "store":
 		_stroke(canvas, center, south + Vector2(-7, 4), south + Vector2(7, -3), Color("#d7a269"), 4.0)
+	canvas.art_scale = 1.0
 
 # 屋瓦模块：顺坡的错缝纹理增强屋顶坡度与瓦片层次。
 static func _roof_rows(canvas: Control, center: Vector2, ridge_a: Vector2, ridge_b: Vector2, eave_a: Vector2, eave_b: Vector2, roof: Color) -> void:
@@ -261,7 +268,7 @@ static func _fields(canvas: Control, center: Vector2) -> void:
 			_stroke(canvas, center, seed, seed - Vector2(0, 6 + (row + crop) % 3), Color("#d3c365") if row % 2 == 0 else Color("#a7ad5c"), 2.8)
 
 # 牧场模块：以整块占地为围栏，远栏、畜棚、牲畜和近栏按层绘制。
-static func _ranch(canvas: Control, center: Vector2, time: float, spread: float) -> void:
+static func _ranch(canvas: Control, center: Vector2, spread: float) -> void:
 	_poly(canvas, center, [Vector2(-113, 0) * spread, Vector2(0, -55) * spread, Vector2(113, 0) * spread, Vector2(0, 55) * spread], Color("#647a48"))
 	for tuft: int in range(38):
 		var x: int = (tuft * 31 % 160) - 80
@@ -269,11 +276,15 @@ static func _ranch(canvas: Control, center: Vector2, time: float, spread: float)
 		if absf(x) / 106.0 + absf(y) / 51.0 < 0.92:
 			_pixel(canvas, center, Vector2(x, y) * spread, Vector2(3, 1), Color("#91a15c"))
 	_fence(canvas, center, false, spread)
-	_house(canvas, center + Vector2(-41, -15) * spread, 26, 19, Color("#925543"), Color("#be8e61"), "timber")
+	_house(canvas, center + Vector2(-41, -15) * spread, 26, 19, Color("#925543"), Color("#be8e61"), "timber", 3.0 if spread > 1.0 else 1.42)
 	_crate(canvas, center + Vector2(-49, 0) * spread, Color("#c6a05d"))
 	var trough: Vector2 = center + Vector2(50, 0) * (spread - 1.0)
 	_poly(canvas, trough, [Vector2(48, -9), Vector2(69, -19), Vector2(81, -13), Vector2(60, -3)], Color("#594738"))
 	_poly(canvas, trough, [Vector2(52, -10), Vector2(69, -17), Vector2(77, -13), Vector2(60, -6)], Color("#55819a"))
+	_fence(canvas, center, true, spread)
+
+# 动物绘制模块：在独立动画层按深度排列牛羊。
+static func _ranch_animals(canvas: Control, center: Vector2, time: float, spread: float) -> void:
 	var order: Array[Vector2] = []
 	for index: int in range(5):
 		order.append(Vector2(index, animal_position(index, time).y))
@@ -283,7 +294,6 @@ static func _ranch(canvas: Control, center: Vector2, time: float, spread: float)
 		var at: Vector2 = animal_position(index, time)
 		var direction: float = -1.0 if animal_position(index, time + 0.08).x < at.x else 1.0
 		_animal(canvas, center + at * spread, index >= 3, direction, int(time * 8.0 + index) % 2)
-	_fence(canvas, center, true, spread)
 
 # 路线模块：羊与牛沿围栏内不同的闭合路线移动。
 static func animal_position(index: int, time: float) -> Vector2:
@@ -295,20 +305,32 @@ static func animal_position(index: int, time: float) -> Vector2:
 	return path[step].lerp(path[(step + 1) % path.size()], fposmod(phase, 1.0))
 
 # 练兵场模块：营房靠后，沙场、训练桩和操练队列保持可见。
-static func _barracks(canvas: Control, center: Vector2, time: float, troops: Vector2i, spread: float) -> void:
-	var yard: Vector2 = center + (Vector2(24, 3) if spread > 1.0 else Vector2(19, 11))
+static func _barracks(canvas: Control, center: Vector2, spread: float) -> void:
+	var yard: Vector2 = drill_center(center, spread)
 	_poly(canvas, yard, [Vector2(-66, 0) * spread, Vector2(1, -37) * spread, Vector2(66, 0) * spread, Vector2(-1, 37) * spread], Color("#b78a59"))
 	_stroke(canvas, yard, Vector2(-66, 0) * spread, Vector2(-1, 37) * spread, Color("#d6aa72"), 3.0)
 	_stroke(canvas, yard, Vector2(-1, 37) * spread, Vector2(66, 0) * spread, Color("#d6aa72"), 3.0)
 	for line: int in range(4):
 		var start: Vector2 = Vector2(-35 + line * 13, -2 + line * 6)
 		_stroke(canvas, yard, start * spread, (start + Vector2(45, -22)) * spread, Color("#916844"), 1.6)
-	_house(canvas, center + Vector2(-41, -13) * spread, 29, 27, Color("#9c473f"), Color("#bca384"), "stone")
-	_flag(canvas, center + Vector2(-41, -13) * spread + Vector2(4, -51), Color("#c96349"))
+	_house(canvas, center + Vector2(-41, -13) * spread, 29, 27, Color("#9c473f"), Color("#bca384"), "stone", 3.0 if spread > 1.0 else 1.45)
+	_flag(canvas, center + Vector2(-41, -13) * spread + Vector2(4, -51) * (2.8 if spread > 1.0 else 1.3), Color("#c96349"))
 	for i: int in range(2):
 		var post: Vector2 = Vector2(31 + i * 12, -10 + i * 7) * spread
 		_stroke(canvas, yard, post, post - Vector2(0, 18), Color("#564033"), 4.0)
 		_stroke(canvas, yard, post - Vector2(6, 12), post + Vector2(6, -12), Color("#e3b77b"), 3.0)
+
+# 队列中心模块：地面与活动士兵共用练兵场摆放基准。
+static func drill_center(center: Vector2, spread: float) -> Vector2:
+	return center + (Vector2(24, 3) if spread > 1.0 else Vector2(19, 11))
+
+
+# 活动物件模块：只重画实际有驻军的操练队伍和已完工牧场牲畜。
+static func moving_units(canvas: Control, id: String, center: Vector2, time: float, troops: Vector2i, spread: float) -> void:
+	if id == "b_ranch":
+		_ranch_animals(canvas, center, time, spread)
+		return
+	var yard: Vector2 = drill_center(center, spread)
 	var total: int = troops.x + troops.y
 	for index: int in range(total):
 		_drill_soldier(canvas, yard + drill_position(index, total, time) * minf(spread, 2.6), time, index, index >= troops.x)

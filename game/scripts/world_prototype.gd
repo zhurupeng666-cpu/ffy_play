@@ -388,8 +388,12 @@ func _show_region_view(show_overview: bool) -> void:
 func _process(delta: float) -> void:
 	if date_label == null:
 		return
+	var before: int = world.tick
 	clock.advance(delta)
-	_refresh()
+	if world.tick != before:
+		_refresh()
+	elif not world.paused:
+		progress.value = (world.tick % State.DAY_TICKS) + world.subsecond
 
 
 # 刷新模块：日期、库存与账单全部来自同一份世界数据。
