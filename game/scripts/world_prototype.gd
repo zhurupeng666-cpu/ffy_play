@@ -242,7 +242,7 @@ func _build_ui() -> void:
 	town_view.add_child(map_actions)
 	_button(map_actions, "镜头复位（Home）", town_map.reset_view)
 	var help: Label = Label.new()
-	help.text = "左键查看建筑或建造 / 右键取消 / 中键拖动 / 滚轮缩放\n伐木场须紧邻林地，采石场须紧邻石矿"
+	help.text = "单击整选 / 双击聚焦建筑 / 中键拖动 / 滚轮缩放 / 右键取消\n伐木场须紧邻林地，采石场须紧邻石矿"
 	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	town_view.add_child(help)
 	town_map.hovered_changed.connect(_on_map_cell_changed)

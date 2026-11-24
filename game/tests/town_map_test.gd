@@ -43,7 +43,7 @@ func _run() -> void:
 	screen = map.world_to_screen(Grid.cell_to_world(cell))
 	_check(map.cell_at(screen) == cell, "缩放后选格错误")
 	map._apply_zoom(anchor, 100.0)
-	_check(is_equal_approx(map.zoom_level, 2.0), "缩放上限错误")
+	_check(is_equal_approx(map.zoom_level, 8.0), "缩放上限错误")
 	map._apply_zoom(anchor, 0.001)
 	_check(is_equal_approx(map.zoom_level, 0.5), "缩放下限错误")
 	# 输入验收模块：左键选择、右键取消、中键在地图外释放和复位。

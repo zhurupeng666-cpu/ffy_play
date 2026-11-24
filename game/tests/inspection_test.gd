@@ -2,6 +2,7 @@
 extends SceneTree
 const Inspector = preload("res://scripts/building_inspector.gd")
 const Build = preload("res://scripts/construction_service.gd")
+const TownArt = preload("res://scripts/town_art.gd")
 const Grid = preload("res://scripts/isometric_grid.gd")
 const Catalog = preload("res://scripts/building_catalog.gd")
 var failed: bool = false
@@ -75,6 +76,7 @@ func _run() -> void:
 	main.producer_picker.item_selected.emit(1)
 	main.inspection_increase.pressed.emit()
 	_check(main.inspected_building_id == "building_000003" and main.town_map.inspected_building_id == "building_000003" and main.world.buildings[2]["workers"] == 1 and main.world.buildings[1]["workers"] == 1, "下拉选择误改另一建筑")
+	_check_ranch_view(main)
 	main._change_inspected_workers(1)
 	main._change_inspected_workers(1)
 	before = main.world.snapshot()
@@ -123,6 +125,28 @@ func _run() -> void:
 	main.free()
 	DirAccess.remove_absolute(path)
 	if not failed:
-		print("INSPECT_PASS: footprint, readonly, queue, progress, staffing, linked selection, capacities, load cleanup, UI")
+		print("INSPECT_PASS: footprint, readonly, queue, progress, staffing, linked selection, exterior focus and animals, capacities, load cleanup, UI")
 	quit(1 if failed else 0)
 
+
+# 外观验收：双击围栏边格聚焦整座牧场，动物随显示时间行走，世界状态不变。
+func _check_ranch_view(main: Control) -> void:
+	var map: Control = main.town_map
+	var before: Dictionary = main.world.snapshot()
+	var click: InputEventMouseButton = InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.double_click = true
+	click.pressed = true
+	click.position = map.world_to_screen(Grid.cell_to_world(Vector2i(13, 13)))
+	var zoom_before: float = map.zoom_level
+	map._gui_input(click)
+	_check(main.town_view.visible and main.inspected_building_id == "building_000003" and map.zoom_level > zoom_before, "双击未在原城镇聚焦整座牧场")
+	var start: Vector2 = TownArt.animal_position(0, map.scenery_time)
+	map._process(0.8)
+	_check(not start.is_equal_approx(TownArt.animal_position(0, map.scenery_time)), "完工牧场的动物没有行走")
+	for step: int in range(60):
+		for index: int in range(5):
+			var position: Vector2 = TownArt.animal_position(index, step * 0.25)
+			_check(absf(position.x) / 106.0 + absf(position.y) / 51.0 < 0.9, "动物路线走出了围栏")
+	_check(main.world.snapshot() == before, "聚焦与动物绘制改变存档状态")
+	map.reset_view()

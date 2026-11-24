@@ -27,6 +27,13 @@ var dragging: bool = false
 # 建筑视图模块：占用来自世界实例，视图只读并将确认请求交回控制器。
 var occupied_cells: Dictionary = {}
 var placed_buildings: Array = []
+# 点击几何：可见楼体与占地格共同用于选择，楼体以世界坐标缓存。
+var drawing_building: String = ""
+# 景物动画：每秒重绘约十二次，只在可见地图有完工牧场时运行。
+var has_ranch: bool = false
+var scenery_time: float = 0.0
+var scenery_frame: int = 0
+var building_faces: Dictionary = {}
 var available_resources: Dictionary = {}
 var economy_ready: bool = false
 var active_definition: Resource
@@ -39,8 +46,20 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	clip_contents = true
 	mouse_default_cursor_shape = Control.CURSOR_CROSS
+	set_process(false)
 	resized.connect(_on_resized)
 	mouse_exited.connect(_on_mouse_exited)
+
+
+# 景物动画模块：独立推进牧场动物，离开城镇时停止推进。
+func _process(delta: float) -> void:
+	if not has_ranch or not is_visible_in_tree():
+		return
+	scenery_time += delta
+	var frame: int = floori(scenery_time * 12.0)
+	if frame != scenery_frame:
+		scenery_frame = frame
+		queue_redraw()
 
 
 # 画面变换模块：将世界坐标转换到地图控件内部，不移动管理界面。
@@ -71,10 +90,12 @@ func _diamond(cell: Vector2i) -> PackedVector2Array:
 # 绘制模块：先铺地形和地基，再绘资源与建筑，最后叠加交互反馈。
 func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), Color("#182720"))
+	var visible_ground: Rect2 = Rect2(screen_to_world(Vector2.ZERO), size / zoom_level).grow(34)
 	for y: int in range(Grid.SIZE.y):
 		for x: int in range(Grid.SIZE.x):
 			var cell: Vector2i = Vector2i(x, y)
-			Art.terrain(self, cell, _diamond(cell), Terrain.is_water(cell))
+			if visible_ground.has_point(Grid.cell_to_world(cell)):
+				Art.terrain(self, cell, _diamond(cell), Terrain.is_water(cell))
 	for record: Dictionary in placed_buildings:
 		_draw_foundation(record)
 	_draw_map_objects()
@@ -109,6 +130,30 @@ func _update_hover(point: Vector2) -> void:
 	queue_redraw()
 
 
+# 墙体和屋顶模块：点到非占地格上的可见楼体时，返回该建筑的锚点。
+func _selection_at(point: Vector2) -> Vector2i:
+	var ground: Vector2i = cell_at(point)
+	if occupied_cells.has(ground):
+		return ground
+	var world_point: Vector2 = screen_to_world(point)
+	var ids: Array = building_faces.keys()
+	ids.reverse()
+	for id: String in ids:
+		var record: Dictionary = building_faces[id]
+		if occupied_cells.get(record["anchor"]) != id:
+			continue
+		for face: PackedVector2Array in record["faces"]:
+			if Geometry2D.is_point_in_polygon(world_point, face):
+				return record["anchor"]
+	return ground
+
+
+# 墙面记录模块：只有绘制建筑本体时登记轮廓，地形和占地不重复登记。
+func remember_building_face(face: PackedVector2Array) -> void:
+	if not drawing_building.is_empty():
+		building_faces[drawing_building]["faces"].append(face)
+
+
 # 鼠标模块：左键选格、右键取消、中键拖动，滚轮仅缩放地图。
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
@@ -125,8 +170,10 @@ func _gui_input(event: InputEvent) -> void:
 					_update_hover(event.position)
 					placement_clicked.emit(preview_result.duplicate(true))
 			else:
-				selected = cell_at(event.position) if event.button_index == MOUSE_BUTTON_LEFT else Grid.INVALID
+				selected = _selection_at(event.position) if event.button_index == MOUSE_BUTTON_LEFT else Grid.INVALID
 				selected_changed.emit(selected)
+				if event.button_index == MOUSE_BUTTON_LEFT and event.double_click and not inspected_building_id.is_empty():
+					_focus_building(inspected_building_id)
 		_update_hover(event.position)
 		accept_event()
 	elif event is InputEventMouseMotion:
@@ -144,11 +191,27 @@ func _input(event: InputEvent) -> void:
 		mouse_default_cursor_shape = Control.CURSOR_CROSS
 
 
-# 缩放模块：保持鼠标所指世界位置固定，倍率限制在50%至200%。
+# 聚焦模块：双击后原地放大整座建筑，把地块与建筑上方留白居中。
+func _focus_building(id: String) -> void:
+	for record: Dictionary in placed_buildings:
+		if record["id"] != id:
+			continue
+		var center: Vector2 = _building_center(record) - Vector2(0, 18)
+		var footprint: Vector2i = Catalog.find(record["def_id"]).get("footprint")
+		var span: float = float(footprint.x + footprint.y) * Grid.HALF.x
+		fitting_overview = false
+		zoom_level = clampf(minf((size.x - 30.0) / span, (size.y - 24.0) / (span * 0.5 + 42.0)), 0.5, 3.2)
+		pan_offset = (Grid.center() - center) * zoom_level
+		view_changed.emit()
+		queue_redraw()
+		return
+
+
+# 缩放模块：保持鼠标所指世界位置固定，倍率限制在50%至800%。
 func _apply_zoom(mouse: Vector2, factor: float) -> void:
 	var anchor: Vector2 = screen_to_world(mouse)
 	fitting_overview = false
-	zoom_level = clampf(zoom_level * factor, 0.5, 2.0)
+	zoom_level = clampf(zoom_level * factor, 0.5, 8.0)
 	pan_offset = mouse - size * 0.5 - (anchor - Grid.center()) * zoom_level
 	_update_hover(mouse)
 	view_changed.emit()
@@ -234,11 +297,14 @@ func _update_preview() -> void:
 func sync_buildings(records: Array) -> void:
 	placed_buildings = records.duplicate(true)
 	occupied_cells.clear()
+	has_ranch = false
 	for record: Dictionary in placed_buildings:
+		has_ranch = has_ranch or (record["def_id"] == "b_ranch" and record["state"] == "ready")
 		var definition: Resource = Catalog.find(record["def_id"])
 		var anchor: Vector2i = Vector2i(int(record["cell"][0]), int(record["cell"][1]))
 		for cell: Vector2i in Placement.footprint_cells(anchor, definition.get("footprint")):
 			occupied_cells[cell] = record["id"]
+	set_process(has_ranch)
 	_update_preview()
 	queue_redraw()
 
@@ -278,6 +344,7 @@ func _draw_map_objects() -> void:
 	for record: Dictionary in placed_buildings:
 		objects.append({"center": _building_center(record), "record": record})
 	objects.sort_custom(_farther_first)
+	building_faces.clear()
 	for item: Dictionary in objects:
 		var center: Vector2 = item["center"]
 		if item.has("deposit"):
@@ -285,7 +352,11 @@ func _draw_map_objects() -> void:
 		elif item["record"]["state"] == "constructing":
 			Art.site(self, center)
 		else:
-			Art.building(self, item["record"]["def_id"], center)
+			var record: Dictionary = item["record"]
+			drawing_building = record["id"]
+			building_faces[drawing_building] = {"anchor": Vector2i(int(record["cell"][0]), int(record["cell"][1])), "faces": []}
+			Art.building(self, record["def_id"], center, scenery_time)
+			drawing_building = ""
 
 
 # 排序模块：深度相同时按横坐标固定绘制顺序。
@@ -308,17 +379,30 @@ func _draw_building_feedback() -> void:
 		var definition: Resource = Catalog.find(record["def_id"])
 		if record["id"] == inspected_building_id:
 			var anchor: Vector2i = Vector2i(int(record["cell"][0]), int(record["cell"][1]))
-			for cell: Vector2i in Placement.footprint_cells(anchor, definition.get("footprint")):
-				_outline_cell(cell, Color("#ffd56a"), 2.0)
+			_outline_building(anchor, definition.get("footprint"))
 		var label: String = definition.get("display_name")
 		if record["state"] == "constructing":
 			label += " %d%%" % floori(100.0 * record["work_done"] / record["work_required"])
 		var font: Font = ThemeDB.fallback_font
 		var text_size: Vector2 = font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14)
-		var baseline: Vector2 = (world_to_screen(_building_center(record)) + Vector2(0, clampf(52.0 * zoom_level, 28.0, 52.0))).round()
+		var footprint: Vector2i = definition.get("footprint")
+		var bottom_offset: float = maxf(28.0, (footprint.x + footprint.y) * Grid.HALF.y * 0.5 * zoom_level + 12.0)
+		var baseline: Vector2 = (world_to_screen(_building_center(record)) + Vector2(0, bottom_offset)).round()
 		var origin: Vector2 = baseline - Vector2(text_size.x * 0.5, 0)
 		draw_rect(Rect2(origin - Vector2(5, 14), Vector2(text_size.x + 10, 18)), Color("#202720dd"))
 		draw_string(font, origin, label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color("#fff0cc"))
+
+
+# 整圈描边模块：由占地四角组成一个轮廓，画面不会在场内逐格描金。
+func _outline_building(anchor: Vector2i, footprint: Vector2i) -> void:
+	var top: Vector2 = Grid.cell_to_world(anchor) - Vector2(0, Grid.HALF.y)
+	var east: Vector2 = Grid.cell_to_world(anchor + Vector2i(footprint.x - 1, 0)) + Vector2(Grid.HALF.x, 0)
+	var bottom: Vector2 = Grid.cell_to_world(anchor + footprint - Vector2i.ONE) + Vector2(0, Grid.HALF.y)
+	var west: Vector2 = Grid.cell_to_world(anchor + Vector2i(0, footprint.y - 1)) - Vector2(Grid.HALF.x, 0)
+	var outline: PackedVector2Array = []
+	for point: Vector2 in [top, east, bottom, west, top]:
+		outline.append(world_to_screen(point))
+	draw_polyline(outline, Color("#ffd56a"), 3.0, false)
 
 
 # 详情高亮模块：仅保存界面选中ID，不改变占地或建筑实例数据。
