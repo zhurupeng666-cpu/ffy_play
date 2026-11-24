@@ -315,7 +315,7 @@ func _draw_building_feedback() -> void:
 			label += " %d%%" % floori(100.0 * record["work_done"] / record["work_required"])
 		var font: Font = ThemeDB.fallback_font
 		var text_size: Vector2 = font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14)
-		var baseline: Vector2 = world_to_screen(_building_center(record) + Vector2(0, 25)).round()
+		var baseline: Vector2 = (world_to_screen(_building_center(record)) + Vector2(0, clampf(52.0 * zoom_level, 28.0, 52.0))).round()
 		var origin: Vector2 = baseline - Vector2(text_size.x * 0.5, 0)
 		draw_rect(Rect2(origin - Vector2(5, 14), Vector2(text_size.x + 10, 18)), Color("#202720dd"))
 		draw_string(font, origin, label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color("#fff0cc"))
