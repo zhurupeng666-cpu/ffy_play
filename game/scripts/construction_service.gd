@@ -19,16 +19,16 @@ static func check_cost(cost: Dictionary, available: Dictionary) -> Dictionary:
 
 
 # 建造模块：先完成全部校验，再一次替换库存、实例和回执，失败没有副作用。
-static func execute(world: RefCounted, definition_id: String, anchor: Vector2i, command_id: String) -> Dictionary:
+static func execute(world: RefCounted, definition_id: String, anchor: Vector2i, command_id: String, large: bool = false) -> Dictionary:
 	if command_id.is_empty() or command_id.length() > 64:
 		return {"ok": false, "code": "INVALID_COMMAND", "reason": "建造命令ID无效"}
 	var cell: Array = [anchor.x, anchor.y]
 	if world.applied_commands.has(command_id):
 		var receipt: Dictionary = world.applied_commands[command_id]
-		if receipt["def_id"] != definition_id or receipt["cell"] != cell:
+		if receipt["def_id"] != definition_id or receipt["cell"] != cell or receipt.get("large", false) != large:
 			return {"ok": false, "code": "COMMAND_CONFLICT", "reason": "同一命令ID不能用于不同建筑或位置"}
 		return {"ok": true, "code": "REPLAYED", "building_id": receipt["building_id"], "replayed": true, "cost": {}}
-	var definition: Resource = Catalog.find(definition_id)
+	var definition: Resource = Catalog.for_construction(definition_id, large)
 	if definition == null or not definition.get("buildable"):
 		return {"ok": false, "code": "UNKNOWN_BUILDING", "reason": "此建筑不能建造"}
 	var geometry: Dictionary = Placement.check_building(anchor, definition, world.occupied_cells())
@@ -46,9 +46,9 @@ static func execute(world: RefCounted, definition_id: String, anchor: Vector2i, 
 		resources[key] -= definition.get("cost")[key]
 	var id: String = "building_%06d" % world.next_building_id
 	var buildings: Array = world.buildings.duplicate(true)
-	buildings.append({"id": id, "def_id": definition_id, "cell": cell, "level": 1, "state": "constructing", "work_done": 0, "work_required": int(definition.get("build_work")), "workers": 0, "food_credit": 0, "material_credit": 0, "paid_cost": Costs.normalize(definition.get("cost"))})
+	buildings.append({"id": id, "def_id": definition_id, "large": large, "cell": cell, "level": 1, "state": "constructing", "work_done": 0, "work_required": int(definition.get("build_work")), "workers": 0, "food_credit": 0, "material_credit": 0, "paid_cost": Costs.normalize(definition.get("cost"))})
 	var receipts: Dictionary = world.applied_commands.duplicate(true)
-	receipts[command_id] = {"def_id": definition_id, "cell": cell, "building_id": id}
+	receipts[command_id] = {"def_id": definition_id, "large": large, "cell": cell, "building_id": id}
 	world.resources = resources
 	world.buildings = buildings
 	world.applied_commands = receipts

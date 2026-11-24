@@ -12,7 +12,7 @@ static func find(world: RefCounted, id: String) -> Dictionary:
 # 占地查询模块：建筑范围内任一逻辑格均命中同一实例，不只支持锚点。
 static func at_cell(world: RefCounted, cell: Vector2i) -> String:
 	for building: Dictionary in world.buildings:
-		var size: Vector2i = Catalog.find(building["def_id"]).get("footprint")
+		var size: Vector2i = Catalog.footprint(building)
 		var anchor: Vector2i = Vector2i(int(building["cell"][0]), int(building["cell"][1]))
 		if cell.x >= anchor.x and cell.y >= anchor.y and cell.x < anchor.x + size.x and cell.y < anchor.y + size.y:
 			return str(building["id"])
@@ -24,7 +24,7 @@ static func describe(world: RefCounted, id: String) -> Dictionary:
 	if building.is_empty():
 		return {"text": "点击地图建筑查看详情；右键取消选择", "increase": false, "decrease": false}
 	var definition: Resource = Catalog.find(building["def_id"])
-	var lines: PackedStringArray = ["%s Lv.%d · %s" % [definition.get("display_name"), building["level"], id.trim_prefix("building_")], "位置(%d,%d) · 占地%d×%d" % [building["cell"][0], building["cell"][1], definition.get("footprint").x, definition.get("footprint").y]]
+	var lines: PackedStringArray = ["%s Lv.%d · %s" % [definition.get("display_name"), building["level"], id.trim_prefix("building_")], "位置(%d,%d) · 占地%d×%d" % [building["cell"][0], building["cell"][1], Catalog.footprint(building).x, Catalog.footprint(building).y]]
 	var slots: int = int(definition.get("worker_slots"))
 	var ready: bool = building["state"] == "ready"
 	if not ready:

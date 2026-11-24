@@ -14,6 +14,34 @@ const BARRACKS = preload("res://data/buildings/barracks.tres")
 const HALL = preload("res://data/buildings/hall.tres")
 
 
+# 场地模块：独立维护大型用地尺寸，保留原类型、生产和军营归属。
+const LARGE_SIZES: Dictionary = {"b_farm": Vector2i(20, 20), "b_ranch": Vector2i(20, 20), "b_barracks": Vector2i(20, 20), "b_granary": Vector2i(10, 10)}
+
+
+# 尺寸模块：实例规格同时用于占地校验、选择和绘制。
+static func footprint(record: Dictionary, prior_large: bool = false) -> Vector2i:
+	var id: String = record["def_id"]
+	var base: Vector2i = find(id).get("footprint")
+	if not record.get("large", false):
+		return base
+	if prior_large or record.get("legacy_large", false):
+		return base * 2
+	return LARGE_SIZES[id]
+
+
+# 预览模块：生成独立配置，避免更改同类现有建筑的共享资源。
+static func for_construction(id: String, large: bool) -> Resource:
+	var definition: Resource = find(id)
+	if not large:
+		return definition
+	if definition == null or not LARGE_SIZES.has(id):
+		return null
+	definition = definition.duplicate()
+	definition.set("footprint", footprint({"def_id": id, "large": true}))
+	definition.set_meta("large", true)
+	return definition
+
+
 # 查询模块：未知ID返回空值，不能通过存档指定脚本或文件路径。
 static func find(id: String) -> Resource:
 	match id:

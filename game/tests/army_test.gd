@@ -2,6 +2,9 @@
 extends SceneTree
 const State = preload("res://scripts/world_state.gd")
 const Build = preload("res://scripts/construction_service.gd")
+const Legions = preload("res://scripts/legion_service.gd")
+const March = preload("res://scripts/region_march.gd")
+const Scout = preload("res://scripts/region_scout.gd")
 const Army = preload("res://scripts/army_service.gd")
 const Clock = preload("res://scripts/strategic_clock.gd")
 const Store = preload("res://scripts/world_save_repository.gd")
@@ -186,6 +189,7 @@ func _run() -> void:
 	main._refresh()
 	_check(not main.army_recruit_button.disabled, "完工军营招募按钮未启用")
 	main.army_recruit_button.pressed.emit()
+	_check(main.town_map.yard_counts_by_barracks.get("building_000002") == Vector2i(0, 5), "练兵场未同步招募人数")
 	_check(main.army_label.text.contains("训练5人") and main.labor_label.text.contains("空闲17") and main.army_recruit_button.disabled, "招募界面未刷新人数与岗位")
 	main.world.paused = false
 	main.clock.advance(30)
@@ -202,6 +206,31 @@ func _run() -> void:
 	main._refresh()
 	main._toggle_food_details()
 	_check(main.food_detail_label.text.contains("军需后余粮164") and main.bill_label.text.contains("军粮-1"), "口粮与军粮余额说明不一致")
+	main.world.paused = false
+	main.clock.advance(20)
+	main.world.paused = true
+	main._refresh()
+	_check(main.town_map.yard_counts_by_barracks.get("building_000002") == Vector2i(5, 0), "练兵场未把完训士兵显示为现役")
+	main.army_recruit_button.pressed.emit()
+	_check(main.town_map.yard_counts_by_barracks.get("building_000002") == Vector2i(5, 5), "现役与新兵未按实际十人展示")
+	# 部分编组外派会减少原军营数量，归队恢复，在训批次始终留营。
+	var troop: Dictionary = main.world.troops[0]
+	var created: Dictionary = Legions.create(main.world, "yard-legion")
+	if created["ok"]:
+		var id: String = created["legion_id"]
+		Legions.set_count(main.world, id, troop["id"], 2)
+		if Scout.dispatch(main.world, id):
+			main._refresh()
+			_check(main.town_map.yard_counts_by_barracks.get("building_000002") == Vector2i(3, 5), "外派两人未同步减少")
+			main.world.paused = false
+			main.clock.advance(120)
+			_check(Army.yard_counts(main.world).get("building_000002") == Vector2i(10, 0), "归队或完训未恢复到实际十人")
+			_check(March.dispatch(main.world, id, Scout.WOODS), "林地派遣测试失败")
+			_check(Army.yard_counts(main.world).get("building_000002") == Vector2i(8, 0), "行军部队仍计入练兵场")
+		else:
+			_check(false, "练兵计数的侦察夹具未派出")
+	else:
+		_check(false, "练兵计数的军团夹具未创建")
 	main.free()
 	DirAccess.remove_absolute(path + "-ui.db")
 	if not failed:

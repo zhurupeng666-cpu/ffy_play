@@ -2,6 +2,8 @@
 extends RefCounted
 const Morale = preload("res://scripts/army_morale.gd")
 const Costs = preload("res://scripts/building_costs.gd")
+const March = preload("res://scripts/region_march.gd")
+const Scout = preload("res://scripts/region_scout.gd")
 const Disband = preload("res://scripts/army_disband_service.gd")
 const UNIT = preload("res://data/units/infantry.tres")
 const Build = preload("res://scripts/construction_service.gd")
@@ -25,6 +27,29 @@ static func stationed(records: Array, id: String) -> Dictionary:
 			count += int(record["count"])
 			training = training or record["state"] == "training"
 	return {"count": count, "training": training}
+
+# 操练数量模块：按军营统计留营现役和新兵，扣除侦察、行军或驻外的现役成员。
+static func yard_counts(world: RefCounted) -> Dictionary:
+	var away_by_troop: Dictionary = {}
+	for legion: Dictionary in world.legions:
+		var legion_id: String = legion["id"]
+		if not March.away(world, legion_id) and not Scout.busy(world, legion_id):
+			continue
+		for member: Dictionary in legion["members"]:
+			var troop_id: String = member["troop_id"]
+			away_by_troop[troop_id] = int(away_by_troop.get(troop_id, 0)) + int(member["count"])
+	var counts: Dictionary = {}
+	for troop: Dictionary in world.troops:
+		var id: String = troop["barracks_id"]
+		var people: int = int(troop["count"])
+		var pair: Vector2i = counts.get(id, Vector2i.ZERO)
+		if troop["state"] == "training":
+			pair.y += people
+		else:
+			pair.x += maxi(0, people - int(away_by_troop.get(troop["id"], 0)))
+		if pair != Vector2i.ZERO:
+			counts[id] = pair
+	return counts
 
 # 招募预检模块：军营、容量、兵源和费用全部满足才允许一次性扣费。
 static func quote(world: RefCounted, barracks: String) -> Dictionary:

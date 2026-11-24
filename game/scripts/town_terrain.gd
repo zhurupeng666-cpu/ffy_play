@@ -27,10 +27,28 @@ static func check(cells: Array[Vector2i], requires_water: bool, required_deposit
 	return {"ok": true}
 
 
-# 资源点模块：固定林地和石矿不枯竭，未来扩展枯竭时再引入动态矿量与地图版本。
+# 资源点模块：保留原地块，新增树林和矿点分布在外围建设带。
+const DEPOSITS: Dictionary = {
+	Vector2i(0, 11): "forest", Vector2i(0, 12): "forest", Vector2i(0, 13): "forest",
+	Vector2i(15, 4): "stone", Vector2i(15, 5): "stone", Vector2i(15, 6): "stone",
+	Vector2i(27, 11): "forest", Vector2i(28, 11): "forest", Vector2i(28, 12): "forest", Vector2i(29, 11): "forest",
+	Vector2i(14, 26): "forest", Vector2i(15, 26): "forest", Vector2i(15, 27): "forest",
+	Vector2i(43, 28): "forest", Vector2i(44, 28): "forest", Vector2i(44, 29): "forest",
+	Vector2i(56, 12): "stone", Vector2i(57, 12): "stone", Vector2i(57, 13): "stone",
+	Vector2i(31, 40): "stone", Vector2i(32, 40): "stone", Vector2i(33, 40): "stone",
+	Vector2i(66, 41): "forest", Vector2i(67, 41): "forest", Vector2i(67, 42): "forest",
+	Vector2i(58, 55): "stone", Vector2i(59, 55): "stone", Vector2i(59, 56): "stone",
+	Vector2i(101, 28): "forest", Vector2i(102, 28): "forest", Vector2i(102, 29): "forest",
+	Vector2i(157, 37): "stone", Vector2i(158, 37): "stone", Vector2i(158, 38): "stone",
+	Vector2i(37, 102): "forest", Vector2i(38, 102): "forest", Vector2i(38, 103): "forest",
+	Vector2i(86, 121): "stone", Vector2i(87, 121): "stone", Vector2i(86, 122): "stone",
+	Vector2i(131, 103): "forest", Vector2i(132, 103): "forest", Vector2i(132, 104): "forest",
+	Vector2i(176, 114): "stone", Vector2i(177, 114): "stone", Vector2i(177, 115): "stone",
+	Vector2i(49, 164): "stone", Vector2i(50, 164): "stone", Vector2i(50, 165): "stone",
+	Vector2i(129, 168): "forest", Vector2i(130, 168): "forest", Vector2i(130, 169): "forest",
+	Vector2i(179, 179): "forest", Vector2i(180, 179): "forest", Vector2i(180, 180): "forest",
+}
+
+# 查询模块：静态资源表同供建造规则和场景渲染使用。
 static func deposit_at(cell: Vector2i) -> String:
-	if cell.x == 0 and cell.y in [11, 12, 13]:
-		return "forest"
-	if cell.x == 15 and cell.y in [4, 5, 6]:
-		return "stone"
-	return ""
+	return DEPOSITS.get(cell, "")

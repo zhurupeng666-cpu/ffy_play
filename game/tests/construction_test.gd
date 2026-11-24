@@ -1,6 +1,7 @@
 ## 文件用途：验证真实建造扣费、失败无副作用、命令幂等、旧档迁移和建筑存档恢复。
 extends SceneTree
 
+const Grid = preload("res://scripts/isometric_grid.gd")
 const State = preload("res://scripts/world_state.gd")
 const Build = preload("res://scripts/construction_service.gd")
 const Store = preload("res://scripts/world_save_repository.gd")
@@ -32,7 +33,7 @@ func _run() -> void:
 	_check(result.get("code") == "COMMAND_CONFLICT" and world.snapshot() == after, "重复ID更换位置没有拒绝")
 	result = Build.execute(world, "b_house", Vector2i(2, 2), "cmd-overlap")
 	_check(not result["ok"] and world.snapshot() == after, "重叠建造修改了世界")
-	result = Build.execute(world, "b_farm", Vector2i(15, 15), "cmd-outside")
+	result = Build.execute(world, "b_farm", Grid.SIZE - Vector2i.ONE, "cmd-outside")
 	_check(not result["ok"] and world.snapshot() == after, "越界建造修改了世界")
 	result = Build.execute(world, "b_hall", Vector2i(12, 12), "cmd-hall")
 	_check(not result["ok"] and world.snapshot() == after, "允许重复建领主厅")
@@ -108,6 +109,44 @@ func _run() -> void:
 	_check(int(store.database.query_result[0]["count"]) == 3, "失败保存修改了备份")
 	store.close_store()
 	DirAccess.remove_absolute(path)
+	# 扩建区验收：远地施工及其建造回执可一同恢复。
+	var expansion: RefCounted = State.new()
+	var far_cell := Vector2i(170, 156)
+	var placed: Dictionary = Build.execute(expansion, "b_house", far_cell, "far-site")
+	var expanded_save: RefCounted = State.from_snapshot(expansion.snapshot())
+	_check(placed["ok"] and expanded_save != null and expanded_save.occupied_cells().has(far_cell), "扩建区远处建筑不能建造或存读档")
+	if expanded_save != null:
+		_check(Build.execute(expanded_save, "b_house", far_cell, "far-site").get("replayed", false), "远处建造回执未恢复")
+	_check_expanded_yards()
 	if not failed:
 		print("BUILD_PASS: costs, atomic failure, idempotency, migration, snapshots, backup rollback")
 	quit(1 if failed else 0)
+
+
+# 老城升级验收：重叠时迁址并保留 ID 原工期与费用，新建与操作回执区分规格。
+func _check_expanded_yards() -> void:
+	var world: RefCounted = State.new()
+	var farm: Dictionary = Build.execute(world, "b_farm", Vector2i(2, 3), "legacy-farm")
+	var barn: Dictionary = Build.execute(world, "b_barracks", Vector2i(41, 60), "legacy-barracks")
+	if not farm["ok"] or not barn["ok"]:
+		_check(false, "旧城样本未能建立")
+		return
+	var legacy: Dictionary = world.snapshot()
+	legacy["version"] = 20
+	for record: Dictionary in legacy["buildings"]:
+		record.erase("large")
+	for receipt: Dictionary in legacy["applied_commands"].values():
+		receipt.erase("large")
+	var expanded: RefCounted = State.from_snapshot(legacy)
+	if expanded == null:
+		_check(false, "旧城扩大后无法读取")
+		return
+	var migrated_farm: Dictionary = expanded.buildings[1]
+	var migrated_barn: Dictionary = expanded.buildings[2]
+	_check(Build.Catalog.footprint(migrated_farm) == Vector2i(20, 20) and migrated_farm["cell"] != [2, 3] and migrated_farm["id"] == farm["building_id"], "受阻农场未迁至合法位置")
+	_check(Build.Catalog.footprint(migrated_barn) == Vector2i(20, 20) and migrated_barn["cell"] == [41, 60] and migrated_barn["id"] == barn["building_id"], "空地军营没有原地扩大")
+	_check(expanded.resources == world.resources and migrated_barn["work_required"] == world.buildings[2]["work_required"] and expanded.occupied_cells().size() == 816, "扩建破坏库存、原施工或占地重叠")
+	_check(State.from_snapshot(expanded.snapshot()).snapshot() == expanded.snapshot(), "扩建后再次读取不稳定")
+	var large: Dictionary = Build.execute(expanded, "b_ranch", Vector2i(150, 152), "new-yard", true)
+	_check(large["ok"] and expanded.occupied_cells().get(Vector2i(169, 171)) == large.get("building_id"), "大型牧场末端未实际占地")
+	_check(Build.execute(expanded, "b_ranch", Vector2i(150, 152), "new-yard").get("code") == "COMMAND_CONFLICT", "建造回执没有区分规格")

@@ -230,7 +230,7 @@ func _build_ui() -> void:
 	region_overview.town_requested.connect(_show_region_view.bind(false))
 	map_column.add_child(region_overview)
 	var title: Label = Label.new()
-	title.text = "边境镇 · 城镇地图"
+	title.text = "边境镇 · 建设区 200×200"
 	town_view.add_child(title)
 	town_map = TownMap.new()
 	town_map.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -240,7 +240,8 @@ func _build_ui() -> void:
 	town_view.add_child(map_info)
 	var map_actions: HBoxContainer = HBoxContainer.new()
 	town_view.add_child(map_actions)
-	_button(map_actions, "镜头复位（Home）", town_map.reset_view)
+	_button(map_actions, "回城镇（Home）", town_map.reset_view)
+	_button(map_actions, "建设区全览", town_map.show_entire_map)
 	var help: Label = Label.new()
 	help.text = "单击整选 / 双击聚焦建筑 / 中键拖动 / 滚轮缩放 / 右键取消\n伐木场须紧邻林地，采石场须紧邻石矿"
 	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -291,17 +292,17 @@ func _build_ui() -> void:
 	status_label = _label("新世界已暂停；请选择速度后继续")
 	var building_actions: HBoxContainer = _row()
 	_button(building_actions, "建住宅 2×2", _start_preview.bind(HOUSE))
-	_button(building_actions, "建农场 4×4", _start_preview.bind(FARM))
-	_button(building_actions, "建粮仓 3×3", _start_preview.bind(GRANARY))
+	_button(building_actions, "农场 20×20", _start_large_preview.bind("b_farm"))
+	_button(building_actions, "粮仓 10×10", _start_large_preview.bind("b_granary"))
 	var food_actions: HBoxContainer = _row()
-	_button(food_actions, "建牧场 4×4", _start_preview.bind(RANCH))
+	_button(food_actions, "牧场 20×20", _start_large_preview.bind("b_ranch"))
 	_button(food_actions, "建渔场 3×2", _start_preview.bind(FISHERY))
 	_button(food_actions, "取消", _cancel_preview)
 	var material_actions: HBoxContainer = _row()
 	_button(material_actions, "建伐木场 3×3", _start_preview.bind(LUMBER))
 	_button(material_actions, "建采石场 3×3", _start_preview.bind(QUARRY))
 	var military_actions: HBoxContainer = _row()
-	_button(military_actions, "建军营 3×3", _start_preview.bind(BARRACKS))
+	_button(military_actions, "军营 20×20", _start_large_preview.bind("b_barracks"))
 	placement_label = _label("选择建筑；左键确认会扣材料")
 	building_label = _label("")
 	construction_label = _label("")
@@ -422,6 +423,7 @@ func _refresh() -> void:
 	construction_label.text = active_text + ("；另有%d座等待" % (queued_count - 1) if queued_count > 1 else "")
 	if queued_count > 0 and world.builders == 0:
 		construction_label.text += "；缺施工工人，已停工"
+	town_map.sync_yard_counts(Army.yard_counts(world))
 	if displayed_building_tick != world.tick:
 		displayed_building_tick = world.tick
 		town_map.sync_buildings(world.buildings)
@@ -520,6 +522,11 @@ func _verify_export(mode: String) -> int:
 	return 0
 
 
+# 大型场地入口：使用可验证的场地规格建立预览。
+func _start_large_preview(id: String) -> void:
+	_start_preview(Construction.Catalog.for_construction(id, true))
+
+
 # 建筑选择模块：为一次放置生成唯一命令，失败时可调整位置重试。
 func _start_preview(definition: Resource) -> void:
 	_show_region_view(false)
@@ -550,7 +557,7 @@ func _on_placement_clicked(_result: Dictionary) -> void:
 	if town_map.active_definition == null:
 		return
 	var definition: Resource = town_map.active_definition
-	var result: Dictionary = Construction.execute(world, definition.get("id"), town_map.hovered, pending_build_command)
+	var result: Dictionary = Construction.execute(world, definition.get("id"), town_map.hovered, pending_build_command, bool(definition.get_meta("large", false)))
 	if not result["ok"]:
 		status_label.text = "建造失败：" + str(result.get("reason", ""))
 		return
