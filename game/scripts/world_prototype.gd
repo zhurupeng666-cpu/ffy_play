@@ -84,6 +84,12 @@ var inspection_label: Label
 var inspection_increase: Button
 var inspection_decrease: Button
 var inspection_remove: Button
+var site_builder_actions: VBoxContainer
+var site_builder_hint: Label
+var builder_add_buttons: Array[Button] = []
+var builder_remove_buttons: Array[Button] = []
+var release_producer_button: Button
+var town_picker: OptionButton
 var barracks_stats: VBoxContainer
 var barracks_notice: Label
 var army_recruit_button: Button
@@ -249,9 +255,10 @@ func _build_header(layout: VBoxContainer) -> void:
 	summary.add_theme_constant_override("separation", 14)
 	strips.add_child(summary)
 	_number_grid(summary, "", [
-		["population", "人口", "people"], ["food", "粮食", "food"], ["gold", "金币", "gold"],
+		["population", "人口", "people"], ["hud_workforce", "劳动力", "work"], ["hud_idle", "可用劳动力", "people"],
+		["food", "粮食", "food"], ["gold", "金币", "gold"],
 		["wood", "木材", "wood"], ["stone", "石材", "stone"], ["date", "城镇时间", "clock"],
-	], 6)
+	], 8)
 
 	var navigation := HBoxContainer.new()
 	navigation.add_theme_constant_override("separation", 6)
@@ -352,7 +359,7 @@ func _build_management_drawer(columns: HBoxContainer) -> void:
 
 	_drawer_page("城镇")
 	var town_page: VBoxContainer = panel
-	var town_picker := OptionButton.new()
+	town_picker = OptionButton.new()
 	town_page.add_child(town_picker)
 	town_picker.add_icon_item(HudIcons.texture("people"), "库存与民生")
 	town_picker.add_icon_item(HudIcons.texture("work"), "劳动力与施工")
@@ -381,8 +388,7 @@ func _build_management_drawer(columns: HBoxContainer) -> void:
 		["active_build_progress", "施工进度", "work"], ["waiting_builds", "等待施工", "clock"],
 	], 2)
 	var labor_actions: HBoxContainer = _row()
-	_button(labor_actions, "施工 −1", _change_builders.bind(-1))
-	_button(labor_actions, "施工 +1", _change_builders.bind(1))
+	_build_builder_buttons(labor_actions)
 	panel = _data_section(town_page, town_sections)
 	producer_picker = OptionButton.new()
 	panel.add_child(producer_picker)
@@ -596,12 +602,15 @@ func _refresh() -> void:
 	_refresh_legions()
 	_refresh_army()
 	_refresh_civic()
+	_refresh_builder_controls()
 	_refresh_inspection()
 	_set_numbers({
 		"date": "第%d日 %02d时" % [world.current_day(), int((world.tick % State.DAY_TICKS) * 24.0 / State.DAY_TICKS)],
-		"population": world.population, "food": world.resources["food"], "gold": world.resources["gold"],
+		"population": world.population, "hud_workforce": world.workforce_capacity(), "hud_idle": world.idle_workers(),
+		"food": world.resources["food"], "gold": world.resources["gold"],
 		"wood": world.resources["wood"], "stone": world.resources["stone"],
 	})
+	_refresh_workforce_tooltips()
 	for speed: int in speed_buttons:
 		speed_buttons[speed].set_pressed_no_signal(speed == world.speed)
 	progress.value = (world.tick % State.DAY_TICKS) + world.subsecond
@@ -624,7 +633,7 @@ func _refresh() -> void:
 	_set_numbers({
 		"ready_buildings": ready_count, "queued_buildings": queued_count,
 		"housing": "%d / %d" % [world.population, world.housing_capacity()],
-		"employable": world.population - world.dependents, "dependent": world.dependents,
+		"employable": world.workforce_capacity(), "dependent": world.dependents,
 		"builders": world.builders, "idle": world.idle_workers(), "military_workers": Army.people(world.troops, true),
 		"producers": world.production_workers(),
 	})
@@ -868,12 +877,71 @@ func _sync_building_view() -> void:
 	town_map.sync_resources(world.resources)
 
 
-# 岗位操作模块：按钮只发出分配请求，守恒与上限由世界模型验证。
+# 施工按钮：城镇与所选工地使用同一支队伍，分配后两处同时更新。
+func _build_builder_buttons(row: HBoxContainer) -> void:
+	builder_remove_buttons.append(_button(row, "施工 −1", _change_builders.bind(-1)))
+	builder_add_buttons.append(_button(row, "施工 +1", _change_builders.bind(1)))
+
+
+# 增员限制：给出当前阻塞原因，并由世界再验证是否能占用新的岗位。
+func _builder_add_block() -> String:
+	if world.builders >= State.MAX_BUILDERS:
+		return "施工队已达%d人上限" % State.MAX_BUILDERS
+	if world.idle_workers() <= 0:
+		return "可用劳动力为0"
+	return ""
+
+
+# 用工提示：从同一份人口数据解释空闲人数和解除阻塞的入口。
+func _refresh_builder_controls() -> void:
+	var block: String = _builder_add_block()
+	for button: Button in builder_add_buttons:
+		button.disabled = not block.is_empty()
+		button.tooltip_text = block if button.disabled else "从可用劳动力调1人到施工队"
+	for button: Button in builder_remove_buttons:
+		button.disabled = world.builders == 0
+		button.tooltip_text = "施工队目前无人" if button.disabled else "将1名施工工人释放为空闲"
+	var producers: int = world.production_workers()
+	release_producer_button.visible = world.idle_workers() <= 0 and producers > 0 and world.builders < State.MAX_BUILDERS
+	var hint: String = "全城共用施工队 · %d / %d 人" % [world.builders, State.MAX_BUILDERS]
+	if world.idle_workers() == 0 and world.builders < State.MAX_BUILDERS:
+		hint += "\n无空闲人手 · 军职%d · 生产%d" % [Army.people(world.troops, true), producers]
+	site_builder_hint.text = hint
+
+
+# 顶栏提示：人口旁的两项数值可直接查看计算口径和岗位占用。
+func _refresh_workforce_tooltips() -> void:
+	var workforce: Label = numbers["hud_workforce"]
+	var idle: Label = numbers["hud_idle"]
+	workforce.get_parent().get_parent().get_parent().tooltip_text = "人口%d − 被抚养%d = 劳动力%d" % [
+		world.population, world.dependents, world.workforce_capacity(),
+	]
+	idle.get_parent().get_parent().get_parent().tooltip_text = "劳动力%d − 施工%d − 生产%d − 军职%d = 可用%d" % [
+		world.workforce_capacity(), world.builders, world.production_workers(), Army.people(world.troops, true), world.idle_workers(),
+	]
+
+
+# 生产岗位入口：选中一个有人的生产建筑，具体减员仍由玩家确认操作。
+func _open_staffed_production() -> void:
+	_open_management(1)
+	town_picker.select(2)
+	_show_data_section(2, town_sections)
+	for index: int in range(producer_picker.item_count):
+		var building: Dictionary = Inspector.find(world, str(producer_picker.get_item_metadata(index)))
+		if int(building.get("workers", 0)) > 0:
+			producer_picker.select(index)
+			_on_producer_selected(index)
+			return
+
+
+# 岗位操作：按钮只发出分配请求，守恒与上限由世界模型验证。
 func _change_builders(delta: int) -> void:
 	if world.assign_builders(world.builders + delta):
-		status_label.text = "施工工人已调整为%d；分配会随战略进度保存" % world.builders
+		status_label.text = "施工队 %d / %d 人" % [world.builders, State.MAX_BUILDERS]
+	elif delta > 0:
+		status_label.text = _builder_add_block()
 	else:
-		status_label.text = "施工人数需在0至2之间，且不能超过可就业人口"
+		status_label.text = "施工队目前无人"
 	_refresh()
 
 
@@ -984,7 +1052,8 @@ func _number_grid(parent: Container, title_text: String, entries: Array, columns
 		text_column.add_child(caption)
 		var value := Label.new()
 		value.add_theme_font_size_override("font_size", 16)
-		value.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		if entry[0] != "date":
+			value.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		text_column.add_child(value)
 		numbers[entry[0]] = value
 	return group
@@ -1189,6 +1258,21 @@ func _build_inspection_card() -> void:
 	inspection_label = Label.new()
 	inspection_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	contents.add_child(inspection_label)
+	site_builder_actions = VBoxContainer.new()
+	contents.add_child(site_builder_actions)
+	var crew_buttons := HBoxContainer.new()
+	site_builder_actions.add_child(crew_buttons)
+	_build_builder_buttons(crew_buttons)
+	site_builder_hint = Label.new()
+	site_builder_hint.add_theme_font_size_override("font_size", 13)
+	site_builder_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	site_builder_actions.add_child(site_builder_hint)
+	release_producer_button = Button.new()
+	release_producer_button.text = "调整生产岗位"
+	release_producer_button.focus_mode = Control.FOCUS_NONE
+	release_producer_button.pressed.connect(_open_staffed_production)
+	site_builder_actions.add_child(release_producer_button)
+	site_builder_actions.hide()
 	_number_grid(contents, "", [
 		["building_level", "等级", "house"], ["building_size", "占地", "house"],
 		["building_progress", "施工进度", "work"], ["building_queue", "施工顺序", "clock"],
@@ -1275,7 +1359,7 @@ func _inspect_building(id: String, reveal: bool) -> void:
 	_refresh_inspection()
 	if reveal and not inspected_building_id.is_empty():
 		_open_management(0)
-		management_scroll.call_deferred("ensure_control_visible", inspection_card)
+		management_scroll.set_deferred("scroll_vertical", 0)
 
 
 # 详情刷新模块：施工、暂停、岗位和读档后始终从当前世界重算显示及按钮状态。
@@ -1294,6 +1378,7 @@ func _refresh_inspection() -> void:
 	inspection_decrease.disabled = not detail["decrease"]
 	inspection_increase.get_parent().visible = bool(detail.get("producer", false))
 	var record: Dictionary = Inspector.find(world, inspected_building_id)
+	site_builder_actions.visible = record.get("state") == "constructing"
 	inspection_remove.visible = not record.is_empty() and record["def_id"] != "b_hall"
 	inspection_remove.text = "取消施工" if record.get("state") == "constructing" else "拆除建筑"
 	var military: bool = record.get("def_id") == "b_barracks"

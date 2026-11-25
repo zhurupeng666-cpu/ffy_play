@@ -39,8 +39,6 @@ static func describe(world: RefCounted, id: String) -> Dictionary:
 		metrics["progress"] = "%d%%" % floori(100.0 * building["work_done"] / building["work_required"])
 		metrics["queue"] = queue
 		metrics["builders"] = world.builders
-		if slots > 0:
-			metrics["jobs"] = "0 / %d" % slots
 		if world.builders == 0:
 			state_text = "缺施工工人，已停工"
 		elif queue > 1:
@@ -61,7 +59,7 @@ static func describe(world: RefCounted, id: String) -> Dictionary:
 	elif int(definition.get("food_capacity")) > 0:
 		metrics["capacity"] = definition.get("food_capacity")
 	return {
-		"producer": slots > 0, "text": "%s · %s" % [definition.get("display_name"), state_text], "numbers": metrics,
+		"producer": ready and slots > 0, "text": "%s · %s" % [definition.get("display_name"), state_text], "numbers": metrics,
 		"increase": ready and slots > int(building["workers"]) and world.idle_workers() > 0,
 		"decrease": ready and slots > 0 and int(building["workers"]) > 0,
 	}

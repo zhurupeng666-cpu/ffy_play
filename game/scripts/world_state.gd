@@ -1,8 +1,9 @@
-## 文件用途：保存世界日期、人口、资源与建筑实例，并提供v1到v23快照迁移和完整校验。
+## 文件用途：保存世界日期、人口、资源与建筑实例，并提供v1到v24快照迁移和完整校验。
 extends RefCounted
 
 # 状态模块：数值均为待平衡参数，资源以完整单位保存。
 const DAY_TICKS: int = 120
+const MAX_BUILDERS: int = 2
 const Terrain = preload("res://scripts/town_terrain.gd")
 const Grid = preload("res://scripts/isometric_grid.gd")
 const Siege = preload("res://scripts/fort_siege.gd")
@@ -24,7 +25,7 @@ var population: int = 30
 
 # 劳动力模块：居民分为可就业与被抚养人口，施工岗位最多两人，其余保持空闲。
 var dependents: int = 6
-var builders: int = 2
+var builders: int = MAX_BUILDERS
 var labor_credit: int = 0
 var resources: Dictionary = {"food": 180, "gold": 300, "wood": 120, "stone": 80}
 var speed: int = 1
@@ -132,7 +133,7 @@ static func from_snapshot(data: Variant) -> RefCounted:
 	state.population = int(data["population"])
 	# 迁移模块：旧档默认两名施工工人，保留原进度和速度，不重新扣费。
 	if int(data["version"]) >= 4:
-		if not _valid_integer(data.get("dependents"), 0, state.population) or not _valid_integer(data.get("builders"), 0, 2) or not _valid_integer(data.get("labor_credit"), 0, 1):
+		if not _valid_integer(data.get("dependents"), 0, state.population) or not _valid_integer(data.get("builders"), 0, MAX_BUILDERS) or not _valid_integer(data.get("labor_credit"), 0, 1):
 			return null
 		state.dependents = int(data["dependents"])
 		state.builders = int(data["builders"])
@@ -399,15 +400,20 @@ func advance_construction() -> void:
 
 # 分配模块：拒绝超额或负人数，合法调整不增减总人口、不扣金币。
 func assign_builders(count: int) -> bool:
-	if count < 0 or count > 2 or count > population - dependents - production_workers() - Army.people(troops, true):
+	if count < 0 or count > MAX_BUILDERS or count - builders > idle_workers():
 		return false
 	builders = count
 	return true
 
 
+# 劳动力总数：被抚养居民仍计入人口，岗位由可就业居民承担。
+func workforce_capacity() -> int:
+	return population - dependents
+
+
 # 统计模块：施工岗位计入可就业人口，保持人口与岗位守恒。
 func idle_workers() -> int:
-	return population - dependents - builders - production_workers() - Army.people(troops, true)
+	return workforce_capacity() - builders - production_workers() - Army.people(troops, true)
 
 
 # 住房模块：只有完工住宅增加容量，未完工工地不提供住房。
