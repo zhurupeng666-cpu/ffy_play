@@ -66,7 +66,7 @@ func _run() -> void:
 		clock.advance(0.75)
 		_check(loaded.current_day() == 2 and loaded.resources["food"] == 165, "读档后重复或漏日结")
 		# 损坏模块：坏JSON必须被拒绝，已在内存中的进度保持不变。
-		repository.database.query("UPDATE world_snapshot SET payload='broken' WHERE slot=1;")
+		repository.database.query("UPDATE world_saves SET payload='broken';")
 		_check(repository.load_world() == null and loaded.resources["food"] == 165, "坏档破坏当前世界")
 	repository.close_store()
 	DirAccess.remove_absolute(path)

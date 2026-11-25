@@ -53,8 +53,11 @@ func _run() -> void:
 	main._toggle_pause()
 	main._save()
 	main.world.resources["gold"] = 999
-	main._load()
-	var passed: bool = region_safe and map_safe and main.world.current_day() == 2 and main.world.resources["food"] == 165 and main.world.resources["gold"] == 320 and main.world.paused and main.resource_label.text.contains("320")
+	main._save()
+	main._choose_save()
+	var chooser: bool = main.save_items.item_count == 2 and main.save_items.get_item_text(1).contains("第2日")
+	main._activate_save(1)
+	var passed: bool = chooser and region_safe and map_safe and main.world.current_day() == 2 and main.world.resources["food"] == 165 and main.world.resources["gold"] == 320 and main.world.paused and main.resource_label.text.contains("320")
 	passed = _check_scout(main) and passed
 	main.free()
 	DirAccess.remove_absolute(path)

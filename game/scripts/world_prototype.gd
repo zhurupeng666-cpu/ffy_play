@@ -50,6 +50,9 @@ var food_details_visible: bool = false
 var material_bill_label: Label
 var bill_label: Label
 var status_label: Label
+# 读档界面：列表项使用数据库ID，显示本地保存时间和游戏日期。
+var save_picker: ConfirmationDialog
+var save_items: ItemList
 var pause_button: Button
 var progress: ProgressBar
 var panel: VBoxContainer
@@ -279,7 +282,8 @@ func _build_ui() -> void:
 		_button(actions, "%d倍速" % multiplier, _set_speed.bind(multiplier))
 	var saves: HBoxContainer = _row()
 	_button(saves, "保存战略进度", _save)
-	_button(saves, "读取战略进度", _load)
+	_button(saves, "读取战略进度", _choose_save)
+	_build_save_picker()
 	_build_inspection_card()
 	army_label = _label("" )
 	_build_legion_panel()
@@ -447,17 +451,63 @@ func _set_speed(multiplier: int) -> void:
 
 # 保存模块：在完整逻辑步后捕获快照，写入成功才提示。
 func _save() -> void:
-	status_label.text = "保存成功：第%d日；已保存日期、资源、建筑与暂停状态" % world.current_day() if store.save_world(world) else "保存失败：" + store.error_message
+	status_label.text = "已新建存档（第%d日），最多保留7份" % world.current_day() if store.save_world(world) else "保存失败：" + store.error_message
+
+
+# 读档布局：通过行选择与确认按钮加载指定存档。
+func _build_save_picker() -> void:
+	save_picker = ConfirmationDialog.new()
+	save_picker.title = "读取战略进度"
+	save_picker.exclusive = true
+	save_picker.get_ok_button().text = "读取所选"
+	save_picker.get_cancel_button().text = "返回"
+	add_child(save_picker)
+	save_items = ItemList.new()
+	save_items.custom_minimum_size = Vector2(490, 228)
+	save_picker.add_child(save_items)
+	save_picker.confirmed.connect(_load_selected)
+	save_items.item_activated.connect(_activate_save)
+
+
+# 列表入口：每次打开重新查询，防止显示已轮换淘汰的存档。
+func _choose_save() -> void:
+	var rows: Array = store.list_saves()
+	if rows.is_empty():
+		status_label.text = "暂无战略存档，请先保存" if store.error_message.is_empty() else store.error_message
+		return
+	save_items.clear()
+	for row: Dictionary in rows:
+		var date: String = str(row["saved_local"]) if row["saved_local"] != null else "保存时间未知"
+		var day: String = "第%d日" % row["game_day"] if int(row["game_day"]) > 0 else "游戏日期未知"
+		save_items.add_item("%s  ·  %s  ·  %s  ·  #%d" % [date, day, row["title"], row["id"]])
+		save_items.set_item_metadata(save_items.item_count - 1, int(row["id"]))
+	save_items.select(0)
+	save_picker.popup_centered()
+
+
+# 确认模块：只加载当前列表项记录的ID。
+func _load_selected() -> void:
+	var selection: PackedInt32Array = save_items.get_selected_items()
+	if not selection.is_empty():
+		_activate_save(selection[0])
+
+
+# 激活模块：双击或确认选择，都使用同一个安全读取入口。
+func _activate_save(index: int) -> void:
+	if index < 0 or index >= save_items.item_count:
+		return
+	save_picker.hide()
+	_load(int(save_items.get_item_metadata(index)))
 
 
 # 读取模块：用校验成功的新世界替换旧引用，避免半读档和重复日结。
-func _load() -> void:
+func _load(save_id: int = 0) -> void:
 	_cancel_legion_close()
 	selected_legion_id = ""
 	legion_signature = ""
 	_cancel_army_disband()
 	_cancel_removal()
-	var candidate: RefCounted = store.load_world()
+	var candidate: RefCounted = store.load_world(save_id)
 	if candidate == null:
 		status_label.text = store.error_message
 		return
