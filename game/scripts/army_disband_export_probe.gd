@@ -33,7 +33,7 @@ static func run(main: Control, mode: String) -> int:
 		main.clock.advance(90)
 		main.world.paused = true
 		main._refresh()
-		if main.world.resources["food"] != 149 or main.world.resources["gold"] != 284 or main.world.retired_army_cost["ration_credit"] != 30 or not main.army_bill_label.visible or not main.store.save_world(main.world):
+		if main.world.resources["food"] != 149 or main.world.resources["gold"] != 284 or main.world.retired_army_cost["ration_credit"] != 30 or not main.ledger_data[2].visible or not main.store.save_world(main.world):
 			return 1
 	print("EXPORT_DISBAND_PASS: ", mode)
 	return 0

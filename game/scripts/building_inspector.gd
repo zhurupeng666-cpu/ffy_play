@@ -18,15 +18,17 @@ static func at_cell(world: RefCounted, cell: Vector2i) -> String:
 			return str(building["id"])
 	return ""
 
-# 详情模块：输出展示文本与可用操作，操作仍需世界层再次校验。
+# 详情模块：返回建筑状态和独立指标，操作仍需世界层再次校验。
 static func describe(world: RefCounted, id: String) -> Dictionary:
 	var building: Dictionary = find(world, id)
 	if building.is_empty():
-		return {"text": "点击地图建筑查看详情；右键取消选择", "increase": false, "decrease": false}
+		return {"text": "选择地图上的建筑", "numbers": {}, "increase": false, "decrease": false}
 	var definition: Resource = Catalog.find(building["def_id"])
-	var lines: PackedStringArray = ["%s Lv.%d · %s" % [definition.get("display_name"), building["level"], id.trim_prefix("building_")], "位置(%d,%d) · 占地%d×%d" % [building["cell"][0], building["cell"][1], Catalog.footprint(building).x, Catalog.footprint(building).y]]
+	var size: Vector2i = Catalog.footprint(building)
+	var metrics: Dictionary = {"level": building["level"], "size": "%d × %d" % [size.x, size.y]}
 	var slots: int = int(definition.get("worker_slots"))
 	var ready: bool = building["state"] == "ready"
+	var state_text: String = "已完工"
 	if not ready:
 		var queue: int = 0
 		for record: Dictionary in world.buildings:
@@ -34,28 +36,32 @@ static func describe(world: RefCounted, id: String) -> Dictionary:
 				queue += 1
 			if record["id"] == id:
 				break
-		lines.append("施工%d%%（%d/%d）；队列第%d" % [floori(100.0 * building["work_done"] / building["work_required"]), building["work_done"], building["work_required"], queue])
-		lines.append("施工队0人，已停工" if world.builders == 0 else "施工队%d人；%s" % [world.builders, "当前施工" if queue == 1 else "等待前序工地"])
-		if world.paused:
-			lines.append("世界已暂停，施工暂停")
+		metrics["progress"] = "%d%%" % floori(100.0 * building["work_done"] / building["work_required"])
+		metrics["queue"] = queue
+		metrics["builders"] = world.builders
 		if slots > 0:
-			lines.append("完工后开放%d个生产岗位" % slots)
-	else:
-		lines.append("已完工")
-		if slots > 0:
-			var material: String = str(definition.get("material_resource"))
-			var unit: String = "粮食" if material.is_empty() else ("木材" if material == "wood" else "石材")
-			var rate: int = int(definition.get("food_per_worker_day")) if material.is_empty() else int(definition.get("material_per_worker_day"))
-			var credit: int = int(building["food_credit"] if material.is_empty() else building["material_credit"])
-			lines.append("岗位%d/%d；全镇空闲%d人" % [building["workers"], slots, world.idle_workers()])
-			lines.append("全天折算%d%s；待入库%.2f%s" % [int(building["workers"]) * rate, unit, credit / 120.0, unit])
-			lines.append("无人工作，已停产" if building["workers"] == 0 else ("世界已暂停，生产暂停" if world.paused else "工作中，日结入库"))
-		elif building["def_id"] == "b_barracks":
-			lines.append("军营：在下方征募步兵；兵员与生产岗位互斥")
-		elif building["def_id"] == "b_house":
-			lines.append("本住宅提供10住房容量；当前无生产岗位")
-		elif int(definition.get("food_capacity")) > 0:
-			lines.append("本粮仓提供%d储粮容量；无需生产工人" % definition.get("food_capacity"))
+			metrics["jobs"] = "0 / %d" % slots
+		if world.builders == 0:
+			state_text = "缺施工工人，已停工"
+		elif queue > 1:
+			state_text = "等待前序工地"
 		else:
-			lines.append("领主厅：提供初始住房与公共储粮；无生产岗位")
-	return {"producer": slots > 0, "text": "\n".join(lines), "increase": ready and slots > int(building["workers"]) and world.idle_workers() > 0, "decrease": ready and slots > 0 and int(building["workers"]) > 0}
+			state_text = "施工暂停" if world.paused else "施工中"
+	elif slots > 0:
+		var material: String = str(definition.get("material_resource"))
+		var unit: String = "粮食" if material.is_empty() else ("木材" if material == "wood" else "石材")
+		var rate: int = int(definition.get("food_per_worker_day")) if material.is_empty() else int(definition.get("material_per_worker_day"))
+		var credit: int = int(building["food_credit"] if material.is_empty() else building["material_credit"])
+		metrics["jobs"] = "%d / %d" % [building["workers"], slots]
+		metrics["rate"] = "%d %s" % [int(building["workers"]) * rate, unit]
+		metrics["credit"] = "%.2f %s" % [credit / 120.0, unit]
+		state_text += " · " + ("无人工作" if building["workers"] == 0 else ("生产暂停" if world.paused else "工作中"))
+	elif building["def_id"] == "b_house":
+		metrics["housing"] = 10
+	elif int(definition.get("food_capacity")) > 0:
+		metrics["capacity"] = definition.get("food_capacity")
+	return {
+		"producer": slots > 0, "text": "%s · %s" % [definition.get("display_name"), state_text], "numbers": metrics,
+		"increase": ready and slots > int(building["workers"]) and world.idle_workers() > 0,
+		"decrease": ready and slots > 0 and int(building["workers"]) > 0,
+	}

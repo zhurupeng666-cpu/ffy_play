@@ -129,12 +129,12 @@ func _run() -> void:
 	main.store_path_override = path + "-ui.db"
 	root.add_child(main)
 	main.tax_buttons["high"].pressed.emit()
-	_check(main.tax_buttons["high"].disabled and main.civic_label.text.contains("预计税收30") and main.world.resources["gold"] == 300, "政策按钮预测或即时收入错误")
+	_check(main.tax_buttons["high"].disabled and main.numbers["forecast"].text == "30" and main.world.resources["gold"] == 300, "政策按钮预测或即时收入错误")
 	main.world.paused = false
 	main.clock.advance(120)
 	main.world.paused = true
 	main._refresh()
-	_check(main.civic_label.text.contains("满意度47") and main.civic_label.text.contains("预计税收28") and main.civic_bill_label.text.contains("税收入库30"), "界面混淆当前预测和历史收税")
+	_check(main.numbers["satisfaction"].text == "47 / 100" and main.numbers["forecast"].text == "28" and main.numbers["tax_stored"].text == "+30", "界面混淆当前预测和历史收税")
 	main._save()
 	main._set_tax_policy("low")
 	main._load()

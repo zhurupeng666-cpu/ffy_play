@@ -18,12 +18,12 @@ static func run(main: Control, mode: String) -> int:
 		main.clock.advance(30)
 		main.world.paused = true
 		main._refresh()
-		if not main.army_detail_label.text.contains("训练50%") or main.world.idle_workers() != 17 or not main.store.save_world(main.world):
+		if not (main.numbers["batch_progress"].text == "50%") or main.world.idle_workers() != 17 or not main.store.save_world(main.world):
 			return 1
 	else:
 		main._load()
 		main._inspect_building("building_000002", false)
-		if main.world.tick != 110 or main.world.idle_workers() != 17 or not main.army_detail_label.text.contains("训练50%"):
+		if main.world.tick != 110 or main.world.idle_workers() != 17 or not (main.numbers["batch_progress"].text == "50%"):
 			return 1
 		main.world.paused = false
 		main.clock.advance(130)
@@ -45,7 +45,7 @@ static func run(main: Control, mode: String) -> int:
 		main.clock.advance(120)
 		main.world.paused = true
 		main._refresh()
-		if supplied_morale != 64 or main.world.army_morale != 52 or not main.army_bill_label.text.contains("士气 64 → 52（-12）") or main.world.idle_workers() != 17:
+		if supplied_morale != 64 or main.world.army_morale != 52 or not main.numbers["morale_change"].text == "64 → 52" or main.world.idle_workers() != 17:
 			return 1
 		if not main.store.save_world(main.world):
 			return 1

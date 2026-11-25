@@ -27,6 +27,7 @@ const FARM = preload("res://data/buildings/farm.tres")
 const RANCH = preload("res://data/buildings/ranch.tres")
 const FISHERY = preload("res://data/buildings/fishery.tres")
 const RegionOverview = preload("res://scripts/region_overview.gd")
+const HudIcons = preload("res://scripts/hud_icons.gd")
 const HudTheme = preload("res://scripts/hud_theme.gd")
 const TownMap = preload("res://scripts/town_map.gd")
 const State = preload("res://scripts/world_state.gd")
@@ -39,22 +40,22 @@ var world: RefCounted = State.new()
 var clock: RefCounted = Clock.new(world)
 var store: RefCounted = Store.new()
 var store_path_override: String = ""
-var date_label: Label
-var resource_label: Label
-var storage_label: Label
-var civic_label: Label
-var civic_bill_label: Label
+var numbers: Dictionary = {}
+var ledger_sections: Array[Control] = []
+var town_sections: Array[Control] = []
+var producer_numbers: VBoxContainer
+var ledger_data: Array[Control] = []
+var ledger_message: Array[Label] = []
+var stock_warning: Label
+var retired_cost: VBoxContainer
+var production_rows: Dictionary = {}
 var tax_buttons: Dictionary = {}
-var food_detail_label: Label
-var food_detail_button: Button
-var food_details_visible: bool = false
-var material_bill_label: Label
-var bill_label: Label
 var status_label: Label
 # 读档界面：列表项使用数据库ID，显示本地保存时间和游戏日期。
 var save_picker: ConfirmationDialog
 var save_items: ItemList
 var pause_button: Button
+var speed_buttons: Dictionary = {}
 var progress: ProgressBar
 var panel: VBoxContainer
 var town_map: Control
@@ -64,10 +65,8 @@ var region_overview: RegionOverview
 var region_toggle: Button
 var map_info: Label
 var placement_label: Label
-var building_label: Label
 var construction_label: Label
-var labor_label: Label
-var production_label: Label
+var construction_metrics: VBoxContainer
 var producer_picker: OptionButton
 var producer_detail: Label
 var producer_signature: String = ""
@@ -85,9 +84,8 @@ var inspection_label: Label
 var inspection_increase: Button
 var inspection_decrease: Button
 var inspection_remove: Button
-var army_label: Label
-var army_bill_label: Label
-var army_detail_label: Label
+var barracks_stats: VBoxContainer
+var barracks_notice: Label
 var army_recruit_button: Button
 var army_troop_picker: OptionButton
 var army_disband_button: Button
@@ -102,7 +100,8 @@ var legion_picker: OptionButton
 var legion_troop_picker: OptionButton
 var legion_people: SpinBox
 var legion_detail: Label
-var legion_available: Label
+var legion_stats: VBoxContainer
+var legion_allocation: VBoxContainer
 var legion_create: Button
 var legion_apply: Button
 var legion_remove: Button
@@ -249,28 +248,28 @@ func _build_header(layout: VBoxContainer) -> void:
 	var summary := HBoxContainer.new()
 	summary.add_theme_constant_override("separation", 14)
 	strips.add_child(summary)
-	var identity := Label.new()
-	identity.text = "边境守卫"
-	identity.add_theme_font_size_override("font_size", 18)
-	identity.add_theme_color_override("font_color", Color("#ead7a0"))
-	summary.add_child(identity)
-	resource_label = Label.new()
-	resource_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	resource_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	summary.add_child(resource_label)
-	date_label = Label.new()
-	summary.add_child(date_label)
+	_number_grid(summary, "", [
+		["population", "人口", "people"], ["food", "粮食", "food"], ["gold", "金币", "gold"],
+		["wood", "木材", "wood"], ["stone", "石材", "stone"], ["date", "城镇时间", "clock"],
+	], 6)
 
 	var navigation := HBoxContainer.new()
 	navigation.add_theme_constant_override("separation", 6)
 	strips.add_child(navigation)
 	region_toggle = _button(navigation, "区域地图", _toggle_region_view)
+	var identity := Label.new()
+	identity.text = "边境镇"
+	identity.add_theme_color_override("font_color", Color("#b5bda9"))
+	navigation.add_child(identity)
 	var divider := Control.new()
 	divider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	navigation.add_child(divider)
 	pause_button = _button(navigation, "继续（空格）", _toggle_pause)
 	for multiplier: int in [1, 2, 4]:
-		_button(navigation, "%d×" % multiplier, _set_speed.bind(multiplier))
+		var speed_button := _button(navigation, "%d×" % multiplier, _set_speed.bind(multiplier))
+		speed_button.icon = HudIcons.texture("clock")
+		speed_button.toggle_mode = true
+		speed_buttons[multiplier] = speed_button
 	_button(navigation, "保存进度", _save)
 	_button(navigation, "读取进度", _choose_save)
 	progress = ProgressBar.new()
@@ -304,10 +303,19 @@ func _build_map(columns: HBoxContainer) -> void:
 	_button(map_actions, "回城镇", town_map.reset_view).tooltip_text = "Home 回到城镇"
 	_button(map_actions, "建设区全览", town_map.show_entire_map)
 	map_info = Label.new()
-	map_info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	map_info.custom_minimum_size.x = 39
 	map_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	map_info.mouse_filter = Control.MOUSE_FILTER_PASS
 	map_info.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	map_info.tooltip_text = "双击聚焦，中键拖动，滚轮缩放，右键取消。"
+	var map_icon := TextureRect.new()
+	map_icon.texture = HudIcons.texture("map")
+	map_icon.stretch_mode = TextureRect.STRETCH_KEEP_CENTERED
+	map_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	map_icon.size_flags_horizontal = Control.SIZE_SHRINK_END
+	var map_space := Control.new()
+	map_space.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	map_actions.add_child(map_space)
+	map_actions.add_child(map_icon)
 	map_actions.add_child(map_info)
 	town_map.hovered_changed.connect(_on_map_cell_changed)
 	town_map.selected_changed.connect(_on_town_selected)
@@ -335,41 +343,75 @@ func _build_management_drawer(columns: HBoxContainer) -> void:
 	management_tabs = TabContainer.new()
 	management_tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	body.add_child(management_tabs)
+	management_tabs.tab_changed.connect(_resize_management)
 	management_scroll = _drawer_page("建筑")
 	_build_inspection_card()
 
 	_drawer_page("城镇")
-	storage_label = _label("")
-	civic_label = _label("")
+	var town_page: VBoxContainer = panel
+	var town_picker := OptionButton.new()
+	town_page.add_child(town_picker)
+	town_picker.add_icon_item(HudIcons.texture("people"), "库存与民生")
+	town_picker.add_icon_item(HudIcons.texture("work"), "劳动力与施工")
+	town_picker.add_icon_item(HudIcons.texture("food"), "生产岗位")
+	panel = _data_section(town_page, town_sections)
+	_number_grid(panel, "", [
+		["food_store", "储粮 / 容量", "food"], ["housing", "人口 / 住房", "house"],
+		["satisfaction", "满意度", "happy"], ["forecast", "预计税收", "gold"],
+	], 2)
+	stock_warning = _label("")
 	var taxes: HBoxContainer = _row()
 	for policy: String in Civic.POLICIES:
 		tax_buttons[policy] = _button(taxes, Civic.policy_name(policy), _set_tax_policy.bind(policy))
-	building_label = _label("")
+	panel = _data_section(town_page, town_sections)
+	_number_grid(panel, "劳动力", [
+		["idle", "空闲", "people"], ["employable", "可就业", "people"],
+		["builders", "施工", "work"], ["producers", "生产", "work"],
+		["dependent", "被抚养", "house"], ["military_workers", "军职", "shield"],
+	], 2)
+	_number_grid(panel, "建筑", [
+		["ready_buildings", "已完工", "house"], ["queued_buildings", "待完工", "work"],
+	], 2)
 	construction_label = _label("")
-	labor_label = _label("")
+	construction_label.add_theme_color_override("font_color", Color("#ddbb91"))
+	construction_metrics = _number_grid(panel, "", [
+		["active_build_progress", "施工进度", "work"], ["waiting_builds", "等待施工", "clock"],
+	], 2)
 	var labor_actions: HBoxContainer = _row()
 	_button(labor_actions, "施工 −1", _change_builders.bind(-1))
 	_button(labor_actions, "施工 +1", _change_builders.bind(1))
-	production_label = _label("")
+	panel = _data_section(town_page, town_sections)
 	producer_picker = OptionButton.new()
 	panel.add_child(producer_picker)
 	producer_picker.item_selected.connect(_on_producer_selected)
-	producer_detail = _label("")
+	producer_numbers = _number_grid(panel, "当前建筑", [
+		["producer_workers", "在岗", "people"], ["producer_credit", "待入库", "book"],
+	], 2)
+	producer_detail = _label("请选择生产建筑")
 	var production_actions: HBoxContainer = _row()
 	_button(production_actions, "生产 −1", _change_producers.bind(-1))
 	_button(production_actions, "生产 +1", _change_producers.bind(1))
+	var production_icons := {"b_farm": "food", "b_ranch": "ranch", "b_fishery": "fish", "b_lumber": "wood", "b_quarry": "stone"}
+	for id: String in Construction.Catalog.PRODUCERS:
+		var name_text: String = Construction.Catalog.find(id).get("display_name")
+		production_rows[id] = _number_grid(panel, name_text, [
+			[id + "_jobs", "在岗 / 岗位", "people"], [id + "_rate", "全天折算", production_icons[id]],
+		], 2)
+
+	town_picker.item_selected.connect(_show_data_section.bind(town_sections))
+	_show_data_section(0, town_sections)
 
 	_drawer_page("军团")
-	army_label = _label("")
+	_number_grid(panel, "兵力", [
+		["soldiers", "现役", "shield"], ["training", "训练中", "work"], ["army_morale", "全军士气", "happy"],
+	], 2)
+	retired_cost = _number_grid(panel, "退役待结", [
+		["retired_food", "军粮", "food"], ["retired_pay", "军饷", "gold"],
+	], 2)
 	_build_legion_panel()
 
 	_drawer_page("账本")
-	bill_label = _label("")
-	food_detail_button = _button(_row(), "展开粮食收支", _toggle_food_details)
-	food_detail_label = _label("")
-	civic_bill_label = _label("")
-	army_bill_label = _label("")
-	material_bill_label = _label("")
+	_build_ledger()
 	management_drawer.hide()
 
 
@@ -386,12 +428,18 @@ func _drawer_page(name_text: String) -> ScrollContainer:
 	return scroll
 
 
+# 面板宽度：账本用三列显示，建筑和岗位保留紧凑宽度。
+func _resize_management(index: int) -> void:
+	management_drawer.custom_minimum_size.x = 462 if index == 3 else 326
+
+
 # 抽屉入口：同一类别再次点击即收起，建筑选中可以直接定位详情。
 func _open_management(index: int, toggle: bool = false) -> void:
 	if toggle and management_drawer.visible and management_tabs.current_tab == index:
 		management_drawer.hide()
 		return
 	management_tabs.current_tab = index
+	_resize_management(index)
 	management_drawer.show()
 
 
@@ -407,19 +455,19 @@ func _build_command_bar(layout: VBoxContainer) -> void:
 	build_toolbar = HBoxContainer.new()
 	build_toolbar.add_theme_constant_override("separation", 6)
 	toolbar.add_child(build_toolbar)
-	_build_category("民居仓储", ["b_house", "b_granary"])
-	_build_category("农业渔牧", ["b_farm", "b_ranch", "b_fishery"])
-	_build_category("林矿采集", ["b_lumber", "b_quarry"])
-	_build_category("军事建造", ["b_barracks"])
+	_build_category("民居仓储", "house", ["b_house", "b_granary"])
+	_build_category("农业渔牧", "food", ["b_farm", "b_ranch", "b_fishery"])
+	_build_category("林矿采集", "wood", ["b_lumber", "b_quarry"])
+	_build_category("军事建造", "shield", ["b_barracks"])
 	cancel_build_button = _button(build_toolbar, "取消建造", _cancel_preview)
 	cancel_build_button.hide()
 	var divider := Control.new()
 	divider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	toolbar.add_child(divider)
-	_button(toolbar, "建筑详情", _open_management.bind(0, true))
-	_button(toolbar, "城镇管理", _open_management.bind(1, true))
-	_button(toolbar, "军团", _open_management.bind(2, true))
-	_button(toolbar, "收支账本", _open_management.bind(3, true))
+	_button(toolbar, "建筑", _open_management.bind(0, true)).icon = HudIcons.texture("house")
+	_button(toolbar, "城镇", _open_management.bind(1, true)).icon = HudIcons.texture("people")
+	_button(toolbar, "军团", _open_management.bind(2, true)).icon = HudIcons.texture("shield")
+	_button(toolbar, "账本", _open_management.bind(3, true)).icon = HudIcons.texture("book")
 
 	placement_label = Label.new()
 	placement_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
@@ -438,9 +486,10 @@ func _build_command_bar(layout: VBoxContainer) -> void:
 
 
 # 建造分类：展示真实占地，从选项自动进入对应地块预览。
-func _build_category(title: String, ids: Array[String]) -> void:
+func _build_category(title: String, icon_id: String, ids: Array[String]) -> void:
 	var menu := MenuButton.new()
 	menu.text = title + " ▾"
+	menu.icon = HudIcons.texture(icon_id)
 	menu.flat = false
 	menu.focus_mode = Control.FOCUS_NONE
 	build_toolbar.add_child(menu)
@@ -449,7 +498,7 @@ func _build_category(title: String, ids: Array[String]) -> void:
 		var id: String = ids[i]
 		var definition: Resource = Construction.Catalog.find(id)
 		var footprint: Vector2i = Construction.Catalog.footprint({"def_id": id, "large": Construction.Catalog.LARGE_SIZES.has(id)})
-		popup.add_item("%s   %d×%d" % [definition.get("display_name"), footprint.x, footprint.y], i)
+		popup.add_icon_item(HudIcons.texture(icon_id), "%s   %d×%d" % [definition.get("display_name"), footprint.x, footprint.y], i)
 	popup.id_pressed.connect(_build_menu_selected.bind(ids))
 
 
@@ -470,7 +519,8 @@ func _on_map_cell_changed(_cell: Vector2i) -> void:
 
 # 地图提示模块：分别显示悬停和选择，使用从0开始的逻辑坐标。
 func _refresh_map_info() -> void:
-	map_info.text = "悬停 %s  | 选中 %s  | 缩放 %d%%" % [_cell_text(town_map.hovered), _cell_text(town_map.selected), roundi(town_map.zoom_level * 100)]
+	map_info.text = "%d%%" % roundi(town_map.zoom_level * 100)
+	map_info.tooltip_text = "缩放 · 悬停 %s · 选中 %s\n双击聚焦，中键拖动，滚轮缩放，右键取消。" % [_cell_text(town_map.hovered), _cell_text(town_map.selected)]
 
 
 # 坐标文本模块：地图外或未选择时显示短横线。
@@ -526,7 +576,7 @@ func _show_region_view(show_overview: bool) -> void:
 
 # 帧模块：推进固定步时钟并显示结果，界面自身不执行日结。
 func _process(delta: float) -> void:
-	if date_label == null:
+	if progress == null:
 		return
 	var before: int = world.tick
 	clock.advance(delta)
@@ -544,27 +594,41 @@ func _refresh() -> void:
 	_refresh_army()
 	_refresh_civic()
 	_refresh_inspection()
-	date_label.text = "第%d日  %02d时  | %d倍速 | %s" % [world.current_day(), int((world.tick % State.DAY_TICKS) * 24.0 / State.DAY_TICKS), world.speed, "已暂停" if world.paused else "运行中"]
-	resource_label.text = "人口 %d  | 粮食 %d  | 金币 %d  | 木材 %d  | 石材 %d" % [world.population, world.resources["food"], world.resources["gold"], world.resources["wood"], world.resources["stone"]]
+	_set_numbers({
+		"date": "第%d日 %02d时" % [world.current_day(), int((world.tick % State.DAY_TICKS) * 24.0 / State.DAY_TICKS)],
+		"population": world.population, "food": world.resources["food"], "gold": world.resources["gold"],
+		"wood": world.resources["wood"], "stone": world.resources["stone"],
+	})
+	for speed: int in speed_buttons:
+		speed_buttons[speed].set_pressed_no_signal(speed == world.speed)
 	progress.value = (world.tick % State.DAY_TICKS) + world.subsecond
-	bill_label.text = world.last_bill
 	_refresh_storage()
+	_refresh_ledger()
 	pause_button.text = "继续（空格）" if world.paused else "暂停（空格）"
 	town_map.sync_resources(world.resources)
 	var ready_count: int = 0
 	var queued_count: int = 0
 	var active_text: String = "无施工任务"
+	var active_progress: int = 0
 	for building: Dictionary in world.buildings:
 		if building["state"] == "ready":
 			ready_count += 1
 		else:
 			queued_count += 1
 			if queued_count == 1:
-				active_text = "施工中：%s %d%%" % [Construction.Catalog.find(building["def_id"]).get("display_name"), floori(100.0 * building["work_done"] / building["work_required"])]
-	building_label.text = "建筑%d座：完工%d，待完工%d" % [world.buildings.size(), ready_count, queued_count]
-	labor_label.text = "人口%d / 住房%d；可就业%d，被抚养%d；施工%d，空闲%d；军职%d" % [world.population, world.housing_capacity(), world.population - world.dependents, world.dependents, world.builders, world.idle_workers(), Army.people(world.troops, true)]
+				active_text = str(Construction.Catalog.find(building["def_id"]).get("display_name"))
+				active_progress = floori(100.0 * building["work_done"] / building["work_required"])
+	_set_numbers({
+		"ready_buildings": ready_count, "queued_buildings": queued_count,
+		"housing": "%d / %d" % [world.population, world.housing_capacity()],
+		"employable": world.population - world.dependents, "dependent": world.dependents,
+		"builders": world.builders, "idle": world.idle_workers(), "military_workers": Army.people(world.troops, true),
+		"producers": world.production_workers(),
+	})
 	_refresh_production()
-	construction_label.text = active_text + ("；另有%d座等待" % (queued_count - 1) if queued_count > 1 else "")
+	construction_label.text = active_text
+	construction_metrics.visible = queued_count > 0
+	_set_numbers({"active_build_progress": "%d%%" % active_progress, "waiting_builds": maxi(0, queued_count - 1)})
 	if queued_count > 0 and world.builders == 0:
 		construction_label.text += "；缺施工工人，已停工"
 	town_map.sync_yard_counts(Army.yard_counts(world))
@@ -833,18 +897,22 @@ func _refresh_production() -> void:
 				if building["id"] == selected_id:
 					producer_picker.select(index)
 		producer_signature = signature
-	var lines: PackedStringArray = ["生产岗位%d；按实际在岗时间累计" % world.production_workers()]
 	for id: String in summaries:
-		var definition: Resource = Construction.Catalog.find(id)
-		var info: Dictionary = _production_info(definition)
-		lines.append("%s：%d/%d人；当前全天折算%d%s" % [definition.get("display_name"), summaries[id][0], summaries[id][1], int(summaries[id][0]) * int(info["rate"]), info["unit"]])
-	production_label.text = "\n".join(lines)
-	producer_detail.text = "先建造并完成生产建筑，再选择分配工人"
-	if producer_picker.selected >= 0:
-		for building: Dictionary in world.buildings:
-			if building["id"] == producer_picker.get_item_metadata(producer_picker.selected):
-				var info: Dictionary = _production_info(Construction.Catalog.find(building["def_id"]))
-				producer_detail.text = "所选建筑：%d人；已累计%.2f%s，日结入库" % [building["workers"], int(building[info["credit"]]) / float(State.DAY_TICKS), info["unit"]]
+		var info: Dictionary = _production_info(Construction.Catalog.find(id))
+		production_rows[id].visible = int(summaries[id][1]) > 0
+		_set_numbers({
+			id + "_jobs": "%d / %d" % [summaries[id][0], summaries[id][1]],
+			id + "_rate": "%d %s" % [int(summaries[id][0]) * int(info["rate"]), info["unit"]],
+		})
+	var selected: Dictionary = Inspector.find(world, str(producer_picker.get_selected_metadata()))
+	producer_detail.visible = selected.is_empty()
+	producer_numbers.visible = not selected.is_empty()
+	if not selected.is_empty():
+		var info: Dictionary = _production_info(Construction.Catalog.find(selected["def_id"]))
+		_set_numbers({
+			"producer_workers": selected["workers"],
+			"producer_credit": "%.2f %s" % [int(selected[info["credit"]]) / float(State.DAY_TICKS), info["unit"]],
+		})
 
 
 # 生产操作模块：岗位命令经过世界人口校验，不允许给工地或不存在的建筑分配。
@@ -863,38 +931,241 @@ func _change_producers(delta: int) -> void:
 	_refresh()
 
 
-# 展开模块：明细显示是界面偏好，不写入战略存档或影响游戏时钟。
-func _toggle_food_details() -> void:
-	food_details_visible = not food_details_visible
-	_refresh_storage()
+# 分组标题：用相同字号和低饱和色区隔不同用途的指标。
+func _section_title(parent: Container, title_text: String) -> void:
+	var heading := Label.new()
+	heading.text = title_text
+	heading.add_theme_font_size_override("font_size", 13)
+	heading.add_theme_color_override("font_color", Color("#bac4ae"))
+	parent.add_child(heading)
 
 
-# 粮仓面板模块：容量来自已完工建筑，最近日结账单与当前库存分别展示。
+# 数值单元：每项由独立的图标、含义与数值组成，可用于常驻栏或详情面板。
+func _number_grid(parent: Container, title_text: String, entries: Array, columns: int) -> VBoxContainer:
+	var group := VBoxContainer.new()
+	group.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	parent.add_child(group)
+	if not title_text.is_empty():
+		_section_title(group, title_text)
+	var grid := GridContainer.new()
+	grid.columns = columns
+	grid.add_theme_constant_override("h_separation", 5)
+	grid.add_theme_constant_override("v_separation", 5)
+	group.add_child(grid)
+	for entry: Array in entries:
+		var card := PanelContainer.new()
+		card.tooltip_text = entry[1]
+		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		card.add_theme_stylebox_override("panel", HudTheme.surface("#1c2520", "#364237", 5))
+		grid.add_child(card)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 7)
+		card.add_child(row)
+		var icon := TextureRect.new()
+		icon.texture = HudIcons.texture(entry[2])
+		icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		icon.custom_minimum_size = Vector2(20, 20)
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(icon)
+		var text_column := VBoxContainer.new()
+		text_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		text_column.add_theme_constant_override("separation", 0)
+		row.add_child(text_column)
+		var caption := Label.new()
+		caption.text = entry[1]
+		caption.add_theme_font_size_override("font_size", 12)
+		caption.add_theme_color_override("font_color", Color("#b9c3b0"))
+		text_column.add_child(caption)
+		var value := Label.new()
+		value.add_theme_font_size_override("font_size", 16)
+		value.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		text_column.add_child(value)
+		numbers[entry[0]] = value
+	return group
+
+
+# 数值更新：与游戏状态同源，仅在展示值变化时改动控件。
+func _set_numbers(values: Dictionary) -> void:
+	for key: String in values:
+		var label: Label = numbers[key]
+		var value: String = str(values[key])
+		if label.text != value:
+			label.text = value
+			var card: PanelContainer = label.get_parent().get_parent().get_parent()
+			var caption: Label = label.get_parent().get_child(0)
+			card.tooltip_text = "%s · %s" % [caption.text, value]
+			var signed: bool = value.begins_with("+") or value.begins_with("-") or value.begins_with("−")
+			if signed:
+				var tint: Color = Color("#abd198") if value.begins_with("+") else Color("#e7aa8f")
+				label.add_theme_color_override("font_color", tint if value.substr(1) != "0" else Color("#e8dfc9"))
+
+
+# 账本分类：一次只显示一种收支，减少同时出现的指标数量。
+func _build_ledger() -> void:
+	var picker := OptionButton.new()
+	panel.add_child(picker)
+	var categories: Array = [
+		["口粮", "food", [
+			["food_day", "结算日", "clock"],
+			["grain_in", "粮食入库", "food"],
+			["grain_used", "居民口粮", "people"],
+			["grain_open", "期初储粮", "food"],
+			["grain_close", "口粮后余额", "food"],
+			["grain_net", "基础口粮净变化", "food"],
+			["grain_short", "居民缺粮", "warn"],
+			["grain_produced", "粮食总产出", "food"],
+			["grain_over", "库存溢出", "warn"],
+			["grain_need", "居民需粮", "people"],
+			["grain_cap", "结算时容量", "house"],
+			["farm_out", "农场", "food"],
+			["ranch_out", "牧场", "ranch"],
+			["fish_out", "渔场", "fish"],
+			["grain_military", "扣除军粮", "shield"],
+			["grain_total", "军需后余粮", "food"],
+			["grain_day_net", "全日净变化", "food"],
+		]],
+		["政务", "gold", [
+			["civic_day", "结算日", "clock"],
+			["tax_stored", "税收入库", "gold"],
+			["tax_over", "税收溢出", "warn"],
+			["tax_policy", "当日税率", "book"],
+			["satisfaction_change", "满意度变化", "happy"],
+			["tax_delta", "税率影响", "happy"],
+			["tax_recovery", "供粮恢复", "food"],
+			["tax_penalty", "缺粮影响", "warn"],
+			["fort_gold", "旧堡金币入库", "gold"],
+			["fort_income", "旧堡应缴", "gold"],
+			["fort_over", "旧堡金币溢出", "warn"],
+		]],
+		["军需", "shield", [
+			["army_day", "结算日", "clock"],
+			["ration_paid", "军粮实付 / 应付", "food"],
+			["pay_paid", "军饷实付 / 应付", "gold"],
+			["ration_short", "缺军粮", "warn"],
+			["pay_short", "缺军饷", "warn"],
+			["morale_change", "士气变化", "happy"],
+			["morale_delta", "士气增减", "happy"],
+		]],
+		["材料", "wood", [
+			["material_day", "结算日", "clock"],
+			["wood_in", "木材入库", "wood"],
+			["stone_in", "石材入库", "stone"],
+			["wood_over", "木材溢出", "warn"],
+			["stone_over", "石材溢出", "warn"],
+			["local_wood", "伐木场产量", "wood"],
+			["woods_wood", "北部林地产量", "wood"],
+		]],
+	]
+	for category: Array in categories:
+		picker.add_icon_item(HudIcons.texture(category[1]), category[0])
+		var section := _data_section(panel, ledger_sections)
+		ledger_data.append(_number_grid(section, "", category[2], 3))
+		var message := Label.new()
+		message.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		section.add_child(message)
+		ledger_message.append(message)
+	picker.item_selected.connect(_show_data_section.bind(ledger_sections))
+	_show_data_section(0, ledger_sections)
+
+
+# 分类内容：为选项建立独立容器，布局和滚动跟随当前类别。
+func _data_section(parent: VBoxContainer, sections: Array[Control]) -> VBoxContainer:
+	var section := VBoxContainer.new()
+	parent.add_child(section)
+	sections.append(section)
+	return section
+
+
+# 类别切换：只切换当前分组，并回到该分组开头。
+func _show_data_section(index: int, sections: Array[Control]) -> void:
+	for i: int in range(sections.size()):
+		sections[i].visible = i == index
+	sections[index].get_parent().get_parent().scroll_vertical = 0
+
+
+# 账本有无状态：旧存档可显示原文摘要，新档等待首次日结。
+func _ledger_available(index: int, available: bool, message: String = "尚未生成日结记录") -> bool:
+	ledger_data[index].visible = available
+	ledger_message[index].visible = not available
+	if not available:
+		ledger_message[index].text = message
+	return available
+
+
+# 库存提示：只有达到警戒容量时才占用一行。
 func _refresh_storage() -> void:
 	var capacity: int = world.food_capacity()
 	var stock: int = int(world.resources["food"])
-	storage_label.text = "储粮 %d / %d" % [stock, capacity]
-	if stock > capacity:
-		storage_label.text += "；旧存粮超容量，新粮暂不入库"
-	elif stock >= capacity - 15:
-		storage_label.text += "；储粮接近上限，请建粮仓"
-	var material_bill: Dictionary = world.last_material_ledger
-	material_bill_label.text = "暂无材料日结；伐木场与采石场完工后分配工人" if material_bill.is_empty() else "第%d日材料：木材入库+%d，石材入库+%d；溢出木%d、石%d" % [material_bill["day"], material_bill["wood"]["stored"], material_bill["stone"]["stored"], material_bill["wood"]["overflow"], material_bill["stone"]["overflow"]]
-	if material_bill.has("woods_wood"):
-		var woods_wood: int = material_bill["woods_wood"]
-		var local_wood: int = int(material_bill["wood"]["produced"]) - woods_wood
-		material_bill_label.text += "\n木材产量：伐木场 %d，北部林地 %d" % [local_wood, woods_wood]
-	food_detail_button.text = "收起粮食收支" if food_details_visible else "展开粮食收支"
-	food_detail_label.visible = food_details_visible
-	var ledger: Dictionary = world.last_food_ledger
-	if ledger.is_empty():
-		food_detail_label.text = "暂无新版日结明细；完成下一日后生成"
-		return
-	var sources: Dictionary = ledger["by_source"]
-	food_detail_label.text = "第%d日基础口粮收支\n期初%d，结算时容量%d\n农场+%d / 牧场+%d / 渔场+%d\n产出%d = 入库%d + 溢出%d\n居民需%d，实耗%d，缺粮%d\n基础口粮后余额%d，净变化%+d" % [ledger["day"], ledger["opening"], ledger["capacity"], sources["b_farm"], sources["b_ranch"], sources["b_fishery"], ledger["produced"], ledger["stored"], ledger["overflow"], ledger["needed"], ledger["consumed"], ledger["shortage"], ledger["closing"], ledger["net"]]
-	var military_bill: Dictionary = world.last_army_ledger
-	if not military_bill.is_empty() and military_bill["day"] == ledger["day"] and int(military_bill["food_needed"]) > 0:
-		food_detail_label.text += "\n再付军粮%d，军需后余粮%d；全日净变%+d" % [military_bill["food_used"], military_bill["food_after"], int(military_bill["food_after"]) - int(ledger["opening"])]
+	_set_numbers({"food_store": "%d / %d" % [stock, capacity]})
+	stock_warning.visible = stock >= capacity - 15
+	stock_warning.text = "存粮超过容量，新粮暂停入库" if stock > capacity else "储粮接近上限"
+
+
+# 日结同步：四类数据各取已完成的账本，不从当前库存反推历史。
+func _refresh_ledger() -> void:
+	var bill: Dictionary = world.last_food_ledger
+	if _ledger_available(0, not bill.is_empty(), world.last_bill):
+		var army: Dictionary = world.last_army_ledger
+		if army.get("day") != bill["day"]:
+			army = {}
+		_set_numbers({
+			"food_day": "第%d日" % bill["day"],
+			"grain_in": "+%d" % bill["stored"],
+			"grain_used": "−%d" % bill["consumed"],
+			"grain_open": bill["opening"],
+			"grain_close": bill["closing"],
+			"grain_net": "%+d" % bill["net"],
+			"grain_short": bill["shortage"],
+			"grain_produced": bill["produced"],
+			"grain_over": bill["overflow"],
+			"grain_need": bill["needed"],
+			"grain_cap": bill["capacity"],
+			"farm_out": bill["by_source"]["b_farm"],
+			"ranch_out": bill["by_source"]["b_ranch"],
+			"fish_out": bill["by_source"]["b_fishery"],
+			"grain_military": ("−%d" % army["food_used"]) if army.has("food_used") else "—",
+			"grain_total": army.get("food_after", "—"),
+			"grain_day_net": "%+d" % (int(army["food_after"]) - int(bill["opening"])) if army.has("food_after") else "—",
+		})
+	bill = world.last_civic_ledger
+	if _ledger_available(1, not bill.is_empty()):
+		_set_numbers({
+			"civic_day": "第%d日" % bill["day"],
+			"tax_stored": "+%d" % bill["tax_stored"],
+			"tax_over": bill["tax_overflow"],
+			"tax_policy": Civic.policy_name(bill["policy"]),
+			"satisfaction_change": "%d → %d" % [bill["before"], bill["after"]],
+			"tax_delta": "%+d" % bill["policy_delta"],
+			"tax_recovery": "%+d" % bill["recovery"],
+			"tax_penalty": "−%d" % bill["food_penalty"],
+			"fort_gold": "+%d" % int(bill.get("fort_gold", {}).get("stored", 0)),
+			"fort_income": bill.get("fort_gold", {}).get("income", 0),
+			"fort_over": bill.get("fort_gold", {}).get("overflow", 0),
+		})
+	bill = world.last_army_ledger
+	if _ledger_available(2, not bill.is_empty()):
+		_set_numbers({
+			"army_day": "第%d日" % bill["day"],
+			"ration_paid": "%d / %d" % [bill["food_used"], bill["food_needed"]],
+			"pay_paid": "%d / %d" % [bill["wage_paid"], bill["wage_needed"]],
+			"ration_short": bill["food_shortage"],
+			"pay_short": bill["wage_shortage"],
+			"morale_change": "%d → %d" % [world.last_morale_before, world.army_morale] if world.last_morale_before != null else "—",
+			"morale_delta": "%+d" % (world.army_morale - int(world.last_morale_before)) if world.last_morale_before != null else "—",
+		})
+	bill = world.last_material_ledger
+	if _ledger_available(3, not bill.is_empty()):
+		_set_numbers({
+			"material_day": "第%d日" % bill["day"],
+			"wood_in": "+%d" % bill["wood"]["stored"],
+			"stone_in": "+%d" % bill["stone"]["stored"],
+			"wood_over": bill["wood"]["overflow"],
+			"stone_over": bill["stone"]["overflow"],
+			"local_wood": int(bill["wood"]["produced"]) - int(bill.get("woods_wood", 0)),
+			"woods_wood": bill.get("woods_wood", 0),
+		})
 
 
 # 生产显示模块：根据静态配置选择产物单位与信用字段，不执行库存计算。
@@ -914,6 +1185,13 @@ func _build_inspection_card() -> void:
 	inspection_label = Label.new()
 	inspection_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	contents.add_child(inspection_label)
+	_number_grid(contents, "", [
+		["building_level", "等级", "house"], ["building_size", "占地", "house"],
+		["building_progress", "施工进度", "work"], ["building_queue", "施工顺序", "clock"],
+		["building_builders", "施工工人", "people"], ["building_jobs", "在岗 / 岗位", "people"],
+		["building_rate", "全天折算", "work"], ["building_credit", "待入库", "book"],
+		["building_housing", "提供住房", "house"], ["building_capacity", "储粮容量", "food"],
+	], 2)
 	var actions: HBoxContainer = HBoxContainer.new()
 	contents.add_child(actions)
 	inspection_decrease = _button(actions, "本建筑工人 -1", _change_inspected_workers.bind(-1))
@@ -921,13 +1199,21 @@ func _build_inspection_card() -> void:
 	var military_actions: HBoxContainer = HBoxContainer.new()
 	contents.add_child(military_actions)
 	army_recruit_button = _button(military_actions, "招募%d名步兵" % Army.UNIT.batch_size, _recruit_infantry)
-	army_detail_label = Label.new()
-	army_detail_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	contents.add_child(army_detail_label)
+	barracks_stats = _number_grid(contents, "招募", [
+		["barracks_people", "在营 / 编额", "shield"], ["batch_size", "每批人数", "people"],
+		["batch_gold", "招募金币", "gold"], ["batch_wood", "招募木材", "wood"],
+		["batch_time", "训练用时", "clock"],
+	], 2)
+	barracks_notice = Label.new()
+	barracks_notice.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	contents.add_child(barracks_notice)
 	var lifecycle: VBoxContainer = VBoxContainer.new()
 	contents.add_child(lifecycle)
 	army_troop_picker = OptionButton.new()
 	lifecycle.add_child(army_troop_picker)
+	_number_grid(lifecycle, "", [
+		["batch_people", "批次人数", "people"], ["batch_progress", "训练进度", "work"],
+	], 2)
 	army_troop_picker.item_selected.connect(func(_index: int) -> void: _refresh_army_lifecycle(true))
 	army_disband_button = Button.new()
 	army_disband_button.focus_mode = Control.FOCUS_NONE
@@ -994,6 +1280,12 @@ func _refresh_inspection() -> void:
 		return
 	var detail: Dictionary = Inspector.describe(world, inspected_building_id)
 	inspection_label.text = detail["text"]
+	for key: String in ["level", "size", "progress", "queue", "builders", "jobs", "rate", "credit", "housing", "capacity"]:
+		var metric: String = "building_" + key
+		var label: Label = numbers[metric]
+		label.get_parent().get_parent().get_parent().visible = detail["numbers"].has(key)
+		if detail["numbers"].has(key):
+			_set_numbers({metric: detail["numbers"][key]})
 	inspection_increase.disabled = not detail["increase"]
 	inspection_decrease.disabled = not detail["decrease"]
 	inspection_increase.get_parent().visible = bool(detail.get("producer", false))
@@ -1002,18 +1294,19 @@ func _refresh_inspection() -> void:
 	inspection_remove.text = "取消施工" if record.get("state") == "constructing" else "拆除建筑"
 	var military: bool = record.get("def_id") == "b_barracks"
 	army_recruit_button.get_parent().visible = military
-	army_detail_label.visible = military
+	barracks_stats.visible = military
+	barracks_notice.hide()
 	if military:
 		var offer: Dictionary = Army.quote(world, inspected_building_id)
 		army_recruit_button.disabled = not offer["ok"]
 		var used: Dictionary = Army.stationed(world.troops, inspected_building_id)
-		var lines: PackedStringArray = ["编额%d/%d；每批%d人\n招募：金币%d、木材%d\n训练：%d战略秒" % [used["count"], Army.UNIT.barracks_capacity, Army.UNIT.batch_size, Army.UNIT.recruit_cost.get("gold", 0), Army.UNIT.recruit_cost.get("wood", 0), Army.UNIT.train_work]]
-		if not offer["ok"]:
-			lines.append(offer["reason"])
-		for troop: Dictionary in world.troops:
-			if troop["barracks_id"] == inspected_building_id:
-				lines.append("%s 步兵%d人：%s" % [str(troop["id"]).trim_prefix("troop_"), troop["count"], "现役" if troop["state"] == "ready" else "训练%d%%" % floori(100.0 * troop["work_done"] / troop["work_required"])])
-		army_detail_label.text = "\n".join(lines)
+		_set_numbers({
+			"barracks_people": "%d / %d" % [used["count"], Army.UNIT.barracks_capacity], "batch_size": Army.UNIT.batch_size,
+			"batch_gold": Army.UNIT.recruit_cost.get("gold", 0), "batch_wood": Army.UNIT.recruit_cost.get("wood", 0),
+			"batch_time": "%d 战略秒" % Army.UNIT.train_work,
+		})
+		barracks_notice.visible = not offer["ok"]
+		barracks_notice.text = str(offer.get("reason", ""))
 	_refresh_army_lifecycle(military)
 
 
@@ -1093,17 +1386,9 @@ func _set_tax_policy(policy: String) -> void:
 # 政务显示模块：当前预测和最近一次实际账单分开，说明税率与缺粮分别造成的变化。
 func _refresh_civic() -> void:
 	var forecast: int = Civic.estimate(world.population, world.satisfaction, world.tax_policy)
-	civic_label.text = "满意度%d/100 · 下次日结%s\n按当前满意度预计税收%d" % [world.satisfaction, Civic.policy_name(world.tax_policy), forecast]
+	_set_numbers({"satisfaction": "%d / 100" % world.satisfaction, "forecast": forecast})
 	for policy: String in tax_buttons:
 		tax_buttons[policy].disabled = policy == world.tax_policy
-	var bill: Dictionary = world.last_civic_ledger
-	if bill.is_empty():
-		civic_bill_label.text = "暂无政务日结；低税恢复、高税损耗满意度，缺粮额外扣分"
-		return
-	civic_bill_label.text = "第%d日%s：税收入库%d，溢出%d\n满意度%d→%d；税率%+d、供粮恢复+%d、缺粮-%d" % [bill["day"], Civic.policy_name(bill["policy"]), bill["tax_stored"], bill["tax_overflow"], bill["before"], bill["after"], bill["policy_delta"], bill["recovery"], bill["food_penalty"]]
-	if bill.has("fort_gold"):
-		var fort: Dictionary = bill["fort_gold"]
-		civic_bill_label.text += "\n旧堡金币入库 +%d（应得 %d，溢出 %d）" % [fort["stored"], fort["income"], fort["overflow"]]
 
 
 # 招募入口模块：每次明确操作生成新命令，由军队服务校验费用、兵源和军营编额。
@@ -1116,20 +1401,17 @@ func _recruit_infantry() -> void:
 
 # 军事面板模块：显示现役、训练、当前士气及上次军需结算造成的士气变化。
 func _refresh_army() -> void:
-	if army_label == null:
-		return
 	var ready: int = Army.people(world.troops, false, true)
-	army_label.text = "现役%d人  ·  训练%d人\n占用劳动力 %d 人" % [ready, Army.people(world.troops) - ready, Army.people(world.troops, true)]
-	if not world.troops.is_empty():
-		army_label.text += "\n全军士气 %d/%d" % [world.army_morale, Army.Morale.MAXIMUM]
-	if int(world.retired_army_cost["ration_credit"]) > 0 or int(world.retired_army_cost["wage_credit"]) > 0:
-		army_label.text += "\n退役待结：军粮%.2f，军饷%.2f" % [int(world.retired_army_cost["ration_credit"]) / 120.0, int(world.retired_army_cost["wage_credit"]) / 120.0]
-	var bill: Dictionary = world.last_army_ledger
-	army_bill_label.visible = not world.troops.is_empty() or int(world.retired_army_cost["ration_credit"]) > 0 or int(world.retired_army_cost["wage_credit"]) > 0 or (not bill.is_empty() and (int(bill["food_needed"]) > 0 or int(bill["wage_needed"]) > 0))
-	army_bill_label.text = "暂无军需日结；训练及现役每人每日额外军粮1、军饷1，按实际时间累计" if bill.is_empty() else "第%d日军需：军粮-%d/%d，军饷-%d/%d\n缺军粮%d、缺军饷%d" % [bill["day"], bill["food_used"], bill["food_needed"], bill["wage_paid"], bill["wage_needed"], bill["food_shortage"], bill["wage_shortage"]]
-	if world.last_morale_before != null:
-		var delta: int = world.army_morale - int(world.last_morale_before)
-		army_bill_label.text += "\n士气 %d → %d（%+d）" % [world.last_morale_before, world.army_morale, delta]
+	var training: int = Army.people(world.troops) - ready
+	var ration: int = world.retired_army_cost["ration_credit"]
+	var wages: int = world.retired_army_cost["wage_credit"]
+	retired_cost.visible = ration > 0 or wages > 0
+	_set_numbers({
+		"soldiers": ready, "training": training,
+		"army_morale": "—" if world.troops.is_empty() else "%d / %d" % [world.army_morale, Army.Morale.MAXIMUM],
+		"retired_food": "%.2f" % (ration / float(State.DAY_TICKS)),
+		"retired_pay": "%.2f" % (wages / float(State.DAY_TICKS)),
+	})
 
 
 # 军营批次模块：列表只包含当前军营的活动批次，状态变化时重建并保留稳定选择。
@@ -1146,7 +1428,7 @@ func _refresh_army_lifecycle(military: bool) -> void:
 		army_troop_picker.clear()
 		for troop: Dictionary in world.troops:
 			if troop["barracks_id"] == inspected_building_id:
-				army_troop_picker.add_item("%s · %d人 · %s" % [str(troop["id"]).trim_prefix("troop_"), troop["count"], "训练中" if troop["state"] == "training" else "现役"])
+				army_troop_picker.add_icon_item(HudIcons.texture("shield"), "步兵批次 %s · %s" % [str(troop["id"]).trim_prefix("troop_"), "训练中" if troop["state"] == "training" else "现役"])
 				var index: int = army_troop_picker.item_count - 1
 				army_troop_picker.set_item_metadata(index, troop["id"])
 				if troop["id"] == selected:
@@ -1155,7 +1437,12 @@ func _refresh_army_lifecycle(military: bool) -> void:
 	army_troop_picker.get_parent().visible = army_troop_picker.item_count > 0
 	if army_troop_picker.selected >= 0:
 		var troop: Dictionary = ArmyDisband.find(world, str(army_troop_picker.get_item_metadata(army_troop_picker.selected)))
-		army_disband_button.text = "取消这批训练" if troop.get("state") == "training" else "解散这批部队"
+		var training: bool = troop.get("state") == "training"
+		_set_numbers({
+			"batch_people": troop["count"],
+			"batch_progress": "%d%%" % floori(100.0 * troop["work_done"] / troop["work_required"]) if training else "已完成",
+		})
+		army_disband_button.text = "取消这批训练" if training else "解散这批部队"
 
 
 # 退役预览模块：固定所选批次并冻结时间，确认前不退款、不释放人口、不改变军需。
@@ -1204,6 +1491,7 @@ func _cancel_army_disband() -> void:
 # 编制面板模块：默认折叠，人数设置为绝对编内人数，避免连续点击重复添加。
 func _build_legion_panel() -> void:
 	legion_toggle = _button(_row(), "军团管理", _toggle_legions)
+	legion_toggle.icon = HudIcons.texture("shield")
 	legion_body = VBoxContainer.new()
 	panel.add_child(legion_body)
 	legion_body.visible = false
@@ -1217,12 +1505,17 @@ func _build_legion_panel() -> void:
 	legion_detail = Label.new()
 	legion_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	legion_body.add_child(legion_detail)
+	legion_stats = _number_grid(legion_body, "所选军团", [
+		["legion_size", "兵力 / 上限", "shield"], ["legion_batches", "来源批次", "people"],
+		["legion_ration", "每日军粮", "food"], ["legion_wage", "每日军饷", "gold"],
+	], 2)
+	legion_stats.tooltip_text = "每日军粮与军饷已计入全军维护"
 	legion_troop_picker = OptionButton.new()
 	legion_body.add_child(legion_troop_picker)
 	legion_troop_picker.item_selected.connect(func(_index: int) -> void: _update_legion_amount())
-	legion_available = Label.new()
-	legion_available.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	legion_body.add_child(legion_available)
+	legion_allocation = _number_grid(legion_body, "批次分配", [
+		["legion_current", "本团人数", "people"], ["legion_maximum", "可设上限", "shield"],
+	], 2)
 	legion_people = SpinBox.new()
 	legion_people.min_value = 0
 	legion_people.step = 1
@@ -1264,7 +1557,7 @@ func _refresh_legions() -> void:
 		legion_updating = true
 		legion_picker.clear()
 		for legion: Dictionary in active:
-			legion_picker.add_item("%s · %d/%d人" % [legion["name"], Legions.people(legion), Legions.SETTINGS.people_capacity])
+			legion_picker.add_icon_item(HudIcons.texture("shield"), legion["name"])
 			var index: int = legion_picker.item_count - 1
 			legion_picker.set_item_metadata(index, legion["id"])
 			if legion["id"] == selected_legion_id:
@@ -1277,9 +1570,7 @@ func _refresh_legions() -> void:
 		legion_troop_picker.clear()
 		for troop: Dictionary in world.troops:
 			if troop["state"] == "ready":
-				var own: int = Legions.assigned(world, troop["id"], selected_legion_id) if not selected_legion_id.is_empty() else 0
-				var free: int = int(troop["count"]) - Legions.assigned(world, troop["id"])
-				legion_troop_picker.add_item("%s · 本团%d · 未编入%d" % [str(troop["id"]).trim_prefix("troop_"), own, free])
+				legion_troop_picker.add_icon_item(HudIcons.texture("shield"), "步兵批次 " + str(troop["id"]).trim_prefix("troop_"))
 				var index: int = legion_troop_picker.item_count - 1
 				legion_troop_picker.set_item_metadata(index, troop["id"])
 				if troop["id"] == source_id:
@@ -1292,11 +1583,16 @@ func _refresh_legions() -> void:
 		_update_legion_amount()
 	var selected: Dictionary = Legions.find(world, selected_legion_id)
 	legion_close.disabled = selected.is_empty()
-	if selected.is_empty():
-		legion_detail.text = "军团是免费编制；先新建，再按人数分配现役部队"
-	else:
+	legion_stats.visible = not selected.is_empty()
+	legion_detail.visible = selected.is_empty()
+	legion_detail.text = "新建军团后可编入现役士兵。"
+	if not selected.is_empty():
 		var count: int = Legions.people(selected)
-		legion_detail.text = "%s：步兵%d人，%d个来源批次\n编内每日额外军粮%d、军饷%d（已包含在全军维护）\n撤销编制后士兵仍现役；移出不会返回空闲劳动力" % [selected["name"], count, selected["members"].size(), count * int(Army.UNIT.food_per_day), count * int(Army.UNIT.wage_per_day)]
+		_set_numbers({
+			"legion_size": "%d / %d" % [count, Legions.SETTINGS.people_capacity],
+			"legion_batches": selected["members"].size(),
+			"legion_ration": count * int(Army.UNIT.food_per_day), "legion_wage": count * int(Army.UNIT.wage_per_day),
+		})
 	_update_legion_buttons()
 
 
@@ -1322,7 +1618,8 @@ func _update_legion_amount() -> void:
 	legion_people.max_value = maximum
 	legion_people.value = current
 	legion_people.editable = not legion.is_empty() and not source.is_empty()
-	legion_available.text = "设置该批次在本军团的人数：当前%d，可设0至%d（0为移出）" % [current, maximum]
+	legion_allocation.visible = legion_people.editable
+	_set_numbers({"legion_current": current, "legion_maximum": maximum})
 	legion_updating = false
 	_update_legion_buttons()
 

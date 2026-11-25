@@ -20,7 +20,7 @@ static func run(main: Control, mode: String) -> int:
 		main.clock.advance(15)
 		main.world.paused = true
 		main._refresh()
-		if not main.inspection_label.text.contains("待入库1.00") or not main.store.save_world(main.world):
+		if not (main.numbers["building_credit"].text == "1.00 木材") or not main.store.save_world(main.world):
 			return 1
 	else:
 		main._load()
@@ -31,14 +31,14 @@ static func run(main: Control, mode: String) -> int:
 		click.pressed = true
 		click.position = main.town_map.world_to_screen(Grid.cell_to_world(Vector2i(2, 11)))
 		main.town_map._gui_input(click)
-		if main.inspected_building_id != "building_000002" or not main.inspection_label.text.contains("待入库1.00") or not main.inspection_label.text.contains("岗位1/3"):
+		if main.inspected_building_id != "building_000002" or not (main.numbers["building_credit"].text == "1.00 木材") or not (main.numbers["building_jobs"].text == "1 / 3"):
 			return 1
 		main._change_inspected_workers(1)
 		main.world.paused = false
 		main.clock.advance(105)
 		main.world.paused = true
 		main._refresh()
-		if main.world.resources["wood"] != 135 or not main.inspection_label.text.contains("岗位2/3"):
+		if main.world.resources["wood"] != 135 or not (main.numbers["building_jobs"].text == "2 / 3"):
 			return 1
 	print("EXPORT_INSPECT_PASS: ", mode)
 	return 0

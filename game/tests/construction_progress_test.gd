@@ -86,7 +86,7 @@ func _run() -> void:
 	main.clock.advance(10)
 	main.world.paused = true
 	main._refresh()
-	_check(main.construction_label.text.contains("25%"), "界面未显示25%施工")
+	_check(main.numbers["active_build_progress"].text == "25%", "界面未显示25%施工")
 	main._save()
 	main.world.paused = false
 	main.clock.advance(30)

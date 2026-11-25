@@ -190,22 +190,21 @@ func _run() -> void:
 	_check(not main.army_recruit_button.disabled, "完工军营招募按钮未启用")
 	main.army_recruit_button.pressed.emit()
 	_check(main.town_map.yard_counts_by_barracks.get("building_000002") == Vector2i(0, 5), "练兵场未同步招募人数")
-	_check(main.army_label.text.contains("训练5人") and main.labor_label.text.contains("空闲17") and main.army_recruit_button.disabled, "招募界面未刷新人数与岗位")
+	_check(main.numbers["training"].text == "5" and main.numbers["idle"].text == "17" and main.army_recruit_button.disabled, "招募界面未刷新人数与岗位")
 	main.world.paused = false
 	main.clock.advance(30)
 	main.world.paused = true
 	main._refresh()
-	_check(main.army_detail_label.text.contains("训练50%"), "界面未显示50%训练进度")
+	_check((main.numbers["batch_progress"].text == "50%"), "界面未显示50%训练进度")
 	main._save()
 	main._load()
 	main._inspect_building("building_000002", false)
-	_check(main.army_detail_label.text.contains("训练50%") and main.world.idle_workers() == 17, "读档未恢复军事详情")
+	_check((main.numbers["batch_progress"].text == "50%") and main.world.idle_workers() == 17, "读档未恢复军事详情")
 	main.world.paused = false
 	main.clock.advance(10)
 	main.world.paused = true
 	main._refresh()
-	main._toggle_food_details()
-	_check(main.food_detail_label.text.contains("军需后余粮164") and main.bill_label.text.contains("军粮-1"), "口粮与军粮余额说明不一致")
+	_check(main.numbers["grain_total"].text == "164" and main.numbers["grain_military"].text == "−1", "口粮与军粮余额说明不一致")
 	main.world.paused = false
 	main.clock.advance(20)
 	main.world.paused = true

@@ -143,7 +143,7 @@ func _run() -> void:
 	_check(main.world.troops.size() == 1 and main.status_label.text.contains("状态已变化"), "过期退役预览仍执行")
 	main._request_army_disband()
 	main._confirm_army_disband()
-	_check(main.world.troops.is_empty() and main.world.idle_workers() == 22 and main.world.resources["gold"] == 266 and main.army_troop_picker.item_count == 0 and main.army_label.text.contains("退役待结"), "取消训练没有刷新批次、兵源和待结开销")
+	_check(main.world.troops.is_empty() and main.world.idle_workers() == 22 and main.world.resources["gold"] == 266 and main.army_troop_picker.item_count == 0 and main.retired_cost.visible, "取消训练没有刷新批次、兵源和待结开销")
 	main.world.paused = true
 	main._save()
 	main._load()
@@ -153,7 +153,7 @@ func _run() -> void:
 	main.clock.advance(90)
 	main.world.paused = true
 	main._refresh()
-	_check(main.army_bill_label.visible and main.world.last_army_ledger["food_needed"] == 1 and main.world.retired_army_cost["ration_credit"] == 30, "全部退役后军需账单被隐藏或费用丢失")
+	_check(main.ledger_data[2].visible and main.world.last_army_ledger["food_needed"] == 1 and main.world.retired_army_cost["ration_credit"] == 30, "全部退役后军需账单被隐藏或费用丢失")
 	main.free()
 	DirAccess.remove_absolute(path + "-ui.db")
 	if not failed:

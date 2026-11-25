@@ -153,7 +153,7 @@ func _run() -> void:
 	main._refresh()
 	main.producer_picker.select(1)
 	main._change_producers(1)
-	_check(main.production_label.text.contains("采石场：1/3人") and main.producer_detail.text.contains("石材"), "界面材料岗位或单位错误")
+	_check(main.numbers["b_quarry_jobs"].text == "1 / 3" and main.numbers["producer_credit"].text.ends_with("石材"), "界面材料岗位或单位错误")
 	main._save()
 	main._change_producers(1)
 	main._load()

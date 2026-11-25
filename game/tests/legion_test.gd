@@ -170,7 +170,7 @@ func _run() -> void:
 	main._create_legion()
 	main.legion_people.value = 3
 	main.legion_apply.pressed.emit()
-	_check(Legions.assigned(main.world, "troop_000001") == 5 and main.world.idle_workers() == 12 and main.legion_detail.text.contains("步兵3人"), "界面没有按人数编制或重复占用兵员")
+	_check(Legions.assigned(main.world, "troop_000001") == 5 and main.world.idle_workers() == 12 and main.numbers["legion_size"].text.begins_with("3 / "), "界面没有按人数编制或重复占用兵员")
 	main._on_legion_selected(0)
 	_check(main.legion_people.value == 2 and main.legion_people.max_value == 2, "切换军团没有同步人数配额")
 	main.legion_people.value = 1

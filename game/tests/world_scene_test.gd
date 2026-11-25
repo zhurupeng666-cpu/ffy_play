@@ -31,7 +31,7 @@ func _run() -> void:
 	click.pressed = true
 	click.position = main.town_map.world_to_screen(Vector2(0, 256))
 	main.town_map._gui_input(click)
-	var map_safe: bool = before_map == main.world.snapshot() and main.map_info.text.contains("(8,8)")
+	var map_safe: bool = before_map == main.world.snapshot() and main.map_info.tooltip_text.contains("(8,8)")
 	# 区域验收：切换会清理未确认施工，关闭视图或尝试进入锁定区域不会写世界。
 	var city_zoom: float = main.town_map.zoom_level
 	main._start_preview(load("res://data/buildings/house.tres"))
@@ -62,7 +62,7 @@ func _run() -> void:
 	chooser = chooser and main.save_items.get_item_text(1).contains("保存于 %s" % first_save["saved_local"])
 	main._activate_save(1)
 	stamp_safe = stamp_safe and main.save_stamp.text == "当前读档 · 保存于 %s" % first_save["saved_local"]
-	var passed: bool = hud_safe and stamp_safe and chooser and region_safe and map_safe and main.world.current_day() == 2 and main.world.resources["food"] == 165 and main.world.resources["gold"] == 320 and main.world.paused and main.resource_label.text.contains("320")
+	var passed: bool = hud_safe and stamp_safe and chooser and region_safe and map_safe and main.world.current_day() == 2 and main.world.resources["food"] == 165 and main.world.resources["gold"] == 320 and main.world.paused and main.numbers["gold"].text == "320"
 	passed = _check_scout(main) and passed
 	main.free()
 	DirAccess.remove_absolute(path)
@@ -77,6 +77,15 @@ func _run() -> void:
 func _check_hud(main: Control) -> bool:
 	if main.management_drawer.visible or not main.build_toolbar.visible or main.save_stamp.text != "暂无存档":
 		return false
+	for key: String in ["population", "food", "gold", "wood", "stone", "date"]:
+		var value: Label = main.numbers[key]
+		var icon: TextureRect = value.get_parent().get_parent().get_child(0)
+		if icon.texture == null or value.text.is_empty():
+			return false
+	main._show_data_section(2, main.ledger_sections)
+	if not main.ledger_sections[2].visible or main.ledger_sections[0].visible:
+		return false
+	main._show_data_section(0, main.ledger_sections)
 	main._open_management(2, true)
 	if not main.management_drawer.visible or main.management_tabs.get_tab_title(main.management_tabs.current_tab) != "军团":
 		return false
@@ -274,7 +283,7 @@ func _check_battle(main: Control, legion_id: String, troop_id: String) -> bool:
 	var bill: Dictionary = main.world.last_material_ledger
 	if main.world.resources["wood"] != wood_before + 5 or bill.get("woods_wood") != 5:
 		return false
-	if not main.material_bill_label.text.contains("北部林地 5") or not main.world.legion_trips.is_empty():
+	if not main.numbers["woods_wood"].text == "5" or not main.world.legion_trips.is_empty():
 		return false
 	main._save()
 	main._load()
@@ -403,7 +412,7 @@ func _check_fort_gold(main: Control) -> bool:
 	main._refresh()
 	var bill: Dictionary = main.world.last_civic_ledger
 	var source: Dictionary = bill.get("fort_gold", {})
-	if source != {"income": 5, "stored": 5, "overflow": 0} or not main.civic_bill_label.text.contains("旧堡金币入库 +5"):
+	if source != {"income": 5, "stored": 5, "overflow": 0} or not main.numbers["fort_gold"].text == "+5":
 		return false
 	var before_wages: int = int(bill["gold_before"]) + int(bill["tax_stored"]) + 5
 	var wages: Dictionary = main.world.last_army_ledger

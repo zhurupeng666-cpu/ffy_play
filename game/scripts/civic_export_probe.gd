@@ -22,7 +22,7 @@ static func run(main: Control, mode: String) -> int:
 		main.clock.advance(120)
 		main.world.paused = true
 		main._refresh()
-		if main.world.resources["gold"] != 346 or main.world.satisfaction != 49 or not main.civic_bill_label.text.contains("税收入库31") or not main.store.save_world(main.world):
+		if main.world.resources["gold"] != 346 or main.world.satisfaction != 49 or not main.numbers["tax_stored"].text == "+31" or not main.store.save_world(main.world):
 			return 1
 		var reopened: RefCounted = main.store.load_world()
 		if reopened == null or reopened.last_civic_ledger != main.world.last_civic_ledger:

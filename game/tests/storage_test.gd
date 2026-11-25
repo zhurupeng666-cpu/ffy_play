@@ -115,12 +115,11 @@ func _run() -> void:
 	main.clock.advance(120)
 	main.world.paused = true
 	main._refresh()
-	main._toggle_food_details()
-	_check(main.storage_label.text.contains("165 / 600") and main.food_detail_label.visible and main.food_detail_label.text.contains("期初180") and main.food_detail_label.text.contains("净变化-15"), "粮仓界面或明细不正确")
+	_check(main.numbers["food_store"].text == "165 / 600" and main.ledger_data[0].visible and main.numbers["grain_open"].text == "180" and main.numbers["grain_net"].text == "-15", "粮仓界面或明细不正确")
 	main._save()
 	main.world.resources["food"] = 1
 	main._load()
-	_check(main.storage_label.text.contains("165 / 600") and main.food_detail_label.text.contains("期初180"), "界面读档未恢复容量或账单")
+	_check(main.numbers["food_store"].text == "165 / 600" and main.numbers["grain_open"].text == "180", "界面读档未恢复容量或账单")
 	main.free()
 	DirAccess.remove_absolute(path + "-ui.db")
 	if not failed:
