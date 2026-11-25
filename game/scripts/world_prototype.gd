@@ -713,7 +713,7 @@ func _save() -> void:
 		status_label.text = "保存失败：" + store.error_message
 		return
 	_refresh_save_stamp()
-	status_label.text = "已保存最新进度 · 游戏第%d日" % world.current_day()
+	status_label.text = "已新增存档 · 游戏第%d日" % world.current_day()
 
 
 # 存档时间文字：直接显示本地时间，旧存档保留未知状态。
@@ -737,13 +737,13 @@ func _refresh_save_stamp(save_id: int = 0, loaded: bool = false) -> void:
 # 读档布局：通过行选择与确认按钮加载指定存档。
 func _build_save_picker() -> void:
 	save_picker = ConfirmationDialog.new()
-	save_picker.title = "管理最新存档 · 本机时间"
+	save_picker.title = "管理存档 · 最多保留七份 · 本机时间"
 	save_picker.exclusive = true
 	save_picker.get_ok_button().text = "读取所选"
 	save_picker.get_cancel_button().text = "返回"
 	add_child(save_picker)
 	save_items = ItemList.new()
-	save_items.custom_minimum_size = Vector2(600, 80)
+	save_items.custom_minimum_size = Vector2(600, 228)
 	save_picker.add_child(save_items)
 	save_picker.confirmed.connect(_load_selected)
 	save_items.item_activated.connect(_activate_save)

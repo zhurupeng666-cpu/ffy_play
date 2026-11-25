@@ -95,12 +95,12 @@ func _run() -> void:
 	bad = loaded.snapshot()
 	bad["applied_commands"]["saved-cmd"]["building_id"] = "building_999999"
 	_check(State.from_snapshot(bad) == null, "接受悬空命令回执")
-	# 单档验收：连续保存只保留最后一次，失败事务保持上次成功内容。
+	# 七档验收：连续保存淘汰最早条目，失败事务保留原列表。
 	for index: int in range(8):
 		loaded.resources["gold"] = 400 + index
 		_check(store.save_world(loaded), "连续保存失败")
 	var rows: Array = store.list_saves()
-	_check(rows.size() == 1 and rows[0]["saved_local"] is String and store.load_world(rows[0]["id"]).resources["gold"] == 407, "单档替换或按ID读取错误")
+	_check(rows.size() == 7 and rows[0]["saved_local"] is String and store.load_world(rows[6]["id"]).resources["gold"] == 401 and store.load_world(rows[0]["id"]).resources["gold"] == 407, "七档轮换或按ID读取错误")
 	var disk_before: Dictionary = store.load_world().snapshot()
 	store.database.query("CREATE TRIGGER fail_snapshot BEFORE DELETE ON world_saves BEGIN SELECT RAISE(ABORT, 'test failure'); END;")
 	loaded.resources["gold"] += 1
@@ -110,9 +110,9 @@ func _run() -> void:
 	var rejected: bool = not store.save_world(loaded)
 	Engine.print_error_messages = previous_error_output
 	_check(rejected and store.load_world().snapshot() == disk_before, "失败保存破坏了已提交快照")
-	_check(store.list_saves() == rows, "失败替换修改了单档列表")
+	_check(store.list_saves() == rows, "失败轮换修改了七档列表")
 	store.close_store()
-	_check_single_slot_migration(path + "-v3.db")
+	_check_seven_slot_migration(path + "-v3.db")
 	DirAccess.remove_absolute(path)
 	# 扩建区验收：远地施工及其建造回执可一同恢复。
 	var expansion: RefCounted = State.new()
@@ -157,8 +157,8 @@ func _check_expanded_yards() -> void:
 	_check(Build.execute(expanded, "b_ranch", Vector2i(82, 152), "new-yard").get("code") == "COMMAND_CONFLICT", "建造回执没有区分规格")
 
 
-# 旧版七档验收：遇坏档先保留旧条目，修复后只留最后写入的ID。
-func _check_single_slot_migration(path: String) -> void:
+# 超额旧库验收：最新档损坏时保留所有条目，修复后仅淘汰最早的一条。
+func _check_seven_slot_migration(path: String) -> void:
 	var database := SQLite.new()
 	database.path = path
 	database.open_db()
@@ -166,21 +166,22 @@ func _check_single_slot_migration(path: String) -> void:
 	database.query("PRAGMA user_version=3;")
 	var newest: RefCounted = State.new()
 	newest.resources["gold"] = 432
-	database.query_with_bindings("INSERT INTO world_saves VALUES(1,190001,1,'旧',?);", [JSON.stringify(State.new().snapshot())])
-	database.query("INSERT INTO world_saves VALUES(2,180001,1,'最新','坏档');")
+	for id: int in range(1, 8):
+		database.query_with_bindings("INSERT INTO world_saves VALUES(?,190001,1,'旧',?);", [id, JSON.stringify(State.new().snapshot())])
+	database.query("INSERT INTO world_saves VALUES(8,180001,1,'最新','坏档');")
 	database.close_db()
 	var store: RefCounted = Store.new()
 	_check(not store.open_store(path), "清理旧档前未保护损坏的最新档")
 	database.open_db()
 	database.query("SELECT COUNT(*) AS total FROM world_saves;")
-	_check(database.query_result[0]["total"] == 2, "迁移失败未保留全部存档")
-	database.query_with_bindings("UPDATE world_saves SET payload=? WHERE id=2;", [JSON.stringify(newest.snapshot())])
+	_check(database.query_result[0]["total"] == 8, "迁移失败未保留全部存档")
+	database.query_with_bindings("UPDATE world_saves SET payload=? WHERE id=8;", [JSON.stringify(newest.snapshot())])
 	database.close_db()
 	if store.open_store(path):
 		var rows: Array = store.list_saves()
-		_check(rows.size() == 1 and rows[0]["id"] == 2 and store.load_world().resources["gold"] == 432, "未按写入顺序保留最新进度")
-		_check(not store.delete_save(1) and store.list_saves().size() == 1, "过期删除指向了唯一新档")
-		_check(store.delete_save(2) and store.list_saves().is_empty(), "手动删除后仍残留存档")
+		_check(rows.size() == 7 and rows[0]["id"] == 8 and rows[6]["id"] == 2 and store.load_world().resources["gold"] == 432, "未按写入顺序保留最新进度")
+		_check(not store.delete_save(1) and store.list_saves().size() == 7, "过期删除指向了唯一新档")
+		_check(store.delete_save(2) and store.list_saves().size() == 6 and store.load_world().resources["gold"] == 432, "删除所选档案影响了其他存档")
 	else:
 		_check(false, "旧版七档库无法迁移")
 	store.close_store()

@@ -59,13 +59,13 @@ func _run() -> void:
 	main._save()
 	main._choose_save()
 	var latest: Dictionary = main.store.list_saves()[0]
-	var chooser: bool = main.save_items.item_count == 1 and main.save_items.get_item_text(0).contains("第2日")
+	var chooser: bool = main.save_items.item_count == 2 and main.save_items.get_item_text(0).contains("第2日") and int(main.save_items.get_item_metadata(1)) == int(first_save["id"])
 	chooser = chooser and main.save_items.get_item_text(0).contains("保存于 %s" % latest["saved_local"])
 	main.world.resources["gold"] = 0
 	main._activate_save(0)
 	stamp_safe = stamp_safe and main.save_stamp.text == "当前读档 · 保存于 %s" % latest["saved_local"]
 	chooser = chooser and main.world.resources["gold"] == 999 and latest["id"] != first_save["id"]
-	var delete_safe: bool = _check_save_deletion(main, int(latest["id"]))
+	var delete_safe: bool = _check_save_deletion(main, int(first_save["id"]), int(latest["id"]))
 	main.world.resources["gold"] = 320
 	main._refresh()
 	var passed: bool = hud_safe and stamp_safe and chooser and delete_safe and region_safe and map_safe and main.world.current_day() == 2 and main.world.resources["food"] == 165 and main.world.resources["gold"] == 320 and main.world.paused and main.numbers["gold"].text == "320"
@@ -80,20 +80,23 @@ func _run() -> void:
 
 
 # 删除验收：首次点击和取消都保留存档，确认后只移除磁盘记录。
-func _check_save_deletion(main: Control, save_id: int) -> bool:
+func _check_save_deletion(main: Control, save_id: int, remaining_id: int) -> bool:
 	main._choose_save()
+	main.save_items.select(1)
 	main.save_delete_button.pressed.emit()
-	if main.pending_save_delete != save_id or main.store.list_saves().size() != 1:
+	if main.pending_save_delete != save_id or main.store.list_saves().size() != 2:
 		return false
 	main.save_delete_dialog.hide()
 	main._cancel_save_delete()
-	if main.pending_save_delete != 0 or main.store.list_saves().size() != 1:
+	if main.pending_save_delete != 0 or main.store.list_saves().size() != 2:
 		return false
 	main._choose_save()
+	main.save_items.select(1)
 	main.save_delete_button.pressed.emit()
 	main.save_delete_dialog.hide()
 	main.save_delete_dialog.confirmed.emit()
-	return main.store.list_saves().is_empty() and main.save_stamp.text == "暂无存档" and main.world.resources["gold"] == 999
+	var rows: Array = main.store.list_saves()
+	return rows.size() == 1 and int(rows[0]["id"]) == remaining_id and main.world.resources["gold"] == 999
 
 
 # 布局验收：分类菜单进入真实建造预览，管理抽屉可按页切换并收起。

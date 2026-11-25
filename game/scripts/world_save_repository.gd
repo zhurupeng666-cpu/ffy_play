@@ -1,8 +1,9 @@
-## 文件用途：在 SQLite 中只保留最新战略存档，提供事务替换、删除与旧库迁移。
+## 文件用途：在 SQLite 中保留最近七份战略存档，提供事务替换、删除与旧库迁移。
 extends RefCounted
 
 const State = preload("res://scripts/world_state.gd")
 const STORE_VERSION: int = 4
+const SAVE_LIMIT: int = 7
 var database: SQLite
 var error_message: String = ""
 
@@ -71,11 +72,11 @@ func _migrate_legacy() -> bool:
 	return _query("DROP TABLE snapshot_backup;") and _query("DROP TABLE world_snapshot;")
 
 
-# 迁移保护：若有多份存档，先确认最新档能恢复，再清理其他条目。
+# 迁移保护：仅当迁入超过上限时，先确认最新档可恢复，再淘汰超量条目。
 func _verify_latest_before_prune() -> bool:
-	if not _query("SELECT id, payload FROM world_saves ORDER BY id DESC LIMIT 2;"):
+	if not _query("SELECT payload FROM world_saves WHERE (SELECT COUNT(*) FROM world_saves) > %d ORDER BY id DESC LIMIT 1;" % SAVE_LIMIT):
 		return false
-	if database.query_result.size() < 2:
+	if database.query_result.is_empty():
 		return true
 	var parser := JSON.new()
 	if parser.parse(database.query_result[0]["payload"]) != OK or State.from_snapshot(parser.data) == null:
@@ -84,7 +85,7 @@ func _verify_latest_before_prune() -> bool:
 	return true
 
 
-# 保存模块：新档与旧档替换在同一事务，失败时仍可读取原进度。
+# 保存模块：新档与超额轮换在同一事务，失败时保留原有进度。
 func save_world(world: RefCounted, title: String = "战略进度") -> bool:
 	error_message = ""
 	if database == null:
@@ -106,7 +107,7 @@ func save_world(world: RefCounted, title: String = "战略进度") -> bool:
 
 # 保留模块：按写入顺序淘汰，系统时间调整或同一秒保存也能稳定排序。
 func _trim() -> bool:
-	return _query("DELETE FROM world_saves WHERE id < (SELECT MAX(id) FROM world_saves);")
+	return _query("DELETE FROM world_saves WHERE id NOT IN (SELECT id FROM world_saves ORDER BY id DESC LIMIT %d);" % SAVE_LIMIT)
 
 
 # 删除模块：只删除确认过的ID，旧确认绝不会删掉后来保存的进度。
