@@ -10,6 +10,7 @@ signal placement_cancelled
 
 const Art = preload("res://scripts/town_art.gd")
 const WorksiteArt = preload("res://scripts/town_worksite_art.gd")
+const CompoundArt = preload("res://scripts/town_compound_art.gd")
 const Terrain = preload("res://scripts/town_terrain.gd")
 const Catalog = preload("res://scripts/building_catalog.gd")
 const Construction = preload("res://scripts/construction_service.gd")
@@ -431,7 +432,7 @@ func _focus_building(id: String) -> void:
 func _apply_zoom(mouse: Vector2, factor: float) -> void:
 	var anchor: Vector2 = screen_to_world(mouse)
 	fitting_overview = false
-	zoom_level = clampf(zoom_level * factor, MIN_ZOOM, 8.0)
+	zoom_level = clampf(zoom_level * factor, minf(MIN_ZOOM, _overview_fit_zoom()), 8.0)
 	pan_offset = mouse - size * 0.5 - (anchor - Grid.center()) * zoom_level
 	_update_hover(mouse)
 	view_changed.emit()
@@ -464,9 +465,16 @@ func _fit_camera() -> void:
 	var area: Vector2i = Grid.SIZE if showing_entire_map else Grid.STARTER_SIZE
 	var span: Vector2 = float(area.x + area.y) * Grid.HALF
 	var available: Vector2 = size - Vector2(32, 36)
-	zoom_level = clampf(minf(available.x / span.x, available.y / span.y), MIN_ZOOM if showing_entire_map else 0.5, 0.75)
+	zoom_level = _overview_fit_zoom() if showing_entire_map else clampf(minf(available.x / span.x, available.y / span.y), 0.5, 0.75)
 	var center: Vector2 = Grid.cell_to_world(area - Vector2i.ONE) * 0.5
 	pan_offset = (Grid.center() - center) * zoom_level
+
+
+# 全图缩放：狭窄地图栏也能缩放回能容纳完整边线的倍率。
+func _overview_fit_zoom() -> float:
+	var span: Vector2 = float(Grid.SIZE.x + Grid.SIZE.y) * Grid.HALF
+	var available: Vector2 = size - Vector2(32, 36)
+	return clampf(minf(available.x / span.x, available.y / span.y), 0.005, 0.75)
 
 
 # 尺寸模块：总览模式适应变化，手动移动或缩放后保留镜头。
@@ -571,7 +579,7 @@ func _same_layout(before: Array, after: Array) -> bool:
 func sync_worksite_staff(records: Array) -> void:
 	var staffed: Dictionary = {}
 	for record: Dictionary in records:
-		if record["state"] == "ready" and record["def_id"] in WorksiteArt.TYPES and int(record["workers"]) > 0:
+		if record["state"] == "ready" and (record["def_id"] in WorksiteArt.TYPES or _has_compound(record)) and int(record["workers"]) > 0:
 			staffed[record["id"]] = int(record["workers"])
 	if staffed != staff_by_site:
 		staff_by_site = staffed
@@ -652,16 +660,24 @@ func _draw_map_objects(visible_objects: Rect2, decorate: bool) -> void:
 				if not dock.is_empty():
 					Art.fishing_dock(self, dock["cell"], dock["outward"], center)
 			var worksite: bool = record["def_id"] in WorksiteArt.TYPES
-			if worksite:
+			var compound: bool = _has_compound(record)
+			if compound:
+				CompoundArt.draw_compound(self, record["def_id"], center)
+			elif worksite:
 				WorksiteArt.draw_site(self, record["def_id"], center)
 			else:
 				Art.building(self, record["def_id"], center, spread)
 			drawing_building = ""
-			if worksite or record["def_id"] in ["b_ranch", "b_barracks"]:
+			if compound or worksite or record["def_id"] in ["b_ranch", "b_barracks"]:
 				animated_objects.append({
 					"center": center, "type": record["def_id"], "id": record["id"], "spread": spread,
-					"worksite": worksite, "bounds": _building_bounds(record), "dock": dock,
+					"worksite": worksite, "compound": compound, "bounds": _building_bounds(record), "dock": dock,
 				})
+
+
+# 场地样式：大型场地拥有专用布局，小型旧建筑继续使用匹配尺寸的模型。
+func _has_compound(record: Dictionary) -> bool:
+	return record["def_id"] in CompoundArt.TYPES and Catalog.footprint(record) == Vector2i(20, 20)
 
 
 # 世界包围盒：涵盖地基、屋顶和伸出岸线的码头，边缘进入视窗即保留整座建筑。
@@ -682,7 +698,9 @@ func _draw_motion() -> void:
 		if not view.intersects(item["bounds"]):
 			continue
 		var center: Vector2 = item["center"]
-		if item["type"] == "b_fishery":
+		if item["compound"]:
+			CompoundArt.draw_activity(self, item["type"], center, scenery_time, staff_by_site.get(item["id"], 0), yard_counts_by_barracks.get(item["id"], Vector2i.ZERO))
+		elif item["type"] == "b_fishery":
 			var workers: int = staff_by_site.get(item["id"], 0)
 			WorksiteArt.draw_fish(self, center, item["dock"], scenery_time)
 			if workers > 0:

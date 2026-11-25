@@ -1,8 +1,8 @@
 ## 文件用途：提供等距格网的坐标投影、反选和边界判断，不依赖画面节点。
 extends RefCounted
 
-# 格网参数模块：200×200城镇，菱形格尺寸为64×32逻辑像素。
-const SIZE: Vector2i = Vector2i(200, 200)
+# 格网参数模块：300×300城镇，菱形格尺寸为64×32逻辑像素。
+const SIZE: Vector2i = Vector2i(300, 300)
 const STARTER_SIZE: Vector2i = Vector2i(16, 16)
 const HALF: Vector2 = Vector2(32.0, 16.0)
 const INVALID: Vector2i = Vector2i(-1, -1)

@@ -7,13 +7,18 @@ const RIVER: Array[Vector3i] = [
 	Vector3i(0, 94, 104), Vector3i(22, 91, 108), Vector3i(44, 96, 116),
 	Vector3i(62, 101, 128), Vector3i(85, 94, 138), Vector3i(116, 88, 140),
 	Vector3i(139, 93, 127), Vector3i(159, 103, 118), Vector3i(180, 108, 124),
-	Vector3i(199, 101, 115),
+	Vector3i(199, 101, 115), Vector3i(221, 104, 128), Vector3i(248, 97, 151),
+	Vector3i(272, 109, 143), Vector3i(299, 124, 141),
 ]
 const DISTRICTS: Array[Dictionary] = [
 	{"kind": "forest", "bounds": Rect2i(49, 34, 36, 30), "title": "北岭林场"},
 	{"kind": "stone", "bounds": Rect2i(104, 24, 36, 30), "title": "灰脊石矿"},
 	{"kind": "forest", "bounds": Rect2i(42, 148, 36, 30), "title": "南岸密林"},
 	{"kind": "stone", "bounds": Rect2i(124, 153, 36, 30), "title": "南岭石矿"},
+	{"kind": "forest", "bounds": Rect2i(224, 40, 36, 30), "title": "东部林场"},
+	{"kind": "stone", "bounds": Rect2i(247, 196, 36, 30), "title": "东部石矿"},
+	{"kind": "forest", "bounds": Rect2i(92, 235, 36, 30), "title": "远南密林"},
+	{"kind": "stone", "bounds": Rect2i(180, 252, 36, 30), "title": "南部石脊"},
 ]
 const CARDINALS: Array[Vector2i] = [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]
 static var spans: Array[Vector2i] = []

@@ -4,6 +4,7 @@ extends SceneTree
 const Grid = preload("res://scripts/isometric_grid.gd")
 const Map = preload("res://scripts/town_map.gd")
 const Terrain = preload("res://scripts/town_terrain.gd")
+const CompoundArt = preload("res://scripts/town_compound_art.gd")
 var failed: bool = false
 
 
@@ -60,7 +61,13 @@ func _run() -> void:
 	var overview: float = (map.size.x - 32.0) / (Grid.HALF.x * (Grid.STARTER_SIZE.x + Grid.STARTER_SIZE.y))
 	_check(map.selected == cell and map.screen_to_world(map.size * 0.5).is_equal_approx(Vector2(0, 240)) and is_equal_approx(map.zoom_level, overview), "镜头复位未适配全图或改变选择")
 	map.show_entire_map()
-	_check(Grid.SIZE == Vector2i(200, 200) and map.cell_at(map.world_to_screen(Grid.cell_to_world(Vector2i(199, 199)))) == Vector2i(199, 199) and map.zoom_level < 0.23, "全览未覆盖扩建地块")
+	_check(Grid.SIZE == Vector2i(300, 300) and map.cell_at(map.world_to_screen(Grid.cell_to_world(Vector2i(299, 299)))) == Vector2i(299, 299) and map.zoom_level < 0.23, "全览未覆盖扩建地块")
+	_chk_compound_paths()
+	map.size = Vector2(360, 290)
+	map.show_entire_map()
+	var screen_bounds := Rect2(Vector2.ZERO, map.size)
+	_check(screen_bounds.has_point(map.world_to_screen(Grid.cell_to_world(Vector2i(299, 0)))) and screen_bounds.has_point(map.world_to_screen(Grid.cell_to_world(Vector2i(0, 299)))), "窄视窗全览裁掉地图两端")
+	map.size = Vector2(600, 400)
 	map.reset_view()
 	click.button_index = MOUSE_BUTTON_RIGHT
 	map._gui_input(click)
@@ -100,8 +107,22 @@ func _run() -> void:
 			for x: int in range(bounds.position.x, bounds.end.x):
 				area += int(Terrain.deposit_at(Vector2i(x, y)) == district["kind"])
 		_check(area >= 800 and bounds.position.length() > 50.0, "林矿资源区面积不足或离主城太近")
-	_check(Terrain.is_water(Vector2i(100, 110)) and not Terrain.is_water(Vector2i(6, 1)), "内陆水域未替换旧窄水带")
+	_check(Terrain.is_water(Vector2i(100, 110)) and Terrain.is_water(Vector2i(299, 130)) and not Terrain.is_water(Vector2i(6, 1)), "内陆水域未替换旧窄水带")
 	map.free()
 	if not failed:
 		print("MAP_PASS: projection, bounds, pan, zoom anchor, zoom limits, selection, keyboard pan, cache, large terrain")
 	quit(1 if failed else 0)
+
+
+# 大场地验收：养殖动物始终留在各自围栏，20人的操练队列不重叠。
+func _chk_compound_paths() -> void:
+	for frame: int in range(28):
+		for index: int in range(7):
+			var cell: Vector2i = Grid.world_to_cell(CompoundArt.pasture_foot(index, frame * 0.4))
+			var side: bool = cell.x <= -2 if index < 4 else cell.x >= 2
+			_check(side and cell.y >= 0 and cell.y <= 6, "牛羊离开对应围栏")
+	var seen: Dictionary = {}
+	for index: int in range(20):
+		var cell: Vector2i = Grid.world_to_cell(CompoundArt.drill_foot(index, 20, 0.5))
+		_check(absi(cell.x) < 8 and cell.y >= 0 and cell.y < 6 and not seen.has(cell), "操练站位重叠或离开场地")
+		seen[cell] = true

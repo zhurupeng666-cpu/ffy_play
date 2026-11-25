@@ -116,7 +116,7 @@ func _run() -> void:
 	DirAccess.remove_absolute(path)
 	# 扩建区验收：远地施工及其建造回执可一同恢复。
 	var expansion: RefCounted = State.new()
-	var far_cell := Vector2i(170, 156)
+	var far_cell := Vector2i(280, 274)
 	var placed: Dictionary = Build.execute(expansion, "b_house", far_cell, "far-site")
 	var expanded_save: RefCounted = State.from_snapshot(expansion.snapshot())
 	_check(placed["ok"] and expanded_save != null and expanded_save.occupied_cells().has(far_cell), "扩建区远处建筑不能建造或存读档")
