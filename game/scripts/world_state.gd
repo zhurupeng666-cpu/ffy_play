@@ -1,4 +1,4 @@
-## 文件用途：保存世界日期、人口、资源与建筑实例，并提供v1到v24快照迁移和完整校验。
+## 文件用途：保存世界日期、人口、资源与建筑实例，并提供v1到v25快照迁移和完整校验。
 extends RefCounted
 
 # 状态模块：数值均为待平衡参数，资源以完整单位保存。
@@ -18,13 +18,23 @@ const Catalog = preload("res://scripts/building_catalog.gd")
 const MaterialLedger = preload("res://scripts/material_ledger.gd")
 const FoodLedger = preload("res://scripts/food_ledger.gd")
 const Placement = preload("res://scripts/placement_validator.gd")
+const Population = preload("res://scripts/population_service.gd")
+const Estate = preload("res://scripts/estate_labor.gd")
 var tick: int = 0
 var subsecond: float = 0.0
 var last_settled_day: int = 0
-var population: int = 30
+var population: int = Population.START_POPULATION
+var households: Array = Population.initial(Population.START_POPULATION, Population.START_CHILDREN, 1)
+var population_report: Dictionary = {}
+# 领主劳役：建筑工人数包含双方，单独记录领主人手以保留原生产公式。
+var estate_workers: int = 0
+var estate_builders: int = 0
+var estate_posts: Dictionary = {}
+var estate_food_remainder: int = 0
+var estate_food_report: Dictionary = {}
 
 # 劳动力模块：居民分为可就业与被抚养人口，施工岗位最多两人，其余保持空闲。
-var dependents: int = 6
+var dependents: int = Population.START_CHILDREN
 var builders: int = MAX_BUILDERS
 var labor_credit: int = 0
 var resources: Dictionary = {"food": 180, "gold": 300, "wood": 120, "stone": 80}
@@ -92,6 +102,8 @@ func settle_days() -> void:
 		resources["gold"] = last_civic_ledger["gold_after"]
 		Army.settle(self)
 		last_settled_day += 1
+		Estate.settle(self)
+		Population.settle(self)
 		last_bill = "第%d日日结：产粮 +%d（入库%d，溢出%d），消耗 -%d，净变%+d，税收 +%d" % [last_settled_day, last_food_ledger["produced"], last_food_ledger["stored"], last_food_ledger["overflow"], last_food_ledger["consumed"], last_food_ledger["net"], tax]
 		if not troops.is_empty() or int(last_army_ledger["food_needed"]) > 0 or int(last_army_ledger["wage_needed"]) > 0:
 			last_bill += "；军粮-%d，军饷-%d" % [last_army_ledger["food_used"], last_army_ledger["wage_paid"]]
@@ -102,7 +114,7 @@ func settle_days() -> void:
 
 # 快照模块：只导出基础数据，不保存节点、数据库连接或脚本引用。
 func snapshot() -> Dictionary:
-	return {"version": 24, "fort_siege": fort_siege.duplicate(), "woods_battle": woods_battle.duplicate(), "legion_trips": legion_trips.duplicate(true), "woods_scout": woods_scout.duplicate(), "tick": tick, "subsecond": subsecond, "last_settled_day": last_settled_day, "population": population, "dependents": dependents, "builders": builders, "labor_credit": labor_credit, "resources": resources.duplicate(), "speed": speed, "paused": paused, "tax_policy": tax_policy, "satisfaction": satisfaction, "last_civic_ledger": last_civic_ledger.duplicate(true), "troops": troops.duplicate(true), "legions": legions.duplicate(true), "legion_create_commands": legion_create_commands.duplicate(), "next_legion_id": next_legion_id, "retired_troops": retired_troops.duplicate(true), "disband_commands": disband_commands.duplicate(true), "retired_army_cost": retired_army_cost.duplicate(), "recruit_commands": recruit_commands.duplicate(true), "next_troop_id": next_troop_id, "last_army_ledger": last_army_ledger.duplicate(true), "army_morale": army_morale, "last_morale_before": last_morale_before, "last_bill": last_bill, "last_food_ledger": last_food_ledger.duplicate(true), "last_material_ledger": last_material_ledger.duplicate(true), "buildings": buildings.duplicate(true), "next_building_id": next_building_id, "applied_commands": applied_commands.duplicate(true), "retired_buildings": retired_buildings.duplicate(true), "removal_commands": removal_commands.duplicate(true)}
+	return {"version": 25, "households": households.duplicate(true), "population_report": population_report.duplicate(), "estate": {"workers": estate_workers, "builders": estate_builders, "posts": estate_posts.duplicate(), "food_remainder": estate_food_remainder, "food_report": estate_food_report.duplicate()}, "fort_siege": fort_siege.duplicate(), "woods_battle": woods_battle.duplicate(), "legion_trips": legion_trips.duplicate(true), "woods_scout": woods_scout.duplicate(), "tick": tick, "subsecond": subsecond, "last_settled_day": last_settled_day, "population": population, "dependents": dependents, "builders": builders, "labor_credit": labor_credit, "resources": resources.duplicate(), "speed": speed, "paused": paused, "tax_policy": tax_policy, "satisfaction": satisfaction, "last_civic_ledger": last_civic_ledger.duplicate(true), "troops": troops.duplicate(true), "legions": legions.duplicate(true), "legion_create_commands": legion_create_commands.duplicate(), "next_legion_id": next_legion_id, "retired_troops": retired_troops.duplicate(true), "disband_commands": disband_commands.duplicate(true), "retired_army_cost": retired_army_cost.duplicate(), "recruit_commands": recruit_commands.duplicate(true), "next_troop_id": next_troop_id, "last_army_ledger": last_army_ledger.duplicate(true), "army_morale": army_morale, "last_morale_before": last_morale_before, "last_bill": last_bill, "last_food_ledger": last_food_ledger.duplicate(true), "last_material_ledger": last_material_ledger.duplicate(true), "buildings": buildings.duplicate(true), "next_building_id": next_building_id, "applied_commands": applied_commands.duplicate(true), "retired_buildings": retired_buildings.duplicate(true), "removal_commands": removal_commands.duplicate(true)}
 
 
 # 载入模块：在临时对象中完整校验，失败返回空值，不改变当前世界。
@@ -112,7 +124,10 @@ static func from_snapshot(data: Variant) -> RefCounted:
 	for key: String in ["version", "tick", "last_settled_day", "population", "speed"]:
 		if not _valid_integer(data.get(key), 0, 120000000):
 			return null
-	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24] or int(data["speed"]) not in [1, 2, 4] or data["population"] != 30:
+	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25] or int(data["speed"]) not in [1, 2, 4]:
+		return null
+	var version: int = int(data["version"])
+	if not _valid_integer(data["population"], Population.START_POPULATION, Population.MAX_POPULATION) or (version < 25 and data["population"] != Population.START_POPULATION):
 		return null
 	if data["last_settled_day"] != int(float(data["tick"]) / DAY_TICKS):
 		return null
@@ -138,20 +153,27 @@ static func from_snapshot(data: Variant) -> RefCounted:
 		state.dependents = int(data["dependents"])
 		state.builders = int(data["builders"])
 		state.labor_credit = int(data["labor_credit"])
-		if state.builders > state.population - state.dependents:
+		if version < 25 and state.builders > state.population - state.dependents:
 			return null
 	for key: String in ["food", "gold", "wood", "stone"]:
 		state.resources[key] = int(data["resources"][key])
 	state.speed = int(data["speed"])
 	state.paused = data["paused"]
 	state.last_bill = data["last_bill"]
+	# 人口迁移模块：旧档保留原总数与岗位，儿童从当前日期开始获得成年计划。
+	if version < 25:
+		state.households = Population.initial(state.population, state.dependents, state.current_day())
+	elif not Population.restore(state, data.get("households"), data.get("population_report")):
+		return null
+	# 收支结算使用新增居民入住之前的人数，避免新档在增长当天无法读回。
+	var settled_population: int = state.population - int(state.population_report.get("joined", 0)) - int(state.population_report.get("born", 0))
 	# 历史迁移模块：旧档不虚构粮食收支，新版账单完整校验后才恢复。
 	if int(data["version"]) >= 6:
-		if not FoodLedger.valid(data.get("last_food_ledger"), state.last_settled_day, state.population):
+		if not FoodLedger.valid(data.get("last_food_ledger"), state.last_settled_day, settled_population):
 			return null
 		var saved_ledger: Dictionary = data["last_food_ledger"]
 		if not saved_ledger.is_empty():
-			state.last_food_ledger = FoodLedger.calculate(int(saved_ledger["day"]), int(saved_ledger["opening"]), int(saved_ledger["capacity"]), saved_ledger["by_source"], state.population)
+			state.last_food_ledger = FoodLedger.calculate(int(saved_ledger["day"]), int(saved_ledger["opening"]), int(saved_ledger["capacity"]), saved_ledger["by_source"], settled_population)
 	# 材料账单迁移模块：旧档不补发材料，也不编造历史生产。
 	if int(data["version"]) >= 7:
 		if not MaterialLedger.valid(data.get("last_material_ledger"), state.last_settled_day):
@@ -163,9 +185,9 @@ static func from_snapshot(data: Variant) -> RefCounted:
 			return null
 		state.tax_policy = data["tax_policy"]
 		state.satisfaction = int(data["satisfaction"])
-		if not Civic.valid(data.get("last_civic_ledger"), state.last_settled_day, state.population, state.satisfaction, state.last_food_ledger):
+		if not Civic.valid(data.get("last_civic_ledger"), state.last_settled_day, settled_population, state.satisfaction, state.last_food_ledger):
 			return null
-		state.last_civic_ledger = Civic.restore(data["last_civic_ledger"], state.population)
+		state.last_civic_ledger = Civic.restore(data["last_civic_ledger"], settled_population)
 	# 迁移模块：旧战略档没有建筑，保留经济时间并补初始领主厅，不立即覆写磁盘。
 	if int(data["version"]) == 1:
 		return state
@@ -175,6 +197,8 @@ static func from_snapshot(data: Variant) -> RefCounted:
 		return null
 	if int(data["version"]) < 23:
 		state._expand_legacy_yards(int(data["version"]))
+	if version >= 25 and not Estate.restore(state, data.get("estate")):
+		return null
 	if int(data["version"]) >= 10 and not Army.restore_world(state, data):
 		return null
 	if int(data["version"]) >= 12 and not Legions.restore_world(state, data):
@@ -215,7 +239,7 @@ static func from_snapshot(data: Variant) -> RefCounted:
 		var opening_tick: int = (state.last_settled_day - 1) * DAY_TICKS
 		if int(data["version"]) < 17 or Battle.report(state, opening_tick)["status"] != "victory":
 			return null
-	if state.idle_workers() < 0:
+	if state.idle_workers() < 0 or state.population > state.housing_capacity():
 		return null
 	return state
 
@@ -400,7 +424,7 @@ func advance_construction() -> void:
 
 # 分配模块：拒绝超额或负人数，合法调整不增减总人口、不扣金币。
 func assign_builders(count: int) -> bool:
-	if count < 0 or count > MAX_BUILDERS or count - builders > idle_workers():
+	if count < estate_builders or count > MAX_BUILDERS or count - builders > idle_workers():
 		return false
 	builders = count
 	return true
@@ -413,7 +437,21 @@ func workforce_capacity() -> int:
 
 # 统计模块：施工岗位计入可就业人口，保持人口与岗位守恒。
 func idle_workers() -> int:
-	return workforce_capacity() - builders - production_workers() - Army.people(troops, true)
+	return workforce_capacity() - (builders - estate_builders) - (production_workers() - Estate.production_count(self)) - Army.people(troops, true)
+
+
+# 领主空闲人数：只计独立编额，不向居民或军队岗位借用。
+func estate_idle() -> int:
+	return estate_workers - estate_builders - Estate.production_count(self)
+
+
+# 领主施工岗位：从领主池调人，同时遵守共用施工队上限。
+func assign_estate_builders(delta: int) -> bool:
+	if estate_builders + delta < 0 or builders + delta > MAX_BUILDERS or delta > estate_idle():
+		return false
+	estate_builders += delta
+	builders += delta
+	return true
 
 
 # 住房模块：只有完工住宅增加容量，未完工工地不提供住房。
@@ -438,10 +476,31 @@ func assign_producers(building_id: String, count: int) -> bool:
 	for building: Dictionary in buildings:
 		if building["id"] == building_id:
 			var definition: Resource = Catalog.find(building["def_id"])
-			if building["state"] != "ready" or int(definition.get("worker_slots")) == 0 or count < 0 or count > int(definition.get("worker_slots")) or count - int(building["workers"]) > idle_workers():
+			if building["state"] != "ready" or int(definition.get("worker_slots")) == 0 or count < int(estate_posts.get(building_id, 0)) or count > int(definition.get("worker_slots")) or count - int(building["workers"]) > idle_workers():
 				return false
 			building["workers"] = count
 			return true
+	return false
+
+
+# 领主生产岗位：指定独立人手增减，仍用原建筑岗位容量与产量公式。
+func assign_estate_producers(building_id: String, delta: int) -> bool:
+	var assigned: int = int(estate_posts.get(building_id, 0)) + delta
+	if assigned < 0 or delta > estate_idle():
+		return false
+	for building: Dictionary in buildings:
+		if building["id"] != building_id:
+			continue
+		var definition: Resource = Catalog.find(building["def_id"])
+		var total: int = int(building["workers"]) + delta
+		if building["state"] != "ready" or total > int(definition.get("worker_slots")):
+			return false
+		building["workers"] = total
+		if assigned == 0:
+			estate_posts.erase(building_id)
+		else:
+			estate_posts[building_id] = assigned
+		return true
 	return false
 
 

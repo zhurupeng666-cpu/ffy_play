@@ -31,6 +31,8 @@ const HudIcons = preload("res://scripts/hud_icons.gd")
 const HudTheme = preload("res://scripts/hud_theme.gd")
 const TownMap = preload("res://scripts/town_map.gd")
 const State = preload("res://scripts/world_state.gd")
+const Population = preload("res://scripts/population_service.gd")
+const Estate = preload("res://scripts/estate_labor.gd")
 const Clock = preload("res://scripts/strategic_clock.gd")
 const Store = preload("res://scripts/world_save_repository.gd")
 const ExportProbe = preload("res://scripts/export_probe.gd")
@@ -90,6 +92,17 @@ var builder_add_buttons: Array[Button] = []
 var builder_remove_buttons: Array[Button] = []
 var release_producer_button: Button
 var town_picker: OptionButton
+var population_hint: Label
+var population_event: Label
+var household_list: ItemList
+var household_signature: String = ""
+var estate_buy_button: Button
+var estate_food_hint: Label
+var estate_site_row: HBoxContainer
+var estate_builder_add: Array[Button] = []
+var estate_builder_remove: Array[Button] = []
+var estate_producer_add: Button
+var estate_producer_remove: Button
 var barracks_stats: VBoxContainer
 var barracks_notice: Label
 var army_recruit_button: Button
@@ -364,6 +377,8 @@ func _build_management_drawer(columns: HBoxContainer) -> void:
 	town_picker.add_icon_item(HudIcons.texture("people"), "库存与民生")
 	town_picker.add_icon_item(HudIcons.texture("work"), "劳动力与施工")
 	town_picker.add_icon_item(HudIcons.texture("food"), "生产岗位")
+	town_picker.add_icon_item(HudIcons.texture("people"), "人口与家庭")
+	town_picker.add_icon_item(HudIcons.texture("work"), "领主劳役")
 	panel = _data_section(town_page, town_sections)
 	_number_grid(panel, "", [
 		["food_store", "储粮 / 容量", "food"], ["housing", "人口 / 住房", "house"],
@@ -407,6 +422,7 @@ func _build_management_drawer(columns: HBoxContainer) -> void:
 			[id + "_jobs", "在岗 / 岗位", "people"], [id + "_rate", "全天折算", production_icons[id]],
 		], 2)
 
+	_build_population_sections(town_page)
 	town_picker.item_selected.connect(_show_data_section.bind(town_sections))
 	_show_data_section(0, town_sections)
 
@@ -422,6 +438,30 @@ func _build_management_drawer(columns: HBoxContainer) -> void:
 	_drawer_page("账本")
 	_build_ledger()
 	management_drawer.hide()
+
+
+# 城镇数据模块：家庭账和领主劳役分别展示，方便确认两类劳动力来源。
+func _build_population_sections(town_page: VBoxContainer) -> void:
+	panel = _data_section(town_page, town_sections)
+	_number_grid(panel, "", [
+		["households", "家庭", "house"], ["children", "儿童", "people"],
+		["next_adult_day", "下次成年", "clock"], ["next_adult_count", "本批人数", "people"],
+	], 2)
+	population_hint = _label("")
+	population_event = _label("")
+	household_list = ItemList.new()
+	household_list.custom_minimum_size.y = 125
+	panel.add_child(household_list)
+
+	panel = _data_section(town_page, town_sections)
+	estate_buy_button = _button(_row(), "购买1人 · %d金币" % Estate.PRICE, _purchase_estate)
+	_build_estate_builder_buttons(_row())
+	_number_grid(panel, "", [
+		["estate_workers", "劳役人数", "people"], ["estate_idle", "可用劳役", "work"],
+		["estate_construction", "施工劳役", "work"], ["estate_production", "生产劳役", "work"],
+		["estate_daily_food", "每日口粮", "food"], ["estate_food_paid", "上日扣粮", "food"],
+	], 2)
+	estate_food_hint = _label("")
 
 
 # 分页模块：每个分类独立滚动，原有按钮继续操作同一份数据。
@@ -603,6 +643,8 @@ func _refresh() -> void:
 	_refresh_army()
 	_refresh_civic()
 	_refresh_builder_controls()
+	_refresh_population()
+	_refresh_estate()
 	_refresh_inspection()
 	_set_numbers({
 		"date": "第%d日 %02d时" % [world.current_day(), int((world.tick % State.DAY_TICKS) * 24.0 / State.DAY_TICKS)],
@@ -634,8 +676,8 @@ func _refresh() -> void:
 		"ready_buildings": ready_count, "queued_buildings": queued_count,
 		"housing": "%d / %d" % [world.population, world.housing_capacity()],
 		"employable": world.workforce_capacity(), "dependent": world.dependents,
-		"builders": world.builders, "idle": world.idle_workers(), "military_workers": Army.people(world.troops, true),
-		"producers": world.production_workers(),
+		"builders": world.builders - world.estate_builders, "idle": world.idle_workers(), "military_workers": Army.people(world.troops, true),
+		"producers": world.production_workers() - Estate.production_count(world),
 	})
 	_refresh_production()
 	construction_label.text = active_text
@@ -899,14 +941,87 @@ func _refresh_builder_controls() -> void:
 		button.disabled = not block.is_empty()
 		button.tooltip_text = block if button.disabled else "从可用劳动力调1人到施工队"
 	for button: Button in builder_remove_buttons:
-		button.disabled = world.builders == 0
+		button.disabled = world.builders <= world.estate_builders
 		button.tooltip_text = "施工队目前无人" if button.disabled else "将1名施工工人释放为空闲"
-	var producers: int = world.production_workers()
+	var producers: int = world.production_workers() - Estate.production_count(world)
 	release_producer_button.visible = world.idle_workers() <= 0 and producers > 0 and world.builders < State.MAX_BUILDERS
 	var hint: String = "全城共用施工队 · %d / %d 人" % [world.builders, State.MAX_BUILDERS]
 	if world.idle_workers() == 0 and world.builders < State.MAX_BUILDERS:
 		hint += "\n无空闲人手 · 军职%d · 生产%d" % [Army.people(world.troops, true), producers]
 	site_builder_hint.text = hint
+
+
+# 人口面板：按家庭展示儿童的成年日，与全城下次结算提示同步。
+func _refresh_population() -> void:
+	var adulthood: Dictionary = Population.next_adulthood(world.households)
+	_set_numbers({
+		"households": world.households.size(), "children": world.dependents,
+		"next_adult_day": "第%d日" % adulthood["day"] if adulthood["day"] > 0 else "—",
+		"next_adult_count": adulthood["count"],
+	})
+	var next_check: int = world.last_settled_day + Population.MIGRATION_PERIOD - world.last_settled_day % Population.MIGRATION_PERIOD
+	var block: String = Population.growth_block(world, Population.MIGRANT_SIZE)
+	population_hint.text = "下次移民检查在第%d日结算。%s" % [next_check, "目前符合条件" if block.is_empty() else block]
+	var report: Dictionary = world.population_report
+	population_event.text = "上次日结：迁入%d · 出生%d · 成年%d" % [report.get("joined", 0), report.get("born", 0), report.get("matured", 0)]
+	population_event.visible = not report.is_empty()
+	var signature: String = JSON.stringify(world.households)
+	if signature == household_signature:
+		return
+	household_signature = signature
+	household_list.clear()
+	for i: int in range(world.households.size()):
+		var family: Dictionary = world.households[i]
+		var dates := PackedStringArray()
+		for day: int in family["children"]:
+			dates.append("第%d日" % day)
+		var note: String = " · 成年 " + "、".join(dates) if not dates.is_empty() else ""
+		household_list.add_item("第%d户 · 成人%d 儿童%d%s" % [i + 1, family["adults"], dates.size(), note], HudIcons.texture("people"), false)
+
+
+# 独立施工按钮：仅使用领主人手，共享城镇施工队容量。
+func _build_estate_builder_buttons(row: HBoxContainer) -> void:
+	estate_builder_remove.append(_button(row, "劳役施工 −1", _change_estate_builders.bind(-1)))
+	estate_builder_add.append(_button(row, "劳役施工 +1", _change_estate_builders.bind(1)))
+
+
+# 领主面板：显示购买成本、劳役池和独立日用粮，不混入居民口粮账。
+func _refresh_estate() -> void:
+	var bill: Dictionary = world.estate_food_report
+	_set_numbers({
+		"estate_workers": world.estate_workers, "estate_idle": world.estate_idle(),
+		"estate_construction": world.estate_builders, "estate_production": Estate.production_count(world),
+		"estate_daily_food": "%.1f" % (world.estate_workers * 0.5), "estate_food_paid": bill.get("paid", "—"),
+	})
+	var blocked: String = Estate.purchase_block(world)
+	estate_buy_button.disabled = not blocked.is_empty()
+	estate_buy_button.tooltip_text = blocked
+	estate_site_row.visible = world.estate_workers > 0
+	for button: Button in estate_builder_add:
+		button.disabled = world.estate_idle() == 0 or world.builders >= State.MAX_BUILDERS
+	for button: Button in estate_builder_remove:
+		button.disabled = world.estate_builders == 0
+	estate_food_hint.text = "每人每日0.5粮食，半份结转。"
+	if int(bill.get("shortage", 0)) > 0:
+		estate_food_hint.text += " 上日缺粮%d。" % int(bill["shortage"])
+
+
+# 购买入口：每次明确点击只完成一笔金币与独立人手交易。
+func _purchase_estate() -> void:
+	status_label.text = "领主劳役 +1，可分配施工或生产" if Estate.purchase(world) else Estate.purchase_block(world)
+	_refresh()
+
+
+# 独立调岗：从选中建筑分配或释放领主生产人员。
+func _change_estate_producers(delta: int) -> void:
+	status_label.text = "已调整领主生产人员" if world.assign_estate_producers(inspected_building_id, delta) else "劳役空闲或设施岗位不足"
+	_refresh()
+
+
+# 独立施工：两类人手共用施工队容量，分开增减。
+func _change_estate_builders(delta: int) -> void:
+	status_label.text = "已调整领主施工人员" if world.assign_estate_builders(delta) else "劳役空闲不足或施工队已满"
+	_refresh()
 
 
 # 顶栏提示：人口旁的两项数值可直接查看计算口径和岗位占用。
@@ -917,7 +1032,7 @@ func _refresh_workforce_tooltips() -> void:
 		world.population, world.dependents, world.workforce_capacity(),
 	]
 	idle.get_parent().get_parent().get_parent().tooltip_text = "劳动力%d − 施工%d − 生产%d − 军职%d = 可用%d" % [
-		world.workforce_capacity(), world.builders, world.production_workers(), Army.people(world.troops, true), world.idle_workers(),
+		world.workforce_capacity(), world.builders - world.estate_builders, world.production_workers() - Estate.production_count(world), Army.people(world.troops, true), world.idle_workers(),
 	]
 
 
@@ -928,7 +1043,7 @@ func _open_staffed_production() -> void:
 	_show_data_section(2, town_sections)
 	for index: int in range(producer_picker.item_count):
 		var building: Dictionary = Inspector.find(world, str(producer_picker.get_item_metadata(index)))
-		if int(building.get("workers", 0)) > 0:
+		if int(building.get("workers", 0)) > int(world.estate_posts.get(building.get("id", ""), 0)):
 			producer_picker.select(index)
 			_on_producer_selected(index)
 			return
@@ -941,7 +1056,7 @@ func _change_builders(delta: int) -> void:
 	elif delta > 0:
 		status_label.text = _builder_add_block()
 	else:
-		status_label.text = "施工队目前无人"
+		status_label.text = "施工队没有可撤下的居民"
 	_refresh()
 
 
@@ -1263,6 +1378,9 @@ func _build_inspection_card() -> void:
 	var crew_buttons := HBoxContainer.new()
 	site_builder_actions.add_child(crew_buttons)
 	_build_builder_buttons(crew_buttons)
+	estate_site_row = HBoxContainer.new()
+	site_builder_actions.add_child(estate_site_row)
+	_build_estate_builder_buttons(estate_site_row)
 	site_builder_hint = Label.new()
 	site_builder_hint.add_theme_font_size_override("font_size", 13)
 	site_builder_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -1284,13 +1402,17 @@ func _build_inspection_card() -> void:
 	contents.add_child(actions)
 	inspection_decrease = _button(actions, "本建筑工人 -1", _change_inspected_workers.bind(-1))
 	inspection_increase = _button(actions, "本建筑工人 +1", _change_inspected_workers.bind(1))
+	var estate_actions := HBoxContainer.new()
+	contents.add_child(estate_actions)
+	estate_producer_remove = _button(estate_actions, "劳役生产 −1", _change_estate_producers.bind(-1))
+	estate_producer_add = _button(estate_actions, "劳役生产 +1", _change_estate_producers.bind(1))
 	var military_actions: HBoxContainer = HBoxContainer.new()
 	contents.add_child(military_actions)
 	army_recruit_button = _button(military_actions, "招募%d名步兵" % Army.UNIT.batch_size, _recruit_infantry)
 	barracks_stats = _number_grid(contents, "招募", [
 		["barracks_people", "在营 / 编额", "shield"], ["batch_size", "每批人数", "people"],
 		["batch_gold", "招募金币", "gold"], ["batch_wood", "招募木材", "wood"],
-		["batch_time", "训练用时", "clock"],
+		["batch_time", "训练用时", "clock"], ["batch_workers_after", "征募后可用居民", "people"],
 	], 2)
 	barracks_notice = Label.new()
 	barracks_notice.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -1378,6 +1500,12 @@ func _refresh_inspection() -> void:
 	inspection_decrease.disabled = not detail["decrease"]
 	inspection_increase.get_parent().visible = bool(detail.get("producer", false))
 	var record: Dictionary = Inspector.find(world, inspected_building_id)
+	var estate_producer: bool = world.estate_workers > 0 and bool(detail.get("producer", false))
+	estate_producer_add.get_parent().visible = estate_producer
+	if estate_producer:
+		var definition: Resource = Construction.Catalog.find(record["def_id"])
+		estate_producer_add.disabled = world.estate_idle() == 0 or int(record["workers"]) >= int(definition.get("worker_slots"))
+		estate_producer_remove.disabled = int(world.estate_posts.get(inspected_building_id, 0)) == 0
 	site_builder_actions.visible = record.get("state") == "constructing"
 	inspection_remove.visible = not record.is_empty() and record["def_id"] != "b_hall"
 	inspection_remove.text = "取消施工" if record.get("state") == "constructing" else "拆除建筑"
@@ -1393,6 +1521,7 @@ func _refresh_inspection() -> void:
 			"barracks_people": "%d / %d" % [used["count"], Army.UNIT.barracks_capacity], "batch_size": Army.UNIT.batch_size,
 			"batch_gold": Army.UNIT.recruit_cost.get("gold", 0), "batch_wood": Army.UNIT.recruit_cost.get("wood", 0),
 			"batch_time": "%d 战略秒" % Army.UNIT.train_work,
+			"batch_workers_after": world.idle_workers() - int(Army.UNIT.batch_size) if world.idle_workers() >= int(Army.UNIT.batch_size) else "兵源不足",
 		})
 		barracks_notice.visible = not offer["ok"]
 		barracks_notice.text = str(offer.get("reason", ""))

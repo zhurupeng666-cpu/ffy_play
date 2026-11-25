@@ -66,6 +66,7 @@ static func execute(world: RefCounted, id: String, command: String, expected: Di
 	commands[command] = {"building_id": id, "tick": world.tick, "refund": offer["refund"].duplicate(), "overflow": offer["overflow"].duplicate()}
 	world.resources = resources
 	world.buildings = records
+	world.estate_posts.erase(id)
 	world.retired_buildings = archive
 	world.removal_commands = commands
 	if active_work == id:

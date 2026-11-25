@@ -61,5 +61,5 @@ static func describe(world: RefCounted, id: String) -> Dictionary:
 	return {
 		"producer": ready and slots > 0, "text": "%s · %s" % [definition.get("display_name"), state_text], "numbers": metrics,
 		"increase": ready and slots > int(building["workers"]) and world.idle_workers() > 0,
-		"decrease": ready and slots > 0 and int(building["workers"]) > 0,
+		"decrease": ready and slots > 0 and int(building["workers"]) > int(world.estate_posts.get(id, 0)),
 	}
