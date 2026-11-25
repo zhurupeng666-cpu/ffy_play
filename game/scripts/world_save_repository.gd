@@ -1,8 +1,8 @@
-## 文件用途：在 SQLite 中保留七份战略存档，提供按时间浏览、事务轮换与旧库迁移。
+## 文件用途：在 SQLite 中只保留最新战略存档，提供事务替换、删除与旧库迁移。
 extends RefCounted
 
 const State = preload("res://scripts/world_state.gd")
-const SAVE_LIMIT: int = 7
+const STORE_VERSION: int = 4
 var database: SQLite
 var error_message: String = ""
 
@@ -29,16 +29,17 @@ func open_store(path_override: String = "") -> bool:
 		close_store()
 		return false
 	var version: int = int(database.query_result[0]["user_version"])
-	if version not in [0, 1, 2, 3]:
+	if version not in [0, 1, 2, 3, STORE_VERSION]:
 		error_message = "不支持的数据库版本"
 		close_store()
 		return false
-	if version == 3:
+	if version == STORE_VERSION:
 		return true
 	if not _query("BEGIN IMMEDIATE;"):
 		close_store()
 		return false
-	if not _migrate_legacy() or not _query("COMMIT;"):
+	if (version < 3 and not _migrate_legacy()) or not _verify_latest_before_prune() or not _trim() \
+		or not _query("PRAGMA user_version=%d;" % STORE_VERSION) or not _query("COMMIT;"):
 		database.query("ROLLBACK;")
 		close_store()
 		return false
@@ -67,10 +68,23 @@ func _migrate_legacy() -> bool:
 				day = floori(tick / State.DAY_TICKS) + 1
 		if not _bound("INSERT INTO world_saves(saved_at,game_day,title,payload) VALUES(NULL,?,?,?);", [day, "旧版进度", row["payload"]]):
 			return false
-	return _trim() and _query("DROP TABLE snapshot_backup;") and _query("DROP TABLE world_snapshot;") and _query("PRAGMA user_version=3;")
+	return _query("DROP TABLE snapshot_backup;") and _query("DROP TABLE world_snapshot;")
 
 
-# 保存模块：新档与淘汰最早档在同一事务，任一失败就恢复原列表。
+# 迁移保护：若有多份存档，先确认最新档能恢复，再清理其他条目。
+func _verify_latest_before_prune() -> bool:
+	if not _query("SELECT id, payload FROM world_saves ORDER BY id DESC LIMIT 2;"):
+		return false
+	if database.query_result.size() < 2:
+		return true
+	var parser := JSON.new()
+	if parser.parse(database.query_result[0]["payload"]) != OK or State.from_snapshot(parser.data) == null:
+		error_message = "最新存档无法读取，旧存档已保留"
+		return false
+	return true
+
+
+# 保存模块：新档与旧档替换在同一事务，失败时仍可读取原进度。
 func save_world(world: RefCounted, title: String = "战略进度") -> bool:
 	error_message = ""
 	if database == null:
@@ -92,7 +106,24 @@ func save_world(world: RefCounted, title: String = "战略进度") -> bool:
 
 # 保留模块：按写入顺序淘汰，系统时间调整或同一秒保存也能稳定排序。
 func _trim() -> bool:
-	return _query("DELETE FROM world_saves WHERE id NOT IN (SELECT id FROM world_saves ORDER BY id DESC LIMIT %d);" % SAVE_LIMIT)
+	return _query("DELETE FROM world_saves WHERE id < (SELECT MAX(id) FROM world_saves);")
+
+
+# 删除模块：只删除确认过的ID，旧确认绝不会删掉后来保存的进度。
+func delete_save(save_id: int) -> bool:
+	error_message = ""
+	if database == null:
+		error_message = "数据库未打开"
+		return false
+	if save_id <= 0:
+		error_message = "未选择有效存档"
+		return false
+	if not _bound("DELETE FROM world_saves WHERE id=? RETURNING id;", [save_id]):
+		return false
+	if database.query_result.is_empty():
+		error_message = "该存档已不存在"
+		return false
+	return true
 
 
 # 列表模块：只读取元信息，时间按当前系统时区显示。

@@ -56,6 +56,9 @@ var status_label: Label
 # 读档界面：列表项使用数据库ID，显示本地保存时间和游戏日期。
 var save_picker: ConfirmationDialog
 var save_items: ItemList
+var save_delete_button: Button
+var save_delete_dialog: ConfirmationDialog
+var pending_save_delete: int = 0
 var pause_button: Button
 var speed_buttons: Dictionary = {}
 var progress: ProgressBar
@@ -710,7 +713,7 @@ func _save() -> void:
 		status_label.text = "保存失败：" + store.error_message
 		return
 	_refresh_save_stamp()
-	status_label.text = "已新建存档 · 游戏第%d日" % world.current_day()
+	status_label.text = "已保存最新进度 · 游戏第%d日" % world.current_day()
 
 
 # 存档时间文字：直接显示本地时间，旧存档保留未知状态。
@@ -734,25 +737,35 @@ func _refresh_save_stamp(save_id: int = 0, loaded: bool = false) -> void:
 # 读档布局：通过行选择与确认按钮加载指定存档。
 func _build_save_picker() -> void:
 	save_picker = ConfirmationDialog.new()
-	save_picker.title = "读取进度 · 保存时间为本机时间"
+	save_picker.title = "管理最新存档 · 本机时间"
 	save_picker.exclusive = true
 	save_picker.get_ok_button().text = "读取所选"
 	save_picker.get_cancel_button().text = "返回"
 	add_child(save_picker)
 	save_items = ItemList.new()
-	save_items.custom_minimum_size = Vector2(600, 228)
+	save_items.custom_minimum_size = Vector2(600, 80)
 	save_picker.add_child(save_items)
 	save_picker.confirmed.connect(_load_selected)
 	save_items.item_activated.connect(_activate_save)
+	save_delete_button = save_picker.add_button("删除存档…", true, "delete_save")
+	save_delete_button.pressed.connect(_request_save_delete)
+	save_delete_dialog = ConfirmationDialog.new()
+	save_delete_dialog.title = "确认删除存档"
+	save_delete_dialog.exclusive = true
+	save_delete_dialog.get_ok_button().text = "确认删除"
+	save_delete_dialog.get_cancel_button().text = "保留存档"
+	add_child(save_delete_dialog)
+	save_delete_dialog.confirmed.connect(_confirm_save_delete)
+	save_delete_dialog.canceled.connect(_cancel_save_delete)
 
 
 # 列表入口：每次打开重新查询，防止显示已轮换淘汰的存档。
 func _choose_save() -> void:
 	var rows: Array = store.list_saves()
+	save_items.clear()
 	if rows.is_empty():
 		status_label.text = "暂无战略存档，请先保存" if store.error_message.is_empty() else store.error_message
 		return
-	save_items.clear()
 	for row: Dictionary in rows:
 		var date: String = _saved_local_text(row)
 		var day: String = "第%d日" % row["game_day"] if int(row["game_day"]) > 0 else "游戏日期未知"
@@ -760,6 +773,40 @@ func _choose_save() -> void:
 		save_items.set_item_metadata(save_items.item_count - 1, int(row["id"]))
 	save_items.select(0)
 	save_picker.popup_centered()
+
+
+# 删除请求：将确认文本和选中的稳定ID绑定，默认聚焦保留存档。
+func _request_save_delete() -> void:
+	var selection: PackedInt32Array = save_items.get_selected_items()
+	if selection.is_empty():
+		return
+	var index: int = selection[0]
+	pending_save_delete = int(save_items.get_item_metadata(index))
+	save_delete_dialog.dialog_text = "确认永久删除以下存档？\n%s\n当前正在玩的进度会保留在游戏中。" % save_items.get_item_text(index)
+	save_picker.hide()
+	save_delete_dialog.popup_centered()
+	save_delete_dialog.get_cancel_button().grab_focus()
+
+
+# 删除确认：只有第二次明确确认时才操作数据库。
+func _confirm_save_delete() -> void:
+	var save_id: int = pending_save_delete
+	pending_save_delete = 0
+	if save_id <= 0:
+		return
+	if store.delete_save(save_id):
+		save_items.clear()
+		_refresh_save_stamp()
+		status_label.text = "存档已删除"
+	else:
+		status_label.text = "删除失败：" + store.error_message
+		_refresh_save_stamp()
+
+
+# 删除取消：清除待删ID，并重新显示当前存档。
+func _cancel_save_delete() -> void:
+	pending_save_delete = 0
+	call_deferred("_choose_save")
 
 
 # 确认模块：只加载当前列表项记录的ID。

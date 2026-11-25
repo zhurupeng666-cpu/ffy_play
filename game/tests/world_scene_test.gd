@@ -58,11 +58,17 @@ func _run() -> void:
 	main.world.resources["gold"] = 999
 	main._save()
 	main._choose_save()
-	var chooser: bool = main.save_items.item_count == 2 and main.save_items.get_item_text(1).contains("第2日")
-	chooser = chooser and main.save_items.get_item_text(1).contains("保存于 %s" % first_save["saved_local"])
-	main._activate_save(1)
-	stamp_safe = stamp_safe and main.save_stamp.text == "当前读档 · 保存于 %s" % first_save["saved_local"]
-	var passed: bool = hud_safe and stamp_safe and chooser and region_safe and map_safe and main.world.current_day() == 2 and main.world.resources["food"] == 165 and main.world.resources["gold"] == 320 and main.world.paused and main.numbers["gold"].text == "320"
+	var latest: Dictionary = main.store.list_saves()[0]
+	var chooser: bool = main.save_items.item_count == 1 and main.save_items.get_item_text(0).contains("第2日")
+	chooser = chooser and main.save_items.get_item_text(0).contains("保存于 %s" % latest["saved_local"])
+	main.world.resources["gold"] = 0
+	main._activate_save(0)
+	stamp_safe = stamp_safe and main.save_stamp.text == "当前读档 · 保存于 %s" % latest["saved_local"]
+	chooser = chooser and main.world.resources["gold"] == 999 and latest["id"] != first_save["id"]
+	var delete_safe: bool = _check_save_deletion(main, int(latest["id"]))
+	main.world.resources["gold"] = 320
+	main._refresh()
+	var passed: bool = hud_safe and stamp_safe and chooser and delete_safe and region_safe and map_safe and main.world.current_day() == 2 and main.world.resources["food"] == 165 and main.world.resources["gold"] == 320 and main.world.paused and main.numbers["gold"].text == "320"
 	passed = _check_scout(main) and passed
 	main.free()
 	DirAccess.remove_absolute(path)
@@ -71,6 +77,23 @@ func _run() -> void:
 	else:
 		print("WORLD_UI_PASS: scene, regions, scouting, march, battle, territory yield, fort siege, fort gold, pause, timed save, load, categorized HUD, resource display")
 	quit(0 if passed else 1)
+
+
+# 删除验收：首次点击和取消都保留存档，确认后只移除磁盘记录。
+func _check_save_deletion(main: Control, save_id: int) -> bool:
+	main._choose_save()
+	main.save_delete_button.pressed.emit()
+	if main.pending_save_delete != save_id or main.store.list_saves().size() != 1:
+		return false
+	main.save_delete_dialog.hide()
+	main._cancel_save_delete()
+	if main.pending_save_delete != 0 or main.store.list_saves().size() != 1:
+		return false
+	main._choose_save()
+	main.save_delete_button.pressed.emit()
+	main.save_delete_dialog.hide()
+	main.save_delete_dialog.confirmed.emit()
+	return main.store.list_saves().is_empty() and main.save_stamp.text == "暂无存档" and main.world.resources["gold"] == 999
 
 
 # 布局验收：分类菜单进入真实建造预览，管理抽屉可按页切换并收起。
