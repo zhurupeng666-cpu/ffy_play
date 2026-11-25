@@ -23,6 +23,7 @@ func _run() -> void:
 	var path: String = ProjectSettings.globalize_path("res://local_data/tests/world_ui_%s.db" % Time.get_ticks_usec())
 	main.store_path_override = path
 	root.add_child(main)
+	var hud_safe: bool = _check_hud(main)
 	# 隔离模块：地图选择不应更改权威世界状态。
 	var before_map: Dictionary = main.world.snapshot()
 	var click: InputEventMouseButton = InputEventMouseButton.new()
@@ -52,20 +53,41 @@ func _run() -> void:
 	main.clock.advance(120.0)
 	main._toggle_pause()
 	main._save()
+	var first_save: Dictionary = main.store.list_saves()[0]
+	var stamp_safe: bool = main.save_stamp.text == "最近存档 · 保存于 %s" % first_save["saved_local"]
 	main.world.resources["gold"] = 999
 	main._save()
 	main._choose_save()
 	var chooser: bool = main.save_items.item_count == 2 and main.save_items.get_item_text(1).contains("第2日")
+	chooser = chooser and main.save_items.get_item_text(1).contains("保存于 %s" % first_save["saved_local"])
 	main._activate_save(1)
-	var passed: bool = chooser and region_safe and map_safe and main.world.current_day() == 2 and main.world.resources["food"] == 165 and main.world.resources["gold"] == 320 and main.world.paused and main.resource_label.text.contains("320")
+	stamp_safe = stamp_safe and main.save_stamp.text == "当前读档 · 保存于 %s" % first_save["saved_local"]
+	var passed: bool = hud_safe and stamp_safe and chooser and region_safe and map_safe and main.world.current_day() == 2 and main.world.resources["food"] == 165 and main.world.resources["gold"] == 320 and main.world.paused and main.resource_label.text.contains("320")
 	passed = _check_scout(main) and passed
 	main.free()
 	DirAccess.remove_absolute(path)
 	if not passed:
 		push_error("战略界面保存读取联动失败")
 	else:
-		print("WORLD_UI_PASS: scene, regions, scouting, march, battle, territory yield, fort siege, fort gold, pause, save, load, resource display")
+		print("WORLD_UI_PASS: scene, regions, scouting, march, battle, territory yield, fort siege, fort gold, pause, timed save, load, categorized HUD, resource display")
 	quit(0 if passed else 1)
+
+
+# 布局验收：分类菜单进入真实建造预览，管理抽屉可按页切换并收起。
+func _check_hud(main: Control) -> bool:
+	if main.management_drawer.visible or not main.build_toolbar.visible or main.save_stamp.text != "暂无存档":
+		return false
+	main._open_management(2, true)
+	if not main.management_drawer.visible or main.management_tabs.get_tab_title(main.management_tabs.current_tab) != "军团":
+		return false
+	main._open_management(2, true)
+	if main.management_drawer.visible:
+		return false
+	var farming_menu: MenuButton = main.build_toolbar.get_child(1)
+	farming_menu.get_popup().id_pressed.emit(0)
+	var valid: bool = main.town_map.active_definition != null and main.cancel_build_button.visible
+	main._cancel_preview()
+	return valid and main.town_map.active_definition == null and not main.cancel_build_button.visible
 
 
 # 侦察验收：真实界面派遣，检查扣费、兵员锁定、跨读档计时和揭示。

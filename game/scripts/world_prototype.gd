@@ -27,6 +27,7 @@ const FARM = preload("res://data/buildings/farm.tres")
 const RANCH = preload("res://data/buildings/ranch.tres")
 const FISHERY = preload("res://data/buildings/fishery.tres")
 const RegionOverview = preload("res://scripts/region_overview.gd")
+const HudTheme = preload("res://scripts/hud_theme.gd")
 const TownMap = preload("res://scripts/town_map.gd")
 const State = preload("res://scripts/world_state.gd")
 const Clock = preload("res://scripts/strategic_clock.gd")
@@ -74,6 +75,11 @@ var displayed_building_tick: int = -1
 var pending_build_command: String = ""
 var inspected_building_id: String = ""
 var management_scroll: ScrollContainer
+var management_drawer: PanelContainer
+var management_tabs: TabContainer
+var build_toolbar: HBoxContainer
+var cancel_build_button: Button
+var save_stamp: Label
 var inspection_card: PanelContainer
 var inspection_label: Label
 var inspection_increase: Button
@@ -182,6 +188,8 @@ func _ready() -> void:
 		if not world_probe.is_empty() or not build_probe.is_empty() or not food_probe.is_empty() or not storage_probe.is_empty() or not material_probe.is_empty() or not inspection_probe.is_empty() or not removal_probe.is_empty() or not civic_probe.is_empty() or not army_probe.is_empty() or not disband_probe.is_empty() or not legion_probe.is_empty():
 			get_tree().quit(1)
 			return
+	else:
+		_refresh_save_stamp()
 	_refresh()
 	if not world_probe.is_empty():
 		get_tree().quit(_verify_export(world_probe))
@@ -207,23 +215,77 @@ func _ready() -> void:
 		get_tree().quit(LegionProbe.run(self, legion_probe))
 
 
-# 界面模块：左侧为占位地图，右侧为可滚动管理面板，二者输入互不穿透。
+# 界面模块：顶部放全局状态，中间留地图，底部放建造与管理入口。
 func _build_ui() -> void:
-	var margin: MarginContainer = MarginContainer.new()
-	add_child(margin)
-	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	for side: String in ["left", "right", "top", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, 12)
-	var columns: HBoxContainer = HBoxContainer.new()
-	columns.add_theme_constant_override("separation", 16)
-	margin.add_child(columns)
-	var map_column: VBoxContainer = VBoxContainer.new()
+	theme = HudTheme.make()
+	var backdrop := PanelContainer.new()
+	backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(backdrop)
+	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	backdrop.add_theme_stylebox_override("panel", HudTheme.surface("#181e19", "#181e19", 10))
+	var layout := VBoxContainer.new()
+	layout.add_theme_constant_override("separation", 8)
+	backdrop.add_child(layout)
+	_build_header(layout)
+
+	var columns := HBoxContainer.new()
+	columns.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	columns.add_theme_constant_override("separation", 8)
+	layout.add_child(columns)
+	_build_map(columns)
+	_build_management_drawer(columns)
+	_build_command_bar(layout)
+	_build_save_picker()
+	_sync_building_view()
+	_refresh_map_info()
+
+
+# 抬头信息：资源单行排列，地图、暂停和存读档入口始终可见。
+func _build_header(layout: VBoxContainer) -> void:
+	var header := PanelContainer.new()
+	layout.add_child(header)
+	var strips := VBoxContainer.new()
+	header.add_child(strips)
+	var summary := HBoxContainer.new()
+	summary.add_theme_constant_override("separation", 14)
+	strips.add_child(summary)
+	var identity := Label.new()
+	identity.text = "边境守卫"
+	identity.add_theme_font_size_override("font_size", 18)
+	identity.add_theme_color_override("font_color", Color("#ead7a0"))
+	summary.add_child(identity)
+	resource_label = Label.new()
+	resource_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	resource_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	summary.add_child(resource_label)
+	date_label = Label.new()
+	summary.add_child(date_label)
+
+	var navigation := HBoxContainer.new()
+	navigation.add_theme_constant_override("separation", 6)
+	strips.add_child(navigation)
+	region_toggle = _button(navigation, "区域地图", _toggle_region_view)
+	var divider := Control.new()
+	divider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	navigation.add_child(divider)
+	pause_button = _button(navigation, "继续（空格）", _toggle_pause)
+	for multiplier: int in [1, 2, 4]:
+		_button(navigation, "%d×" % multiplier, _set_speed.bind(multiplier))
+	_button(navigation, "保存进度", _save)
+	_button(navigation, "读取进度", _choose_save)
+	progress = ProgressBar.new()
+	progress.max_value = State.DAY_TICKS
+	progress.show_percentage = false
+	progress.custom_minimum_size.y = 3
+	strips.add_child(progress)
+
+
+# 地图模块：地图填满剩余空间，视角工具放在地图自身下边缘。
+func _build_map(columns: HBoxContainer) -> void:
+	var map_column := VBoxContainer.new()
 	map_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	map_column.custom_minimum_size.x = 320
 	columns.add_child(map_column)
-	var navigation: HBoxContainer = HBoxContainer.new()
-	map_column.add_child(navigation)
-	region_toggle = _button(navigation, "区域地图", _toggle_region_view)
 	town_view = VBoxContainer.new()
 	town_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	map_column.add_child(town_view)
@@ -232,100 +294,173 @@ func _build_ui() -> void:
 	region_overview.hide()
 	region_overview.town_requested.connect(_show_region_view.bind(false))
 	map_column.add_child(region_overview)
-	var title: Label = Label.new()
-	title.text = "边境镇 · 建设区 200×200"
-	town_view.add_child(title)
 	town_map = TownMap.new()
 	town_map.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	town_map.custom_minimum_size = Vector2(320, 200)
+	town_map.custom_minimum_size = Vector2(320, 175)
 	town_view.add_child(town_map)
-	map_info = Label.new()
-	town_view.add_child(map_info)
-	var map_actions: HBoxContainer = HBoxContainer.new()
+	var map_actions := HBoxContainer.new()
+	map_actions.add_theme_constant_override("separation", 6)
 	town_view.add_child(map_actions)
-	_button(map_actions, "回城镇（Home）", town_map.reset_view)
+	_button(map_actions, "回城镇", town_map.reset_view).tooltip_text = "Home 回到城镇"
 	_button(map_actions, "建设区全览", town_map.show_entire_map)
-	var help: Label = Label.new()
-	help.text = "单击整选 / 双击聚焦建筑 / 中键拖动 / 滚轮缩放 / 右键取消\n伐木场须紧邻林地，采石场须紧邻石矿"
-	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	town_view.add_child(help)
+	map_info = Label.new()
+	map_info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	map_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	map_info.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	map_info.tooltip_text = "双击聚焦，中键拖动，滚轮缩放，右键取消。"
+	map_actions.add_child(map_info)
 	town_map.hovered_changed.connect(_on_map_cell_changed)
 	town_map.selected_changed.connect(_on_town_selected)
 	town_map.view_changed.connect(_refresh_map_info)
 	town_map.placement_changed.connect(_on_placement_changed)
 	town_map.placement_clicked.connect(_on_placement_clicked)
 	town_map.placement_cancelled.connect(_on_placement_cancelled)
-	var scroll: ScrollContainer = ScrollContainer.new()
-	management_scroll = scroll
-	scroll.custom_minimum_size.x = 320
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	columns.add_child(scroll)
-	panel = VBoxContainer.new()
-	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	panel.add_theme_constant_override("separation", 8)
-	scroll.add_child(panel)
-	_label("领地管理")
-	date_label = _label("")
-	resource_label = _label("")
+
+
+# 管理抽屉：按当前对象、城镇、军团与账本分组，默认给地图留足空间。
+func _build_management_drawer(columns: HBoxContainer) -> void:
+	management_drawer = PanelContainer.new()
+	management_drawer.custom_minimum_size.x = 326
+	columns.add_child(management_drawer)
+	var body := VBoxContainer.new()
+	management_drawer.add_child(body)
+	var heading := HBoxContainer.new()
+	body.add_child(heading)
+	var title := Label.new()
+	title.text = "领地管理"
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.add_theme_color_override("font_color", Color("#ead7a0"))
+	heading.add_child(title)
+	_button(heading, "收起", management_drawer.hide)
+	management_tabs = TabContainer.new()
+	management_tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_child(management_tabs)
+	management_scroll = _drawer_page("建筑")
+	_build_inspection_card()
+
+	_drawer_page("城镇")
 	storage_label = _label("")
 	civic_label = _label("")
 	var taxes: HBoxContainer = _row()
 	for policy: String in Civic.POLICIES:
 		tax_buttons[policy] = _button(taxes, Civic.policy_name(policy), _set_tax_policy.bind(policy))
-	progress = ProgressBar.new()
-	progress.max_value = State.DAY_TICKS
-	progress.show_percentage = false
-	panel.add_child(progress)
-	var actions: HBoxContainer = _row()
-	pause_button = _button(actions, "继续（空格）", _toggle_pause)
-	for multiplier: int in [1, 2, 4]:
-		_button(actions, "%d倍速" % multiplier, _set_speed.bind(multiplier))
-	var saves: HBoxContainer = _row()
-	_button(saves, "保存战略进度", _save)
-	_button(saves, "读取战略进度", _choose_save)
-	_build_save_picker()
-	_build_inspection_card()
-	army_label = _label("" )
-	_build_legion_panel()
-	bill_label = _label("")
-	food_detail_button = _button(_row(), "展开粮食收支", _toggle_food_details)
-	food_detail_label = _label("")
-	civic_bill_label = _label("")
-	army_bill_label = _label("")
-	material_bill_label = _label("")
-	status_label = _label("新世界已暂停；请选择速度后继续")
-	var building_actions: HBoxContainer = _row()
-	_button(building_actions, "建住宅 2×2", _start_preview.bind(HOUSE))
-	_button(building_actions, "农场 20×20", _start_large_preview.bind("b_farm"))
-	_button(building_actions, "粮仓 10×10", _start_large_preview.bind("b_granary"))
-	var food_actions: HBoxContainer = _row()
-	_button(food_actions, "牧场 20×20", _start_large_preview.bind("b_ranch"))
-	_button(food_actions, "建渔场 3×2", _start_preview.bind(FISHERY))
-	_button(food_actions, "取消", _cancel_preview)
-	var material_actions: HBoxContainer = _row()
-	_button(material_actions, "建伐木场 3×3", _start_preview.bind(LUMBER))
-	_button(material_actions, "建采石场 3×3", _start_preview.bind(QUARRY))
-	var military_actions: HBoxContainer = _row()
-	_button(military_actions, "军营 20×20", _start_large_preview.bind("b_barracks"))
-	placement_label = _label("选择建筑；左键确认会扣材料")
 	building_label = _label("")
 	construction_label = _label("")
 	labor_label = _label("")
 	var labor_actions: HBoxContainer = _row()
-	_button(labor_actions, "工人 -1", _change_builders.bind(-1))
-	_button(labor_actions, "工人 +1", _change_builders.bind(1))
+	_button(labor_actions, "施工 −1", _change_builders.bind(-1))
+	_button(labor_actions, "施工 +1", _change_builders.bind(1))
 	production_label = _label("")
 	producer_picker = OptionButton.new()
 	panel.add_child(producer_picker)
 	producer_picker.item_selected.connect(_on_producer_selected)
 	producer_detail = _label("")
 	var production_actions: HBoxContainer = _row()
-	_button(production_actions, "生产工人 -1", _change_producers.bind(-1))
-	_button(production_actions, "生产工人 +1", _change_producers.bind(1))
-	_label("1日120秒；每日先收粮再消耗15；税收受税率与满意度影响。数值待平衡。")
-	_label("中央为初始领主厅。左键确认建造；单队施工：2人原速、1人半速、0人停工。完工住宅+10容量；生产建筑完工后在下拉框分配工人；每日入库产物，暂无人口增长。")
-	_sync_building_view()
-	_refresh_map_info()
+	_button(production_actions, "生产 −1", _change_producers.bind(-1))
+	_button(production_actions, "生产 +1", _change_producers.bind(1))
+
+	_drawer_page("军团")
+	army_label = _label("")
+	_build_legion_panel()
+
+	_drawer_page("账本")
+	bill_label = _label("")
+	food_detail_button = _button(_row(), "展开粮食收支", _toggle_food_details)
+	food_detail_label = _label("")
+	civic_bill_label = _label("")
+	army_bill_label = _label("")
+	material_bill_label = _label("")
+	management_drawer.hide()
+
+
+# 分页模块：每个分类独立滚动，原有按钮继续操作同一份数据。
+func _drawer_page(name_text: String) -> ScrollContainer:
+	var scroll := ScrollContainer.new()
+	scroll.name = name_text
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	management_tabs.add_child(scroll)
+	panel = VBoxContainer.new()
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	panel.add_theme_constant_override("separation", 8)
+	scroll.add_child(panel)
+	return scroll
+
+
+# 抽屉入口：同一类别再次点击即收起，建筑选中可以直接定位详情。
+func _open_management(index: int, toggle: bool = false) -> void:
+	if toggle and management_drawer.visible and management_tabs.current_tab == index:
+		management_drawer.hide()
+		return
+	management_tabs.current_tab = index
+	management_drawer.show()
+
+
+# 底栏模块：建造按用途归类，管理入口与游戏反馈放在固定位置。
+func _build_command_bar(layout: VBoxContainer) -> void:
+	var footer := PanelContainer.new()
+	layout.add_child(footer)
+	var rows := VBoxContainer.new()
+	footer.add_child(rows)
+	var toolbar := HBoxContainer.new()
+	toolbar.add_theme_constant_override("separation", 7)
+	rows.add_child(toolbar)
+	build_toolbar = HBoxContainer.new()
+	build_toolbar.add_theme_constant_override("separation", 6)
+	toolbar.add_child(build_toolbar)
+	_build_category("民居仓储", ["b_house", "b_granary"])
+	_build_category("农业渔牧", ["b_farm", "b_ranch", "b_fishery"])
+	_build_category("林矿采集", ["b_lumber", "b_quarry"])
+	_build_category("军事建造", ["b_barracks"])
+	cancel_build_button = _button(build_toolbar, "取消建造", _cancel_preview)
+	cancel_build_button.hide()
+	var divider := Control.new()
+	divider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	toolbar.add_child(divider)
+	_button(toolbar, "建筑详情", _open_management.bind(0, true))
+	_button(toolbar, "城镇管理", _open_management.bind(1, true))
+	_button(toolbar, "军团", _open_management.bind(2, true))
+	_button(toolbar, "收支账本", _open_management.bind(3, true))
+
+	placement_label = Label.new()
+	placement_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	placement_label.hide()
+	rows.add_child(placement_label)
+	var notices := HBoxContainer.new()
+	rows.add_child(notices)
+	status_label = Label.new()
+	status_label.text = "选择建筑查看详情"
+	status_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	status_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	notices.add_child(status_label)
+	save_stamp = Label.new()
+	save_stamp.add_theme_color_override("font_color", Color("#c8b88b"))
+	notices.add_child(save_stamp)
+
+
+# 建造分类：展示真实占地，从选项自动进入对应地块预览。
+func _build_category(title: String, ids: Array[String]) -> void:
+	var menu := MenuButton.new()
+	menu.text = title + " ▾"
+	menu.flat = false
+	menu.focus_mode = Control.FOCUS_NONE
+	build_toolbar.add_child(menu)
+	var popup: PopupMenu = menu.get_popup()
+	for i: int in range(ids.size()):
+		var id: String = ids[i]
+		var definition: Resource = Construction.Catalog.find(id)
+		var footprint: Vector2i = Construction.Catalog.footprint({"def_id": id, "large": Construction.Catalog.LARGE_SIZES.has(id)})
+		popup.add_item("%s   %d×%d" % [definition.get("display_name"), footprint.x, footprint.y], i)
+	popup.id_pressed.connect(_build_menu_selected.bind(ids))
+
+
+# 建造选择：资源类型采用既有规则，选择分类项后隐藏抽屉扩大摆放视野。
+func _build_menu_selected(index: int, ids: Array[String]) -> void:
+	var id: String = ids[index]
+	management_drawer.hide()
+	if Construction.Catalog.LARGE_SIZES.has(id):
+		_start_large_preview(id)
+	else:
+		_start_preview(Construction.Catalog.for_construction(id, false))
 
 
 # 地块通知模块：只更新界面提示，不改变人口、库存或战略时间。
@@ -343,11 +478,11 @@ func _cell_text(cell: Vector2i) -> String:
 	return "(%d,%d)" % [cell.x, cell.y] if cell.x >= 0 and cell.y >= 0 else "—"
 
 
-# 标签模块：统一设置换行与居中，避免较长账单超出窗口。
+# 标签模块：统一设置左对齐与换行，便于浏览较长账单。
 func _label(text: String) -> Label:
 	var label: Label = Label.new()
 	label.text = text
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	panel.add_child(label)
 	return label
@@ -385,6 +520,7 @@ func _show_region_view(show_overview: bool) -> void:
 		region_overview.sync(world)
 	region_overview.visible = show_overview
 	town_view.visible = not show_overview
+	build_toolbar.visible = not show_overview
 	region_toggle.text = "返回城镇" if show_overview else "区域地图"
 
 
@@ -451,19 +587,41 @@ func _set_speed(multiplier: int) -> void:
 
 # 保存模块：在完整逻辑步后捕获快照，写入成功才提示。
 func _save() -> void:
-	status_label.text = "已新建存档（第%d日），最多保留7份" % world.current_day() if store.save_world(world) else "保存失败：" + store.error_message
+	if not store.save_world(world):
+		status_label.text = "保存失败：" + store.error_message
+		return
+	_refresh_save_stamp()
+	status_label.text = "已新建存档 · 游戏第%d日" % world.current_day()
+
+
+# 存档时间文字：直接显示本地时间，旧存档保留未知状态。
+func _saved_local_text(row: Dictionary) -> String:
+	return "保存于 %s" % row["saved_local"] if row["saved_local"] != null else "保存时间未知"
+
+
+# 存档时间栏：启动或保存时显示最新一份，指定读档时显示所选记录。
+func _refresh_save_stamp(save_id: int = 0, loaded: bool = false) -> void:
+	var rows: Array = store.list_saves()
+	for row: Dictionary in rows:
+		if save_id == 0 or int(row["id"]) == save_id:
+			var context: String = "当前读档" if loaded else "最近存档"
+			save_stamp.text = "%s · %s" % [context, _saved_local_text(row)]
+			save_stamp.tooltip_text = "以本机时间显示"
+			return
+	save_stamp.text = "暂无存档" if store.error_message.is_empty() else "保存时间不可用"
+	save_stamp.tooltip_text = ""
 
 
 # 读档布局：通过行选择与确认按钮加载指定存档。
 func _build_save_picker() -> void:
 	save_picker = ConfirmationDialog.new()
-	save_picker.title = "读取战略进度"
+	save_picker.title = "读取进度 · 保存时间为本机时间"
 	save_picker.exclusive = true
 	save_picker.get_ok_button().text = "读取所选"
 	save_picker.get_cancel_button().text = "返回"
 	add_child(save_picker)
 	save_items = ItemList.new()
-	save_items.custom_minimum_size = Vector2(490, 228)
+	save_items.custom_minimum_size = Vector2(600, 228)
 	save_picker.add_child(save_items)
 	save_picker.confirmed.connect(_load_selected)
 	save_items.item_activated.connect(_activate_save)
@@ -477,7 +635,7 @@ func _choose_save() -> void:
 		return
 	save_items.clear()
 	for row: Dictionary in rows:
-		var date: String = str(row["saved_local"]) if row["saved_local"] != null else "保存时间未知"
+		var date: String = _saved_local_text(row)
 		var day: String = "第%d日" % row["game_day"] if int(row["game_day"]) > 0 else "游戏日期未知"
 		save_items.add_item("%s  ·  %s  ·  %s  ·  #%d" % [date, day, row["title"], row["id"]])
 		save_items.set_item_metadata(save_items.item_count - 1, int(row["id"]))
@@ -517,6 +675,7 @@ func _load(save_id: int = 0) -> void:
 	town_map.cancel_preview()
 	_sync_building_view()
 	status_label.text = "读取成功：已恢复日期、资源、建筑与暂停状态"
+	_refresh_save_stamp(save_id, true)
 	_refresh()
 
 
@@ -534,6 +693,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 				get_viewport().set_input_as_handled()
 			elif town_map.active_definition != null:
 				town_map.cancel_preview()
+				get_viewport().set_input_as_handled()
+			elif management_drawer.visible:
+				management_drawer.hide()
 				get_viewport().set_input_as_handled()
 			else:
 				get_tree().quit()
@@ -600,6 +762,8 @@ func _cancel_preview() -> void:
 func _on_placement_changed(result: Dictionary) -> void:
 	if placement_label == null:
 		return
+	placement_label.visible = bool(result.get("active", false))
+	cancel_build_button.visible = placement_label.visible
 	if not result.get("active", false):
 		placement_label.text = "已退出建造模式，可普通选格"
 	else:
@@ -820,6 +984,7 @@ func _inspect_building(id: String, reveal: bool) -> void:
 		_refresh_production()
 	_refresh_inspection()
 	if reveal and not inspected_building_id.is_empty():
+		_open_management(0)
 		management_scroll.call_deferred("ensure_control_visible", inspection_card)
 
 
@@ -954,7 +1119,7 @@ func _refresh_army() -> void:
 	if army_label == null:
 		return
 	var ready: int = Army.people(world.troops, false, true)
-	army_label.text = "军队：现役%d人，训练%d人；占城镇劳动力%d" % [ready, Army.people(world.troops) - ready, Army.people(world.troops, true)]
+	army_label.text = "现役%d人  ·  训练%d人\n占用劳动力 %d 人" % [ready, Army.people(world.troops) - ready, Army.people(world.troops, true)]
 	if not world.troops.is_empty():
 		army_label.text += "\n全军士气 %d/%d" % [world.army_morale, Army.Morale.MAXIMUM]
 	if int(world.retired_army_cost["ration_credit"]) > 0 or int(world.retired_army_cost["wage_credit"]) > 0:
