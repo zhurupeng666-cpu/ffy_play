@@ -107,8 +107,7 @@ static func building(canvas: Control, id: String, center: Vector2, spread: float
 				for column: int in range(plots):
 					var offset: Vector2 = Vector2((column - row) * 112, (column + row - plots + 1) * 56)
 					var plot: Vector2 = center + offset
-					if Rect2(Vector2.ZERO, canvas.size).grow(120 * canvas.zoom_level).has_point(canvas.world_to_screen(plot)):
-						_fields(canvas, plot)
+					_fields(canvas, plot)
 			_house(canvas, center + Vector2(-65 * spread, -10), 27, 18, Color("#a45d3b"), Color("#c69b63"), "timber", 2.85 if spread > 1.0 else 1.42)
 		"b_ranch":
 			_ranch(canvas, center, spread)
@@ -125,7 +124,7 @@ static func building(canvas: Control, id: String, center: Vector2, spread: float
 
 # 线条模块：描边与木梁使用同一镜头刻度和像素对齐。
 static func _stroke(canvas: Control, center: Vector2, a: Vector2, b: Vector2, color: Color, width: float = 2.0) -> void:
-	canvas.art_canvas.draw_line(canvas.art_point(center + a), canvas.art_point(center + b), color, maxf(1.0, width * canvas.zoom_level * canvas.art_scale), false)
+	canvas.art_canvas.draw_line(canvas.art_point(center + a), canvas.art_point(center + b), color, maxf(1.0, width * canvas.art_zoom() * canvas.art_scale), false)
 
 # 立面模块：按墙面的斜边定位门窗、梁柱和石缝，使构件服从透视。
 static func _wall(canvas: Control, center: Vector2, a: Vector2, b: Vector2, height: int, wall: Color, mode: String, front: bool) -> void:
@@ -167,7 +166,10 @@ static func _wall_opening(canvas: Control, center: Vector2, a: Vector2, b: Vecto
 	_stroke(canvas, center, middle + low, middle + high, Ink, 1.5)
 	if not door:
 		_stroke(canvas, center, l + (low + high) * 0.5, r + (low + high) * 0.5, Ink, 1.5)
+		_stroke(canvas, center, l + low + Vector2(-1, 1), r + low + Vector2(1, 1), Color("#a57e53"), 2.8)
 	else:
+		_stroke(canvas, center, l + low + Vector2(1, -3), r + low + Vector2(-1, -3), Color("#b58f65"), 2)
+		_stroke(canvas, center, l + high + Vector2(2, 4), r + low + Vector2(-2, -3), Color("#5f4533"), 2)
 		_pixel(canvas, center, middle + (low + high) * 0.5 + Vector2(2, 0), Vector2(2, 2), Color("#e1ae61"))
 
 # 房屋模块：根据同一屋基构建双坡屋顶、三角山墙、滴水线和墙体。
@@ -202,6 +204,12 @@ static func _house(canvas: Control, center: Vector2, span: int, height: int, roo
 		_chimney(canvas, center + back_ridge.lerp(front_ridge, 0.28))
 	if mode == "store":
 		_stroke(canvas, center, south + Vector2(-7, 4), south + Vector2(7, -3), Color("#d7a269"), 4.0)
+	if mode in ["store", "timber", "stone"]:
+		_stroke(canvas, center, eave_s, south + Vector2(0, 3), Color("#674b3a"), 3.4)
+		_stroke(canvas, center, eave_s + Vector2(1, 1), south + Vector2(1, 3), Color("#bd976d"), 1.1)
+		for ratio: float in [0.24, 0.52, 0.8]:
+			var peg: Vector2 = eave_w.lerp(eave_s, ratio) + Vector2(0, 2)
+			_pixel(canvas, center, peg, Vector2(3, 2), Color("#bd9a71"))
 	canvas.art_scale = 1.0
 
 # 屋瓦模块：顺坡的错缝纹理增强屋顶坡度与瓦片层次。
@@ -258,11 +266,9 @@ static func _fields(canvas: Control, center: Vector2) -> void:
 		var offset: Vector2 = Vector2(-94 + row * 12, -1 + row * 6)
 		var length: float = 88.0
 		_poly(canvas, center + offset, [Vector2.ZERO, Vector2(length, -length * 0.5), Vector2(length + 9, -length * 0.5 + 4), Vector2(9, 4)], Color("#60452f"))
-		if canvas.zoom_level < 0.6:
-			_stroke(canvas, center, offset + Vector2(5, -2), offset + Vector2(length - 4, -length * 0.5), Color("#a7ad5c"), 3.2)
-			continue
-		for crop: int in range(11):
-			var seed: Vector2 = offset + Vector2(6 + crop * 7, -1 - crop * 3.5)
+		_stroke(canvas, center, offset + Vector2(5, -2), offset + Vector2(length - 4, -length * 0.5), Color("#979750"), 2.8)
+		for crop: int in range(8):
+			var seed: Vector2 = offset + Vector2(7 + crop * 9, -1 - crop * 4.5)
 			_stroke(canvas, center, seed, seed - Vector2(0, 6 + (row + crop) % 3), Color("#d3c365") if row % 2 == 0 else Color("#a7ad5c"), 2.8)
 
 # 牧场模块：以整块占地为围栏，远栏、畜棚、牲畜和近栏按层绘制。

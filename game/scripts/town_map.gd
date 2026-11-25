@@ -44,18 +44,24 @@ var yard_counts_by_barracks: Dictionary = {}
 var staff_by_site: Dictionary = {}
 var scenery_time: float = 0.0
 var has_ranch: bool = false
+var has_fishery: bool = false
 var scenery_frame: int = 0
 var building_faces: Dictionary = {}
 # 绘图分层：固定地貌、活动单位、交互标记分别失效更新。
-var static_layer: Control
+var static_layer: Node2D
+var static_patches: Array[Dictionary] = []
+var static_dirty: bool = true
+const STATIC_PATCH_LIMIT: int = 5
+const INACTIVE_PATCH_POSITION := Vector2(1000000, 1000000)
+var art_world_space: bool = false
+var work_areas: Dictionary = {}
+var equipment_cells: Dictionary = {}
 var motion_layer: Control
 var art_canvas: CanvasItem
 var animated_objects: Array[Dictionary] = []
 var art_origin: Vector2 = Vector2.ZERO
 var art_scale: float = 1.0
 const CAMERA_BUFFER: float = 168.0
-var rendered_pan: Vector2 = Vector2.ZERO
-var rendered_motion_pan: Vector2 = Vector2.ZERO
 var available_resources: Dictionary = {}
 var economy_ready: bool = false
 var active_definition: Resource
@@ -69,10 +75,12 @@ func _ready() -> void:
 	clip_contents = true
 	mouse_default_cursor_shape = Control.CURSOR_CROSS
 	_make_ground()
-	static_layer = _make_map_layer(_draw_static_map)
+	static_layer = Node2D.new()
+	static_layer.show_behind_parent = true
+	add_child(static_layer)
 	motion_layer = _make_map_layer(_draw_motion)
 	_fit_camera()
-	_update_ground_camera()
+	_redraw_scene()
 	resized.connect(_on_resized)
 	mouse_exited.connect(_on_mouse_exited)
 
@@ -125,19 +133,67 @@ func _make_map_layer(draw_callback: Callable) -> Control:
 	return layer
 
 
-# 失效模块：视角变化会更新三层，仅悬停和动画各自重画所需层。
+# 镜头变换：已有静态指令以世界坐标保留，只有视窗越出缓存范围才补画。
 func _redraw_scene() -> void:
 	_update_ground_camera()
-	static_layer.position = Vector2.ZERO
-	motion_layer.position = Vector2.ZERO
-	static_layer.queue_redraw()
+	static_layer.position = world_to_screen(Vector2.ZERO)
+	static_layer.scale = Vector2.ONE * zoom_level
+	_use_static_patch(_world_viewport())
 	motion_layer.queue_redraw()
 	queue_redraw()
 
 
+# 静景缓存：保留最近去过的区域，可从全览、主城和资源区来回跳转。
+func _use_static_patch(view: Rect2) -> void:
+	if static_dirty:
+		for previous: Dictionary in static_patches:
+			previous["node"].free()
+		static_patches.clear()
+		static_dirty = false
+	var decorate: bool = zoom_level >= 0.085
+	var best: int = -1
+	var width: float = INF
+	for i: int in range(static_patches.size()):
+		var patch: Dictionary = static_patches[i]
+		var coverage: Rect2 = patch["coverage"]
+		if patch["decorate"] == decorate and coverage.encloses(view) and coverage.size.x < minf(width, view.size.x * 4.0):
+			best = i
+			width = coverage.size.x
+	# 保留离屏画布的绘制指令，回访时直接平移回来。
+	if not static_patches.is_empty() and best != static_patches.size() - 1:
+		static_patches[-1]["node"].position = INACTIVE_PATCH_POSITION
+	var current: Dictionary
+	if best < 0:
+		var node := Node2D.new()
+		static_layer.add_child(node)
+		var motion: Array[Dictionary] = []
+		current = {"node": node, "coverage": view.grow(CAMERA_BUFFER / zoom_level), "decorate": decorate, "faces": {}, "motion": motion}
+		node.draw.connect(_draw_static_map.bind(current))
+	else:
+		current = static_patches.pop_at(best)
+	static_patches.append(current)
+	if static_patches.size() > STATIC_PATCH_LIMIT:
+		var oldest: Dictionary = static_patches.pop_front()
+		oldest["node"].free()
+	building_faces = current["faces"]
+	animated_objects = current["motion"]
+	current["node"].position = Vector2.ZERO
+
+
+# 视窗换算：地形、静态几何和可见性使用同一世界坐标系。
+func _world_viewport() -> Rect2:
+	return Rect2(screen_to_world(Vector2.ZERO), size / zoom_level)
+
+
 # 美术坐标模块：放大建筑模型或资源造型，保持地面投影和逻辑占地。
 func art_point(world_point: Vector2) -> Vector2:
-	return world_to_screen(art_origin + (world_point - art_origin) * art_scale).round()
+	var point: Vector2 = art_origin + (world_point - art_origin) * art_scale
+	return point if art_world_space else world_to_screen(point)
+
+
+# 笔画比例：缓存几何的线宽用世界单位，活动层随当前镜头缩放。
+func art_zoom() -> float:
+	return 1.0 if art_world_space else zoom_level
 
 
 # 每帧镜头：方向键连续移动，景物仍按独立低频节奏更新。
@@ -151,7 +207,7 @@ func _process(delta: float) -> void:
 			direction += PAN_KEYS[arrow]
 		if direction != Vector2.ZERO:
 			_pan_camera(direction.normalized() * PAN_SPEED * minf(delta, 0.05))
-	if zoom_level < 0.23 or (not has_ranch and yard_counts_by_barracks.is_empty() and staff_by_site.is_empty()):
+	if zoom_level < 0.12 or (not has_ranch and not has_fishery and yard_counts_by_barracks.is_empty() and staff_by_site.is_empty()):
 		return
 	scenery_time += delta
 	var frame: int = floori(scenery_time * 12.0)
@@ -186,15 +242,25 @@ func _diamond(cell: Vector2i) -> PackedVector2Array:
 	return points
 
 
-# 静景模块：只有镜头或建筑布局变化时才重画地貌与建筑。
-func _draw_static_map() -> void:
-	art_canvas = static_layer
-	rendered_pan = pan_offset
-	var visible_objects: Rect2 = Rect2(screen_to_world(Vector2.ZERO), size / zoom_level).grow(CAMERA_BUFFER / zoom_level)
+# 静景缓存：屋顶、场地和器械使用同一批完整世界几何，缩放时保留轮廓。
+func _draw_static_map(patch: Dictionary) -> void:
+	var prior_faces: Dictionary = building_faces
+	var prior_motion: Array[Dictionary] = animated_objects
+	building_faces = patch["faces"]
+	animated_objects = []
+	art_canvas = patch["node"]
+	art_world_space = true
+	art_scale = 1.0
+	var coverage: Rect2 = patch["coverage"]
 	for record: Dictionary in placed_buildings:
-		if visible_objects.grow(_building_radius(record)).has_point(_building_center(record)):
+		if coverage.intersects(_building_bounds(record)):
 			_draw_foundation(record)
-	_draw_map_objects(visible_objects)
+	_draw_map_objects(coverage, patch["decorate"])
+	patch["motion"] = animated_objects
+	if patch["node"] != static_patches[-1]["node"]:
+		building_faces = prior_faces
+		animated_objects = prior_motion
+	art_world_space = false
 	motion_layer.queue_redraw()
 
 
@@ -284,17 +350,6 @@ func _gui_input(event: InputEvent) -> void:
 		_update_hover(event.position)
 
 
-# 模型缓存：短距离平移已绘制画布，超过缓冲边界后才刷新附近模型。
-func _shift_scene() -> void:
-	var offset: Vector2 = pan_offset - rendered_pan
-	if maxf(absf(offset.x), absf(offset.y)) >= CAMERA_BUFFER:
-		_redraw_scene()
-	else:
-		static_layer.position = offset
-		motion_layer.position = pan_offset - rendered_motion_pan
-		queue_redraw()
-
-
 # 键盘输入：箭头按下由地图接收，弹窗或输入控件可优先处理按键。
 func _unhandled_key_input(event: InputEvent) -> void:
 	if not (event is InputEventKey) or not event.pressed or not is_visible_in_tree() or not PAN_KEYS.has(event.keycode):
@@ -320,8 +375,7 @@ func _pan_camera(delta: Vector2) -> void:
 		return
 	fitting_overview = false
 	pan_offset = next_pan
-	_update_ground_camera()
-	_shift_scene()
+	_redraw_scene()
 	var mouse: Vector2 = get_local_mouse_position()
 	if Rect2(Vector2.ZERO, size).has_point(mouse):
 		_update_hover(mouse)
@@ -331,6 +385,21 @@ func _pan_camera(delta: Vector2) -> void:
 func visit_site(cell: Vector2i) -> void:
 	held_directions.clear()
 	_focus_cell(cell)
+
+
+# 林矿导航：优先对准附近已建采集场在资源格内的设备，未建时定位资源区。
+func visit_work_area(fallback: Vector2i, kind: String) -> void:
+	var target: Vector2i = fallback
+	var nearest: float = INF
+	for area: Dictionary in work_areas.values():
+		if area["kind"] != kind or area["sites"].is_empty():
+			continue
+		var site: Vector2i = area["sites"][0]
+		var distance: float = Vector2(site - fallback).length_squared()
+		if distance < nearest:
+			nearest = distance
+			target = site
+	visit_site(target)
 
 
 # 远景导航：双击全览空地可直接回到可逐格建造的局部镜头。
@@ -468,12 +537,21 @@ func sync_buildings(records: Array) -> void:
 			queue_redraw()
 		return
 	occupied_cells.clear()
+	work_areas.clear()
+	equipment_cells.clear()
 	has_ranch = false
+	has_fishery = false
 	for record: Dictionary in placed_buildings:
 		has_ranch = has_ranch or (record["def_id"] == "b_ranch" and record["state"] == "ready")
+		has_fishery = has_fishery or (record["def_id"] == "b_fishery" and record["state"] == "ready")
+		if record["state"] == "ready" and record["def_id"] in ["b_lumber", "b_quarry"]:
+			var area: Dictionary = WorksiteArt.resource_area(record, equipment_cells)
+			if not area.is_empty():
+				work_areas[record["id"]] = area
 		var anchor: Vector2i = Vector2i(int(record["cell"][0]), int(record["cell"][1]))
 		for cell: Vector2i in Placement.footprint_cells(anchor, Catalog.footprint(record)):
 			occupied_cells[cell] = record["id"]
+	static_dirty = true
 	_update_preview()
 	_redraw_scene()
 
@@ -528,33 +606,38 @@ func _draw_foundation(record: Dictionary) -> void:
 		tint = Color("#786747") if record["def_id"] == "b_farm" else Color("#687343")
 	if not constructing and record["def_id"] == "b_fishery":
 		tint = Color("#867452")
-	var surface: PackedVector2Array = _footprint_outline(anchor, footprint)
-	static_layer.draw_colored_polygon(surface, tint)
+	var surface: PackedVector2Array = _footprint_outline(anchor, footprint, true)
+	art_canvas.draw_colored_polygon(surface, tint)
 	surface.append(surface[0])
-	static_layer.draw_polyline(surface, Color("#473e32aa"), 1.0, false)
+	art_canvas.draw_polyline(surface, Color("#473e32aa"), 2.0, false)
 
 
 # 深度模块：按等距投影纵坐标绘制场景物件，近处覆盖远处。
-func _draw_map_objects(visible_objects: Rect2) -> void:
+func _draw_map_objects(visible_objects: Rect2, decorate: bool) -> void:
 	var objects: Array[Dictionary] = []
-	if zoom_level >= 0.23:
-		var deposit_view: Rect2 = visible_objects.grow(72)
+	if decorate:
+		var deposit_view: Rect2 = visible_objects.grow(104.0)
 		for item: Dictionary in deposit_models:
-			if deposit_view.has_point(item["center"]):
+			if deposit_view.has_point(item["center"]) and not equipment_cells.has(Grid.world_to_cell(item["center"])):
 				objects.append(item)
+	for area: Dictionary in work_areas.values():
+		var sites: Array = area["sites"]
+		for role: int in range(sites.size()):
+			var position: Vector2 = Grid.cell_to_world(sites[role])
+			if visible_objects.grow(160.0).has_point(position):
+				objects.append({"center": position, "equipment": area["kind"], "role": role})
 	for record: Dictionary in placed_buildings:
 		var center: Vector2 = _building_center(record)
-		if visible_objects.grow(_building_radius(record)).has_point(center):
+		if visible_objects.intersects(_building_bounds(record)):
 			objects.append({"center": center, "record": record})
 	objects.sort_custom(_farther_first)
 	building_faces.clear()
 	animated_objects.clear()
 	for item: Dictionary in objects:
 		var center: Vector2 = item["center"]
-		if zoom_level < 0.23:
-			static_layer.draw_circle(world_to_screen(center), 3.0, Color("#c8ae7b"))
-			continue
-		if item.has("deposit"):
+		if item.has("equipment"):
+			WorksiteArt.draw_resource_equipment(self, item["equipment"], center, item["role"])
+		elif item.has("deposit"):
 			Art.deposit(self, center, item["deposit"])
 		elif item["record"]["state"] == "constructing":
 			Art.site(self, center)
@@ -563,8 +646,9 @@ func _draw_map_objects(visible_objects: Rect2) -> void:
 			drawing_building = record["id"]
 			building_faces[drawing_building] = {"anchor": Vector2i(int(record["cell"][0]), int(record["cell"][1])), "faces": []}
 			var spread: float = float(Catalog.footprint(record).x) / float(Catalog.find(record["def_id"]).get("footprint").x)
+			var dock: Dictionary = {}
 			if record["def_id"] == "b_fishery":
-				var dock: Dictionary = Terrain.dock_edge(building_faces[drawing_building]["anchor"], Catalog.footprint(record))
+				dock = Terrain.dock_edge(building_faces[drawing_building]["anchor"], Catalog.footprint(record))
 				if not dock.is_empty():
 					Art.fishing_dock(self, dock["cell"], dock["outward"], center)
 			var worksite: bool = record["def_id"] in WorksiteArt.TYPES
@@ -574,35 +658,41 @@ func _draw_map_objects(visible_objects: Rect2) -> void:
 				Art.building(self, record["def_id"], center, spread)
 			drawing_building = ""
 			if worksite or record["def_id"] in ["b_ranch", "b_barracks"]:
-				animated_objects.append({"center": center, "type": record["def_id"], "id": record["id"], "spread": spread, "worksite": worksite})
+				animated_objects.append({
+					"center": center, "type": record["def_id"], "id": record["id"], "spread": spread,
+					"worksite": worksite, "bounds": _building_bounds(record), "dock": dock,
+				})
 
 
-# 裁剪半径：纳入场地边缘和大型建筑标高，避免镜头靠近时模型突然出现。
-func _building_radius(record: Dictionary) -> float:
-	var footprint: Vector2i = Catalog.footprint(record)
-	return float(footprint.x + footprint.y) * Grid.HALF.x * 0.5 + 140.0
+# 世界包围盒：涵盖地基、屋顶和伸出岸线的码头，边缘进入视窗即保留整座建筑。
+func _building_bounds(record: Dictionary) -> Rect2:
+	var footprint: Vector2 = Vector2(Catalog.footprint(record))
+	var half_span: Vector2 = (footprint.x + footprint.y) * Grid.HALF * 0.5
+	var extent: Vector2 = half_span + Vector2(170, 155)
+	return Rect2(_building_center(record) - extent, extent * 2.0)
 
 
 # 动态层：复用静景过滤后的场地，只绘制镜头附近的牲畜、士兵和在岗工人。
 func _draw_motion() -> void:
 	art_canvas = motion_layer
-	rendered_motion_pan = pan_offset
-	if motion_layer.position != Vector2.ZERO:
-		motion_layer.position = Vector2.ZERO
-	if zoom_level < 0.23:
+	if zoom_level < 0.12:
 		return
-	var visible_bounds: Rect2 = Rect2(Vector2.ZERO, size).grow(32)
+	var view: Rect2 = _world_viewport().grow(65.0)
 	for item: Dictionary in animated_objects:
-		var center: Vector2 = item["center"]
-		var bounds: Vector2 = Vector2(116, 64) * float(item["spread"]) * zoom_level
-		if not visible_bounds.intersects(Rect2(world_to_screen(center) - bounds, bounds * 2.0)):
+		if not view.intersects(item["bounds"]):
 			continue
-		if item["worksite"]:
+		var center: Vector2 = item["center"]
+		if item["type"] == "b_fishery":
 			var workers: int = staff_by_site.get(item["id"], 0)
+			WorksiteArt.draw_fish(self, center, item["dock"], scenery_time)
 			if workers > 0:
-				WorksiteArt.draw_workers(self, item["type"], center, workers, scenery_time)
-		else:
+				WorksiteArt.draw_fishers(self, center, item["dock"], workers, scenery_time)
+		elif not item["worksite"]:
 			Art.moving_units(self, item["type"], center, scenery_time, yard_counts_by_barracks.get(item["id"], Vector2i.ZERO), item["spread"])
+	for id: String in staff_by_site:
+		if work_areas.has(id):
+			var area: Dictionary = work_areas[id]
+			WorksiteArt.draw_resource_workers(self, area, staff_by_site[id], scenery_time, view)
 
 
 # 排序模块：深度相同时按横坐标固定绘制顺序。
@@ -623,7 +713,7 @@ func _building_center(record: Dictionary) -> Vector2:
 func _draw_building_feedback() -> void:
 	for record: Dictionary in placed_buildings:
 		var definition: Resource = Catalog.find(record["def_id"])
-		if zoom_level < 0.25 and record["id"] != inspected_building_id:
+		if zoom_level < 0.14 and record["id"] != inspected_building_id:
 			continue
 		if record["id"] == inspected_building_id:
 			var anchor: Vector2i = Vector2i(int(record["cell"][0]), int(record["cell"][1]))
@@ -651,14 +741,14 @@ func _outline_building(anchor: Vector2i, footprint: Vector2i) -> void:
 
 
 # 投影角点模块：场地描边和远景地貌都使用占地的同一组角点。
-func _footprint_outline(anchor: Vector2i, footprint: Vector2i) -> PackedVector2Array:
+func _footprint_outline(anchor: Vector2i, footprint: Vector2i, in_world: bool = false) -> PackedVector2Array:
 	var top: Vector2 = Grid.cell_to_world(anchor) - Vector2(0, Grid.HALF.y)
 	var east: Vector2 = Grid.cell_to_world(anchor + Vector2i(footprint.x - 1, 0)) + Vector2(Grid.HALF.x, 0)
 	var bottom: Vector2 = Grid.cell_to_world(anchor + footprint - Vector2i.ONE) + Vector2(0, Grid.HALF.y)
 	var west: Vector2 = Grid.cell_to_world(anchor + Vector2i(0, footprint.y - 1)) - Vector2(Grid.HALF.x, 0)
 	var outline: PackedVector2Array = []
 	for point: Vector2 in [top, east, bottom, west]:
-		outline.append(world_to_screen(point))
+		outline.append(point if in_world else world_to_screen(point))
 	return outline
 
 

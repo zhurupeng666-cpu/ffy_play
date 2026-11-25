@@ -302,8 +302,8 @@ func _build_map(columns: HBoxContainer) -> void:
 	town_view.add_child(map_actions)
 	_button(map_actions, "回城镇", town_map.reset_view).tooltip_text = "Home 回城镇 · 方向键移动"
 	_button(map_actions, "全图", town_map.show_entire_map)
-	_button(map_actions, "林场", town_map.visit_site.bind(Vector2i(50, 46)))
-	_button(map_actions, "石矿", town_map.visit_site.bind(Vector2i(106, 39)))
+	_button(map_actions, "林场", town_map.visit_work_area.bind(Vector2i(50, 46), "forest"))
+	_button(map_actions, "石矿", town_map.visit_work_area.bind(Vector2i(106, 39), "stone"))
 	_button(map_actions, "河港", town_map.visit_site.bind(Vector2i(22, 90)))
 	map_info = Label.new()
 	map_info.custom_minimum_size.x = 39

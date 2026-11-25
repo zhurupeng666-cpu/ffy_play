@@ -2,6 +2,7 @@
 extends SceneTree
 const State = preload("res://scripts/world_state.gd")
 const Build = preload("res://scripts/construction_service.gd")
+const Terrain = preload("res://scripts/town_terrain.gd")
 const Clock = preload("res://scripts/strategic_clock.gd")
 const Store = preload("res://scripts/world_save_repository.gd")
 const Catalog = preload("res://scripts/building_catalog.gd")
@@ -155,6 +156,11 @@ func _run() -> void:
 	main._change_producers(1)
 	_check(main.numbers["b_quarry_jobs"].text == "1 / 3" and main.numbers["producer_credit"].text.ends_with("石材"), "界面材料岗位或单位错误")
 	_check(main.town_map.staff_by_site.get("building_000003") == 1, "采石场分配后地图工人数错误")
+	for id: String in ["building_000002", "building_000003"]:
+		var area: Dictionary = main.town_map.work_areas.get(id, {})
+		_check(area.get("sites", []).size() == 3, "采集场未分配完整工位")
+		for cell: Vector2i in area.get("sites", []):
+			_check(Terrain.deposit_at(cell) == area["kind"], "设备或工人站位不在对应资源格内")
 	main._save()
 	main._change_producers(1)
 	main._load()
