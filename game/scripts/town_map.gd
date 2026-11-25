@@ -9,6 +9,7 @@ signal placement_clicked(result: Dictionary)
 signal placement_cancelled
 
 const Art = preload("res://scripts/town_art.gd")
+const WorksiteArt = preload("res://scripts/town_worksite_art.gd")
 const Terrain = preload("res://scripts/town_terrain.gd")
 const Catalog = preload("res://scripts/building_catalog.gd")
 const Construction = preload("res://scripts/construction_service.gd")
@@ -38,8 +39,9 @@ var occupied_cells: Dictionary = {}
 var placed_buildings: Array = []
 # 点击几何：可见楼体与占地格共同用于选择，楼体以世界坐标缓存。
 var drawing_building: String = ""
-# 景物动画：每秒重绘约十二次，只在可见地图有完工牧场时运行。
+# 景物动画：在地图中低频重画按岗位分配的工人、牲畜与训练单位。
 var yard_counts_by_barracks: Dictionary = {}
+var staff_by_site: Dictionary = {}
 var scenery_time: float = 0.0
 var has_ranch: bool = false
 var scenery_frame: int = 0
@@ -149,7 +151,7 @@ func _process(delta: float) -> void:
 			direction += PAN_KEYS[arrow]
 		if direction != Vector2.ZERO:
 			_pan_camera(direction.normalized() * PAN_SPEED * minf(delta, 0.05))
-	if zoom_level < 0.23 or (not has_ranch and yard_counts_by_barracks.is_empty()):
+	if zoom_level < 0.23 or (not has_ranch and yard_counts_by_barracks.is_empty() and staff_by_site.is_empty()):
 		return
 	scenery_time += delta
 	var frame: int = floori(scenery_time * 12.0)
@@ -349,7 +351,7 @@ func _focus_building(id: String) -> void:
 		var footprint: Vector2i = Catalog.footprint(record)
 		var span: float = float(footprint.x + footprint.y) * Grid.HALF.x
 		fitting_overview = false
-		zoom_level = clampf(minf((size.x - 30.0) / span, (size.y - 24.0) / (span * 0.5 + 42.0)), 0.20, 3.2)
+		zoom_level = clampf(minf((size.x - 30.0) / span, (size.y - 24.0) / (span * 0.5 + 42.0)), 0.24, 3.2)
 		pan_offset = (Grid.center() - center) * zoom_level
 		view_changed.emit()
 		_redraw_scene()
@@ -487,6 +489,17 @@ func _same_layout(before: Array, after: Array) -> bool:
 	return true
 
 
+# 工人同步：岗位调整立刻更新活动层，工地和空岗不创建活动单位。
+func sync_worksite_staff(records: Array) -> void:
+	var staffed: Dictionary = {}
+	for record: Dictionary in records:
+		if record["state"] == "ready" and record["def_id"] in WorksiteArt.TYPES and int(record["workers"]) > 0:
+			staffed[record["id"]] = int(record["workers"])
+	if staffed != staff_by_site:
+		staff_by_site = staffed
+		motion_layer.queue_redraw()
+
+
 # 场地同步：按军营接收留营现役与在训人数，场地为空或离开城镇时节省动画开销。
 func sync_yard_counts(current: Dictionary) -> void:
 	if current == yard_counts_by_barracks:
@@ -554,10 +567,14 @@ func _draw_map_objects(visible_objects: Rect2) -> void:
 				var dock: Dictionary = Terrain.dock_edge(building_faces[drawing_building]["anchor"], Catalog.footprint(record))
 				if not dock.is_empty():
 					Art.fishing_dock(self, dock["cell"], dock["outward"], center)
-			Art.building(self, record["def_id"], center, spread)
+			var worksite: bool = record["def_id"] in WorksiteArt.TYPES
+			if worksite:
+				WorksiteArt.draw_site(self, record["def_id"], center)
+			else:
+				Art.building(self, record["def_id"], center, spread)
 			drawing_building = ""
-			if record["def_id"] in ["b_ranch", "b_barracks"]:
-				animated_objects.append({"center": center, "type": record["def_id"], "id": record["id"], "spread": spread})
+			if worksite or record["def_id"] in ["b_ranch", "b_barracks"]:
+				animated_objects.append({"center": center, "type": record["def_id"], "id": record["id"], "spread": spread, "worksite": worksite})
 
 
 # 裁剪半径：纳入场地边缘和大型建筑标高，避免镜头靠近时模型突然出现。
@@ -566,7 +583,7 @@ func _building_radius(record: Dictionary) -> float:
 	return float(footprint.x + footprint.y) * Grid.HALF.x * 0.5 + 140.0
 
 
-# 动态层：复用静景过滤后的场地，只绘制当前可见的动物和士兵。
+# 动态层：复用静景过滤后的场地，只绘制镜头附近的牲畜、士兵和在岗工人。
 func _draw_motion() -> void:
 	art_canvas = motion_layer
 	rendered_motion_pan = pan_offset
@@ -580,7 +597,12 @@ func _draw_motion() -> void:
 		var bounds: Vector2 = Vector2(116, 64) * float(item["spread"]) * zoom_level
 		if not visible_bounds.intersects(Rect2(world_to_screen(center) - bounds, bounds * 2.0)):
 			continue
-		Art.moving_units(self, item["type"], center, scenery_time, yard_counts_by_barracks.get(item["id"], Vector2i.ZERO), item["spread"])
+		if item["worksite"]:
+			var workers: int = staff_by_site.get(item["id"], 0)
+			if workers > 0:
+				WorksiteArt.draw_workers(self, item["type"], center, workers, scenery_time)
+		else:
+			Art.moving_units(self, item["type"], center, scenery_time, yard_counts_by_barracks.get(item["id"], Vector2i.ZERO), item["spread"])
 
 
 # 排序模块：深度相同时按横坐标固定绘制顺序。

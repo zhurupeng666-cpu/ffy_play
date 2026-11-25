@@ -122,33 +122,6 @@ static func building(canvas: Control, id: String, center: Vector2, spread: float
 				_house(canvas, center + Vector2(44 * spread, 4), 38, 26, Color("#936838"), Color("#bc9866"), "store", 2.1)
 				for offset: Vector2 in [Vector2(41, 40), Vector2(58, 36), Vector2(76, 32), Vector2(96, 23)]:
 					_crate(canvas, center + offset)
-		"b_lumber":
-			_house(canvas, center + Vector2(-15, -7), 30, 19, Color("#526b41"), Color("#b7875b"), "timber")
-			_logs(canvas, center + Vector2(11, 14))
-			_logs(canvas, center + Vector2(21, 8))
-		"b_quarry":
-			_house(canvas, center + Vector2(-14, -8), 27, 18, Color("#666d6f"), Color("#b7a789"), "stone")
-			_rock(canvas, center + Vector2(20, 9))
-			_rock(canvas, center + Vector2(4, 16))
-			_stroke(canvas, center, Vector2(14, 10), Vector2(14, -20), Color("#694934"), 4.0)
-			_stroke(canvas, center, Vector2(12, -19), Vector2(32, -10), Color("#ac8357"), 4.0)
-			_stroke(canvas, center, Vector2(31, -11), Vector2(31, 1), Color("#d5b986"), 2.0)
-		"b_fishery":
-			_poly(canvas, center, [Vector2(-42, 7), Vector2(4, -16), Vector2(39, 1), Vector2(-7, 24)], Color("#836344"))
-			for i: int in range(7):
-				_stroke(canvas, center, Vector2(-35 + i * 6, 7 - i * 3), Vector2(-6 + i * 6, 22 - i * 3), Color("#b39364"), 2.0)
-			_house(canvas, center + Vector2(9, -7), 28, 17, Color("#496f7a"), Color("#cfad79"), "timber")
-			_crate(canvas, center + Vector2(-17, 13))
-			if spread > 1.0:
-				_house(canvas, center + Vector2(42, 29), 31, 19, Color("#51686c"), Color("#bda37d"), "store", 1.65)
-				for offset: Vector2 in [Vector2(-78, 2), Vector2(-42, 30), Vector2(16, 59), Vector2(93, 36)]:
-					_crate(canvas, center + offset)
-				for offset: Vector2 in [Vector2(-71, 15), Vector2(57, 70)]:
-					_stroke(canvas, center + offset, Vector2(-20, 4), Vector2(-20, -19), Color("#705239"), 4.0)
-					_stroke(canvas, center + offset, Vector2(20, 13), Vector2(20, -10), Color("#705239"), 4.0)
-					_stroke(canvas, center + offset, Vector2(-22, -19), Vector2(22, -10), Color("#b18c59"), 3.0)
-					for i: int in range(7):
-						_stroke(canvas, center + offset, Vector2(-17 + i * 5, -18 + i), Vector2(-12 + i * 5, -3 + i), Color("#b8ac78"))
 
 # 线条模块：描边与木梁使用同一镜头刻度和像素对齐。
 static func _stroke(canvas: Control, center: Vector2, a: Vector2, b: Vector2, color: Color, width: float = 2.0) -> void:

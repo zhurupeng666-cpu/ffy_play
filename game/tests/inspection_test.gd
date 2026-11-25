@@ -91,6 +91,7 @@ func _run() -> void:
 	_check(main.inspected_building_id == "building_000003" and main.world.buildings[2]["workers"] == 2 and main.town_map.inspected_building_id == "building_000003", "原生产按钮未同步实际目标")
 	_click(main, Vector2i(47, 47))
 	main._change_inspected_workers(1)
+	_check(main.town_map.staff_by_site.get("building_000006") == 1, "伐木场直接分配没有更新图层人数")
 	main.world.paused = false
 	main.clock.advance(15)
 	main.world.paused = true

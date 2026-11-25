@@ -635,6 +635,7 @@ func _refresh() -> void:
 	if queued_count > 0 and world.builders == 0:
 		construction_label.text += "；缺施工工人，已停工"
 	town_map.sync_yard_counts(Army.yard_counts(world))
+	town_map.sync_worksite_staff(world.buildings)
 	if displayed_building_tick != world.tick:
 		displayed_building_tick = world.tick
 		town_map.sync_buildings(world.buildings)

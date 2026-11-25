@@ -154,6 +154,7 @@ func _run() -> void:
 	main.producer_picker.select(1)
 	main._change_producers(1)
 	_check(main.numbers["b_quarry_jobs"].text == "1 / 3" and main.numbers["producer_credit"].text.ends_with("石材"), "界面材料岗位或单位错误")
+	_check(main.town_map.staff_by_site.get("building_000003") == 1, "采石场分配后地图工人数错误")
 	main._save()
 	main._change_producers(1)
 	main._load()
