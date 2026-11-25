@@ -6,7 +6,7 @@ const Clock = preload("res://scripts/strategic_clock.gd")
 # 验收模块：写进程保留半日积累，读进程续至日结并验证材料账单再次保存。
 static func run(world: RefCounted, store: RefCounted, mode: String) -> int:
 	if mode == "write":
-		if not Build.execute(world, "b_lumber", Vector2i(1, 10), "export-lumber")["ok"] or not Build.execute(world, "b_quarry", Vector2i(12, 4), "export-quarry")["ok"]:
+		if not Build.execute(world, "b_lumber", Vector2i(46, 46), "export-lumber")["ok"] or not Build.execute(world, "b_quarry", Vector2i(101, 37), "export-quarry")["ok"]:
 			return 1
 		world.paused = false
 		var clock: RefCounted = Clock.new(world)

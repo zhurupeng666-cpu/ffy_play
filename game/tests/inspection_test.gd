@@ -39,7 +39,7 @@ func _run() -> void:
 	_check(Build.execute(main.world, "b_ranch", Vector2i(10, 10), "inspect-ranch")["ok"], "牧场开工失败")
 	_check(Build.execute(main.world, "b_house", Vector2i(2, 2), "inspect-house")["ok"], "住宅开工失败")
 	_check(Build.execute(main.world, "b_granary", Vector2i(10, 5), "inspect-granary")["ok"], "粮仓开工失败")
-	_check(Build.execute(main.world, "b_lumber", Vector2i(1, 10), "inspect-lumber")["ok"], "伐木场开工失败")
+	_check(Build.execute(main.world, "b_lumber", Vector2i(46, 46), "inspect-lumber")["ok"], "伐木场开工失败")
 	main._sync_building_view()
 	main._refresh()
 	# 查询模块：完整4×4农场的每一格都命中同一ID，边界外不误选。
@@ -89,7 +89,7 @@ func _run() -> void:
 	# 旧入口联动模块：即使刚查看非生产建筑，使用生产列表按钮也先同步实际操作目标。
 	main._change_producers(-1)
 	_check(main.inspected_building_id == "building_000003" and main.world.buildings[2]["workers"] == 2 and main.town_map.inspected_building_id == "building_000003", "原生产按钮未同步实际目标")
-	_click(main, Vector2i(2, 11))
+	_click(main, Vector2i(47, 47))
 	main._change_inspected_workers(1)
 	main.world.paused = false
 	main.clock.advance(15)
@@ -100,7 +100,7 @@ func _run() -> void:
 	main._change_inspected_workers(1)
 	main._load()
 	_check(main.inspected_building_id.is_empty() and main.town_map.inspected_building_id.is_empty() and main.world.buildings[5]["workers"] == 1, "读档未清除旧选择或未恢复岗位")
-	_click(main, Vector2i(2, 11))
+	_click(main, Vector2i(47, 47))
 	_check((main.numbers["building_jobs"].text == "1 / 3") and (main.numbers["building_credit"].text == "1.00 木材"), "重新点击未绑定读档后的建筑")
 	# 建造模式模块：进入模式清空选择，成功后自动查看新工地；空地或右键清空高亮。
 	main._start_preview(Catalog.HOUSE)
@@ -110,7 +110,7 @@ func _run() -> void:
 	_check(main.inspected_building_id == "building_000007" and main.inspection_label.text.contains("住宅") and (main.numbers["building_progress"].text == "0%"), "成功建造后未查看新工地")
 	_click(main, Vector2i(12, 1), MOUSE_BUTTON_RIGHT)
 	_check(main.inspected_building_id.is_empty() and main.town_map.inspected_building_id.is_empty(), "右键没有取消详情")
-	_click(main, Vector2i(0, 12))
+	_click(main, Vector2i(50, 46))
 	_check(main.inspected_building_id.is_empty(), "资源点被当作建筑")
 	# 共享人口模块：详情按钮禁用之外，世界校验仍阻止超额请求。
 	for record: Dictionary in main.world.buildings:

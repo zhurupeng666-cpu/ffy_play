@@ -1,4 +1,4 @@
-## 文件用途：绘制城镇等距地图，处理高亮选格、镜头拖动和鼠标中心缩放。
+## 文件用途：绘制城镇等距地图，处理高亮选格、方向键镜头和鼠标中心缩放。
 extends Control
 
 signal hovered_changed(cell: Vector2i)
@@ -14,6 +14,11 @@ const Catalog = preload("res://scripts/building_catalog.gd")
 const Construction = preload("res://scripts/construction_service.gd")
 const Placement = preload("res://scripts/placement_validator.gd")
 const Grid = preload("res://scripts/isometric_grid.gd")
+const GROUND_SHADER = preload("res://scripts/town_ground.gdshader")
+const PAN_KEYS: Dictionary = {KEY_LEFT: Vector2.LEFT, KEY_RIGHT: Vector2.RIGHT, KEY_UP: Vector2.UP, KEY_DOWN: Vector2.DOWN}
+const PAN_SPEED: float = 420.0
+static var terrain_texture: ImageTexture
+static var deposit_models: Array[Dictionary] = []
 
 # 视图状态模块：镜头与选格属于界面状态，不写入战略存档。
 var zoom_level: float = 0.5
@@ -24,7 +29,9 @@ var pan_offset: Vector2 = Vector2.ZERO
 var hovered: Vector2i = Grid.INVALID
 var selected: Vector2i = Grid.INVALID
 var inspected_building_id: String = ""
-var dragging: bool = false
+var held_directions: Dictionary = {}
+var ground: ColorRect
+var ground_material: ShaderMaterial
 
 # 建筑视图模块：占用来自世界实例，视图只读并将确认请求交回控制器。
 var occupied_cells: Dictionary = {}
@@ -32,9 +39,9 @@ var placed_buildings: Array = []
 # 点击几何：可见楼体与占地格共同用于选择，楼体以世界坐标缓存。
 var drawing_building: String = ""
 # 景物动画：每秒重绘约十二次，只在可见地图有完工牧场时运行。
-var has_ranch: bool = false
 var yard_counts_by_barracks: Dictionary = {}
 var scenery_time: float = 0.0
+var has_ranch: bool = false
 var scenery_frame: int = 0
 var building_faces: Dictionary = {}
 # 绘图分层：固定地貌、活动单位、交互标记分别失效更新。
@@ -44,7 +51,7 @@ var art_canvas: CanvasItem
 var animated_objects: Array[Dictionary] = []
 var art_origin: Vector2 = Vector2.ZERO
 var art_scale: float = 1.0
-const DRAG_BUFFER: float = 96.0
+const CAMERA_BUFFER: float = 168.0
 var rendered_pan: Vector2 = Vector2.ZERO
 var rendered_motion_pan: Vector2 = Vector2.ZERO
 var available_resources: Dictionary = {}
@@ -59,12 +66,51 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	clip_contents = true
 	mouse_default_cursor_shape = Control.CURSOR_CROSS
-	set_process(false)
+	_make_ground()
 	static_layer = _make_map_layer(_draw_static_map)
 	motion_layer = _make_map_layer(_draw_motion)
 	_fit_camera()
+	_update_ground_camera()
 	resized.connect(_on_resized)
 	mouse_exited.connect(_on_mouse_exited)
+
+
+# 地表缓存：四通道存储水域、深浅、矿林和岸滩，所有视角共用同一张地形纹理。
+func _make_ground() -> void:
+	if terrain_texture == null:
+		var bitmap := Image.create(Grid.SIZE.x, Grid.SIZE.y, false, Image.FORMAT_RGBA8)
+		for x: int in range(Grid.SIZE.x):
+			var span: Vector2i = Terrain.river_span(x)
+			for y: int in range(Grid.SIZE.y):
+				var cell := Vector2i(x, y)
+				var water: bool = y >= span.x and y <= span.y
+				var depth: float = clampf(mini(y - span.x, span.y - y) / 12.0, 0.0, 1.0)
+				var ridge: String = Terrain.deposit_at(cell)
+				var natural: float = 1.0 if ridge == "stone" else (0.5 if ridge == "forest" else 0.0)
+				var sand: bool = not water and (absi(y - span.x) <= 1 or absi(y - span.y) <= 1)
+				bitmap.set_pixel(x, y, Color(float(water), depth, natural, float(sand)))
+				if natural > 0.0 and posmod((x * 7927) ^ (y * 2459) ^ (x * y * 13), 13) == 0:
+					deposit_models.append({"center": Grid.cell_to_world(cell), "deposit": ridge})
+		terrain_texture = ImageTexture.create_from_image(bitmap)
+	ground = ColorRect.new()
+	ground.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ground.show_behind_parent = true
+	add_child(ground)
+	ground.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	ground_material = ShaderMaterial.new()
+	ground_material.shader = GROUND_SHADER
+	ground_material.set_shader_parameter("terrain_mask", terrain_texture)
+	ground_material.set_shader_parameter("depth_mask", terrain_texture)
+	ground_material.set_shader_parameter("map_extent", Vector2(Grid.SIZE))
+	ground_material.set_shader_parameter("half_cell", Grid.HALF)
+	ground.material = ground_material
+
+
+# 地表镜头：移动和缩放只更新采样坐标，纹理本身无需重建。
+func _update_ground_camera() -> void:
+	ground_material.set_shader_parameter("world_origin", screen_to_world(Vector2.ZERO))
+	ground_material.set_shader_parameter("world_extent", size / zoom_level)
+	ground_material.set_shader_parameter("zoom", zoom_level)
 
 
 # 画布模块：两张独立图层绘制在选区提示下方。
@@ -79,6 +125,7 @@ func _make_map_layer(draw_callback: Callable) -> Control:
 
 # 失效模块：视角变化会更新三层，仅悬停和动画各自重画所需层。
 func _redraw_scene() -> void:
+	_update_ground_camera()
 	static_layer.position = Vector2.ZERO
 	motion_layer.position = Vector2.ZERO
 	static_layer.queue_redraw()
@@ -91,15 +138,25 @@ func art_point(world_point: Vector2) -> Vector2:
 	return world_to_screen(art_origin + (world_point - art_origin) * art_scale).round()
 
 
-# 景物动画模块：独立推进牧场动物，离开城镇时停止推进。
+# 每帧镜头：方向键连续移动，景物仍按独立低频节奏更新。
 func _process(delta: float) -> void:
-	if not is_visible_in_tree() or dragging or zoom_level < 0.23:
+	if not is_visible_in_tree():
+		held_directions.clear()
+		return
+	if not held_directions.is_empty():
+		var direction := Vector2.ZERO
+		for arrow: int in held_directions:
+			direction += PAN_KEYS[arrow]
+		if direction != Vector2.ZERO:
+			_pan_camera(direction.normalized() * PAN_SPEED * minf(delta, 0.05))
+	if zoom_level < 0.23 or (not has_ranch and yard_counts_by_barracks.is_empty()):
 		return
 	scenery_time += delta
 	var frame: int = floori(scenery_time * 12.0)
 	if frame != scenery_frame:
 		scenery_frame = frame
-		motion_layer.queue_redraw()
+		if not animated_objects.is_empty():
+			motion_layer.queue_redraw()
 
 
 # 画面变换模块：将世界坐标转换到地图控件内部，不移动管理界面。
@@ -107,7 +164,7 @@ func world_to_screen(point: Vector2) -> Vector2:
 	return size * 0.5 + pan_offset + (point - Grid.center()) * zoom_level
 
 
-# 输入变换模块：反解镜头变换，保证拖动或缩放后仍能正确选格。
+# 输入变换模块：反解镜头变换，保证平移或缩放后仍能正确选格。
 func screen_to_world(point: Vector2) -> Vector2:
 	return (point - size * 0.5 - pan_offset) / zoom_level + Grid.center()
 
@@ -131,15 +188,11 @@ func _diamond(cell: Vector2i) -> PackedVector2Array:
 func _draw_static_map() -> void:
 	art_canvas = static_layer
 	rendered_pan = pan_offset
-	static_layer.draw_rect(Rect2(Vector2.ZERO, size).grow(DRAG_BUFFER), Color("#182720"))
-	var visible_ground: Rect2 = Rect2(screen_to_world(Vector2.ZERO), size / zoom_level).grow(34 + DRAG_BUFFER / zoom_level)
-	if zoom_level < 0.21:
-		_draw_overview_terrain(visible_ground)
-	else:
-		_draw_visible_ground(visible_ground)
+	var visible_objects: Rect2 = Rect2(screen_to_world(Vector2.ZERO), size / zoom_level).grow(CAMERA_BUFFER / zoom_level)
 	for record: Dictionary in placed_buildings:
-		_draw_foundation(record)
-	_draw_map_objects(visible_ground.grow(670))
+		if visible_objects.grow(_building_radius(record)).has_point(_building_center(record)):
+			_draw_foundation(record)
+	_draw_map_objects(visible_objects)
 	motion_layer.queue_redraw()
 
 
@@ -159,43 +212,6 @@ func _draw() -> void:
 		draw_colored_polygon(_diamond(selected), Color("#4bdb8d65"))
 	if active_definition == null and Grid.contains(hovered):
 		_outline_cell(hovered, Color("#ffd56a"), 2.0)
-
-
-# 地块模块：近景仅绘制画框附近的单格，保留原有网格与精确预览。
-func _draw_visible_ground(visible_ground: Rect2) -> void:
-	var bounds: Rect2i = _visible_cells(visible_ground)
-	for y: int in range(bounds.position.y, bounds.end.y):
-		for x: int in range(bounds.position.x, bounds.end.x):
-			var cell: Vector2i = Vector2i(x, y)
-			if visible_ground.has_point(Grid.cell_to_world(cell)):
-				Art.terrain(self, cell, _diamond(cell), Terrain.is_water(cell))
-
-
-# 全览地貌模块：以八格一块绘制远景，并保留沿岸水带。
-func _draw_overview_terrain(visible_ground: Rect2) -> void:
-	var tile_size: int = 8
-	var bounds: Rect2i = _visible_cells(visible_ground)
-	var start_x: int = posmod(bounds.position.x, tile_size)
-	var start_y: int = posmod(maxi(0, bounds.position.y - 1), tile_size)
-	var colors: Array[Color] = [Color("#526c3d"), Color("#587343"), Color("#647c49"), Color("#566e40")]
-	for y: int in range(maxi(0, bounds.position.y - 1) - start_y + 1, bounds.end.y, tile_size):
-		for x: int in range(bounds.position.x - start_x, bounds.end.x, tile_size):
-			var shade: int = posmod(floori(sin(x * 0.039) * 2.5 + cos(y * 0.041) * 2.5), colors.size())
-			var span: Vector2i = Vector2i(mini(tile_size, Grid.SIZE.x - x), mini(tile_size, Grid.SIZE.y - y))
-			static_layer.draw_colored_polygon(_footprint_outline(Vector2i(x, y), span), colors[shade])
-	if bounds.position.y == 0:
-		static_layer.draw_colored_polygon(_footprint_outline(Vector2i.ZERO, Vector2i(Grid.SIZE.x, 1)), Color("#285b71"))
-
-
-# 可视范围模块：把画框四角反投影，只绘制可见格附近的地块。
-func _visible_cells(world_bounds: Rect2) -> Rect2i:
-	var first: Vector2i = Grid.SIZE
-	var last: Vector2i = Vector2i.ZERO
-	for point: Vector2 in [world_bounds.position, world_bounds.end, Vector2(world_bounds.end.x, world_bounds.position.y), Vector2(world_bounds.position.x, world_bounds.end.y)]:
-		var cell: Vector2i = Grid.world_to_cell(point).clamp(Vector2i.ZERO, Grid.SIZE - Vector2i.ONE)
-		first = Vector2i(mini(first.x, cell.x), mini(first.y, cell.y))
-		last = Vector2i(maxi(last.x, cell.x), maxi(last.y, cell.y))
-	return Rect2i(first, last - first + Vector2i.ONE)
 
 
 # 格线模块：在美术上方绘制悬停、选区与建造预览边界。
@@ -239,13 +255,10 @@ func remember_building_face(face: PackedVector2Array) -> void:
 		building_faces[drawing_building]["faces"].append(face)
 
 
-# 鼠标模块：左键选格、右键取消、中键拖动，滚轮仅缩放地图。
+# 鼠标模块：左键选格、右键取消；滚轮缩放到鼠标所在位置。
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
-		if event.button_index == MOUSE_BUTTON_MIDDLE:
-			dragging = event.pressed
-			mouse_default_cursor_shape = Control.CURSOR_DRAG if dragging else Control.CURSOR_CROSS
-		elif event.pressed and event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+		if event.pressed and event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
 			_apply_zoom(event.position, 1.2 if event.button_index == MOUSE_BUTTON_WHEEL_UP else 1.0 / 1.2)
 		elif event.pressed and event.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT]:
 			if active_definition != null:
@@ -266,18 +279,13 @@ func _gui_input(event: InputEvent) -> void:
 		_update_hover(event.position)
 		accept_event()
 	elif event is InputEventMouseMotion:
-		if dragging:
-			fitting_overview = false
-			pan_offset += event.relative
-			view_changed.emit()
-			_shift_scene()
 		_update_hover(event.position)
 
 
-# 拖动模块：平移已绘制的画布，移动超过预绘边距时才重建地貌。
+# 模型缓存：短距离平移已绘制画布，超过缓冲边界后才刷新附近模型。
 func _shift_scene() -> void:
 	var offset: Vector2 = pan_offset - rendered_pan
-	if maxf(absf(offset.x), absf(offset.y)) >= DRAG_BUFFER:
+	if maxf(absf(offset.x), absf(offset.y)) >= CAMERA_BUFFER:
 		_redraw_scene()
 	else:
 		static_layer.position = offset
@@ -285,13 +293,42 @@ func _shift_scene() -> void:
 		queue_redraw()
 
 
-# 释放模块：即使鼠标在地图外松开中键，也结束拖动避免黏住镜头。
+# 键盘输入：箭头按下由地图接收，弹窗或输入控件可优先处理按键。
+func _unhandled_key_input(event: InputEvent) -> void:
+	if not (event is InputEventKey) or not event.pressed or not is_visible_in_tree() or not PAN_KEYS.has(event.keycode):
+		return
+	held_directions[event.keycode] = true
+	get_viewport().set_input_as_handled()
+
+
+# 松键处理：即使焦点已转给管理控件，也不会继续移动镜头。
 func _input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_MIDDLE and not event.pressed:
-		if dragging:
-			_redraw_scene()
-		dragging = false
-		mouse_default_cursor_shape = Control.CURSOR_CROSS
+	if event is InputEventKey and not event.pressed:
+		held_directions.erase(event.keycode)
+
+
+# 镜头平移：取景中心限制在地图，短距离平移复用已经绘制的模型。
+func _pan_camera(delta: Vector2) -> void:
+	var center: Vector2 = screen_to_world(size * 0.5) + delta / zoom_level
+	var logical := Vector2((center.x / Grid.HALF.x + center.y / Grid.HALF.y) * 0.5, (center.y / Grid.HALF.y - center.x / Grid.HALF.x) * 0.5)
+	logical = logical.clamp(Vector2.ZERO, Vector2(Grid.SIZE - Vector2i.ONE))
+	center = Vector2((logical.x - logical.y) * Grid.HALF.x, (logical.x + logical.y) * Grid.HALF.y)
+	var next_pan: Vector2 = (Grid.center() - center) * zoom_level
+	if next_pan.is_equal_approx(pan_offset):
+		return
+	fitting_overview = false
+	pan_offset = next_pan
+	_update_ground_camera()
+	_shift_scene()
+	var mouse: Vector2 = get_local_mouse_position()
+	if Rect2(Vector2.ZERO, size).has_point(mouse):
+		_update_hover(mouse)
+
+
+# 地图导航入口：快速到达分布在主城之外的生产资源。
+func visit_site(cell: Vector2i) -> void:
+	held_directions.clear()
+	_focus_cell(cell)
 
 
 # 远景导航：双击全览空地可直接回到可逐格建造的局部镜头。
@@ -346,7 +383,6 @@ func show_entire_map() -> void:
 func _refresh_camera_fit() -> void:
 	fitting_overview = true
 	_fit_camera()
-	dragging = false
 	_update_hover(get_local_mouse_position())
 	view_changed.emit()
 	_redraw_scene()
@@ -362,7 +398,7 @@ func _fit_camera() -> void:
 	pan_offset = (Grid.center() - center) * zoom_level
 
 
-# 尺寸模块：总览模式适应变化，手动拖动或缩放后保留镜头。
+# 尺寸模块：总览模式适应变化，手动移动或缩放后保留镜头。
 func _on_resized() -> void:
 	if fitting_overview:
 		_fit_camera()
@@ -379,13 +415,10 @@ func _on_mouse_exited() -> void:
 	queue_redraw()
 
 
-# 焦点模块：窗口失焦时停止拖动，防止切换程序后镜头继续移动。
+# 焦点模块：窗口失焦时清除方向键状态。
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
-		if dragging:
-			_redraw_scene()
-		dragging = false
-		mouse_default_cursor_shape = Control.CURSOR_CROSS
+		held_directions.clear()
 
 
 # 模式模块：选择静态建筑定义后进入预览，不创建实例或扣材料。
@@ -439,7 +472,6 @@ func sync_buildings(records: Array) -> void:
 		var anchor: Vector2i = Vector2i(int(record["cell"][0]), int(record["cell"][1]))
 		for cell: Vector2i in Placement.footprint_cells(anchor, Catalog.footprint(record)):
 			occupied_cells[cell] = record["id"]
-	set_process(has_ranch or not yard_counts_by_barracks.is_empty())
 	_update_preview()
 	_redraw_scene()
 
@@ -460,7 +492,6 @@ func sync_yard_counts(current: Dictionary) -> void:
 	if current == yard_counts_by_barracks:
 		return
 	yard_counts_by_barracks = current
-	set_process(has_ranch or not current.is_empty())
 	motion_layer.queue_redraw()
 
 
@@ -482,6 +513,8 @@ func _draw_foundation(record: Dictionary) -> void:
 	var tint: Color = Color("#826340") if constructing else Color("#73664a")
 	if not constructing and record["def_id"] in ["b_farm", "b_ranch"]:
 		tint = Color("#786747") if record["def_id"] == "b_farm" else Color("#687343")
+	if not constructing and record["def_id"] == "b_fishery":
+		tint = Color("#867452")
 	var surface: PackedVector2Array = _footprint_outline(anchor, footprint)
 	static_layer.draw_colored_polygon(surface, tint)
 	surface.append(surface[0])
@@ -491,22 +524,22 @@ func _draw_foundation(record: Dictionary) -> void:
 # 深度模块：按等距投影纵坐标绘制场景物件，近处覆盖远处。
 func _draw_map_objects(visible_objects: Rect2) -> void:
 	var objects: Array[Dictionary] = []
-	for cell: Vector2i in Terrain.DEPOSITS:
-		objects.append({"center": Grid.cell_to_world(cell), "deposit": Terrain.DEPOSITS[cell]})
+	if zoom_level >= 0.23:
+		var deposit_view: Rect2 = visible_objects.grow(72)
+		for item: Dictionary in deposit_models:
+			if deposit_view.has_point(item["center"]):
+				objects.append(item)
 	for record: Dictionary in placed_buildings:
-		objects.append({"center": _building_center(record), "record": record})
+		var center: Vector2 = _building_center(record)
+		if visible_objects.grow(_building_radius(record)).has_point(center):
+			objects.append({"center": center, "record": record})
 	objects.sort_custom(_farther_first)
 	building_faces.clear()
 	animated_objects.clear()
 	for item: Dictionary in objects:
 		var center: Vector2 = item["center"]
-		if not visible_objects.has_point(center):
-			continue
 		if zoom_level < 0.23:
-			var ink: Color = Color("#c8ae7b")
-			if item.has("deposit"):
-				ink = Color("#233f2c") if item["deposit"] == "forest" else Color("#a9ab9c")
-			static_layer.draw_circle(world_to_screen(center), 4.0, ink)
+			static_layer.draw_circle(world_to_screen(center), 3.0, Color("#c8ae7b"))
 			continue
 		if item.has("deposit"):
 			Art.deposit(self, center, item["deposit"])
@@ -517,10 +550,20 @@ func _draw_map_objects(visible_objects: Rect2) -> void:
 			drawing_building = record["id"]
 			building_faces[drawing_building] = {"anchor": Vector2i(int(record["cell"][0]), int(record["cell"][1])), "faces": []}
 			var spread: float = float(Catalog.footprint(record).x) / float(Catalog.find(record["def_id"]).get("footprint").x)
+			if record["def_id"] == "b_fishery":
+				var dock: Dictionary = Terrain.dock_edge(building_faces[drawing_building]["anchor"], Catalog.footprint(record))
+				if not dock.is_empty():
+					Art.fishing_dock(self, dock["cell"], dock["outward"], center)
 			Art.building(self, record["def_id"], center, spread)
 			drawing_building = ""
 			if record["def_id"] in ["b_ranch", "b_barracks"]:
 				animated_objects.append({"center": center, "type": record["def_id"], "id": record["id"], "spread": spread})
+
+
+# 裁剪半径：纳入场地边缘和大型建筑标高，避免镜头靠近时模型突然出现。
+func _building_radius(record: Dictionary) -> float:
+	var footprint: Vector2i = Catalog.footprint(record)
+	return float(footprint.x + footprint.y) * Grid.HALF.x * 0.5 + 140.0
 
 
 # 动态层：复用静景过滤后的场地，只绘制当前可见的动物和士兵。
@@ -563,14 +606,16 @@ func _draw_building_feedback() -> void:
 		if record["id"] == inspected_building_id:
 			var anchor: Vector2i = Vector2i(int(record["cell"][0]), int(record["cell"][1]))
 			_outline_building(anchor, Catalog.footprint(record))
+		var footprint: Vector2i = Catalog.footprint(record)
+		var bottom_offset: float = maxf(28.0, (footprint.x + footprint.y) * Grid.HALF.y * 0.5 * zoom_level + 12.0)
+		var baseline: Vector2 = (world_to_screen(_building_center(record)) + Vector2(0, bottom_offset)).round()
+		if not Rect2(Vector2.ZERO, size).grow(100.0).has_point(baseline):
+			continue
 		var label: String = definition.get("display_name")
 		if record["state"] == "constructing":
 			label += " %d%%" % floori(100.0 * record["work_done"] / record["work_required"])
 		var font: Font = ThemeDB.fallback_font
 		var text_size: Vector2 = font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14)
-		var footprint: Vector2i = Catalog.footprint(record)
-		var bottom_offset: float = maxf(28.0, (footprint.x + footprint.y) * Grid.HALF.y * 0.5 * zoom_level + 12.0)
-		var baseline: Vector2 = (world_to_screen(_building_center(record)) + Vector2(0, bottom_offset)).round()
 		var origin: Vector2 = baseline - Vector2(text_size.x * 0.5, 0)
 		draw_rect(Rect2(origin - Vector2(5, 14), Vector2(text_size.x + 10, 18)), Color("#202720dd"))
 		draw_string(font, origin, label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color("#fff0cc"))

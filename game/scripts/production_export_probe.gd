@@ -6,7 +6,7 @@ const Clock = preload("res://scripts/strategic_clock.gd")
 # 验收模块：写进程保存半日产粮，读进程续至日结且不重复发粮。
 static func run(world: RefCounted, store: RefCounted, mode: String) -> int:
 	if mode == "write":
-		if not Build.execute(world, "b_farm", Vector2i(2, 4), "export-farm")["ok"] or not Build.execute(world, "b_ranch", Vector2i(10, 10), "export-ranch")["ok"] or not Build.execute(world, "b_fishery", Vector2i(2, 1), "export-fish")["ok"]:
+		if not Build.execute(world, "b_farm", Vector2i(2, 4), "export-farm")["ok"] or not Build.execute(world, "b_ranch", Vector2i(10, 10), "export-ranch")["ok"] or not Build.execute(world, "b_fishery", Vector2i(8, 71), "export-fish")["ok"]:
 			return 1
 		world.paused = false
 		var clock: RefCounted = Clock.new(world)

@@ -300,8 +300,11 @@ func _build_map(columns: HBoxContainer) -> void:
 	var map_actions := HBoxContainer.new()
 	map_actions.add_theme_constant_override("separation", 6)
 	town_view.add_child(map_actions)
-	_button(map_actions, "回城镇", town_map.reset_view).tooltip_text = "Home 回到城镇"
-	_button(map_actions, "建设区全览", town_map.show_entire_map)
+	_button(map_actions, "回城镇", town_map.reset_view).tooltip_text = "Home 回城镇 · 方向键移动"
+	_button(map_actions, "全图", town_map.show_entire_map)
+	_button(map_actions, "林场", town_map.visit_site.bind(Vector2i(50, 46)))
+	_button(map_actions, "石矿", town_map.visit_site.bind(Vector2i(106, 39)))
+	_button(map_actions, "河港", town_map.visit_site.bind(Vector2i(22, 90)))
 	map_info = Label.new()
 	map_info.custom_minimum_size.x = 39
 	map_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -520,7 +523,7 @@ func _on_map_cell_changed(_cell: Vector2i) -> void:
 # 地图提示模块：分别显示悬停和选择，使用从0开始的逻辑坐标。
 func _refresh_map_info() -> void:
 	map_info.text = "%d%%" % roundi(town_map.zoom_level * 100)
-	map_info.tooltip_text = "缩放 · 悬停 %s · 选中 %s\n双击聚焦，中键拖动，滚轮缩放，右键取消。" % [_cell_text(town_map.hovered), _cell_text(town_map.selected)]
+	map_info.tooltip_text = "缩放 · 悬停 %s · 选中 %s\n方向键移动，滚轮缩放，双击聚焦，右键取消。" % [_cell_text(town_map.hovered), _cell_text(town_map.selected)]
 
 
 # 坐标文本模块：地图外或未选择时显示短横线。

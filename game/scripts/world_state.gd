@@ -101,7 +101,7 @@ func settle_days() -> void:
 
 # 快照模块：只导出基础数据，不保存节点、数据库连接或脚本引用。
 func snapshot() -> Dictionary:
-	return {"version": 23, "fort_siege": fort_siege.duplicate(), "woods_battle": woods_battle.duplicate(), "legion_trips": legion_trips.duplicate(true), "woods_scout": woods_scout.duplicate(), "tick": tick, "subsecond": subsecond, "last_settled_day": last_settled_day, "population": population, "dependents": dependents, "builders": builders, "labor_credit": labor_credit, "resources": resources.duplicate(), "speed": speed, "paused": paused, "tax_policy": tax_policy, "satisfaction": satisfaction, "last_civic_ledger": last_civic_ledger.duplicate(true), "troops": troops.duplicate(true), "legions": legions.duplicate(true), "legion_create_commands": legion_create_commands.duplicate(), "next_legion_id": next_legion_id, "retired_troops": retired_troops.duplicate(true), "disband_commands": disband_commands.duplicate(true), "retired_army_cost": retired_army_cost.duplicate(), "recruit_commands": recruit_commands.duplicate(true), "next_troop_id": next_troop_id, "last_army_ledger": last_army_ledger.duplicate(true), "army_morale": army_morale, "last_morale_before": last_morale_before, "last_bill": last_bill, "last_food_ledger": last_food_ledger.duplicate(true), "last_material_ledger": last_material_ledger.duplicate(true), "buildings": buildings.duplicate(true), "next_building_id": next_building_id, "applied_commands": applied_commands.duplicate(true), "retired_buildings": retired_buildings.duplicate(true), "removal_commands": removal_commands.duplicate(true)}
+	return {"version": 24, "fort_siege": fort_siege.duplicate(), "woods_battle": woods_battle.duplicate(), "legion_trips": legion_trips.duplicate(true), "woods_scout": woods_scout.duplicate(), "tick": tick, "subsecond": subsecond, "last_settled_day": last_settled_day, "population": population, "dependents": dependents, "builders": builders, "labor_credit": labor_credit, "resources": resources.duplicate(), "speed": speed, "paused": paused, "tax_policy": tax_policy, "satisfaction": satisfaction, "last_civic_ledger": last_civic_ledger.duplicate(true), "troops": troops.duplicate(true), "legions": legions.duplicate(true), "legion_create_commands": legion_create_commands.duplicate(), "next_legion_id": next_legion_id, "retired_troops": retired_troops.duplicate(true), "disband_commands": disband_commands.duplicate(true), "retired_army_cost": retired_army_cost.duplicate(), "recruit_commands": recruit_commands.duplicate(true), "next_troop_id": next_troop_id, "last_army_ledger": last_army_ledger.duplicate(true), "army_morale": army_morale, "last_morale_before": last_morale_before, "last_bill": last_bill, "last_food_ledger": last_food_ledger.duplicate(true), "last_material_ledger": last_material_ledger.duplicate(true), "buildings": buildings.duplicate(true), "next_building_id": next_building_id, "applied_commands": applied_commands.duplicate(true), "retired_buildings": retired_buildings.duplicate(true), "removal_commands": removal_commands.duplicate(true)}
 
 
 # 载入模块：在临时对象中完整校验，失败返回空值，不改变当前世界。
@@ -111,7 +111,7 @@ static func from_snapshot(data: Variant) -> RefCounted:
 	for key: String in ["version", "tick", "last_settled_day", "population", "speed"]:
 		if not _valid_integer(data.get(key), 0, 120000000):
 			return null
-	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] or int(data["speed"]) not in [1, 2, 4] or data["population"] != 30:
+	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24] or int(data["speed"]) not in [1, 2, 4] or data["population"] != 30:
 		return null
 	if data["last_settled_day"] != int(float(data["tick"]) / DAY_TICKS):
 		return null
@@ -169,6 +169,8 @@ static func from_snapshot(data: Variant) -> RefCounted:
 	if int(data["version"]) == 1:
 		return state
 	if not state._restore_buildings(data):
+		return null
+	if int(data["version"]) < 24 and not state._relocate_legacy_sites():
 		return null
 	if int(data["version"]) < 23:
 		state._expand_legacy_yards(int(data["version"]))
@@ -275,8 +277,12 @@ func _restore_buildings(data: Dictionary) -> bool:
 		var check: Dictionary = Placement.check(anchor, Catalog.footprint(raw, prior_large), {} if retired else occupied)
 		if not check["ok"]:
 			return false
-		# 地形存档模块：新增采集建筑须临对应资源，渔场仍须临水；旧普通建筑保留原址。
-		if (raw.get("large", false) or definition.get("requires_water") or not str(definition.get("required_deposit")).is_empty()) and not Terrain.check(check["cells"], definition.get("requires_water"), definition.get("required_deposit"))["ok"]:
+		# 地形存档模块：先以原版地形校验旧档，新档的退役记录按历史坐标保留。
+		var legacy_terrain: bool = int(data["version"]) < 24
+		var terrain_required: bool = raw.get("large", false) or definition.get("requires_water") or not str(definition.get("required_deposit")).is_empty()
+		if ((legacy_terrain and terrain_required) or (not legacy_terrain and not retired)) and not Terrain.check(check["cells"], definition.get("requires_water"), definition.get("required_deposit"), legacy_terrain)["ok"]:
+			return false
+		if not legacy_terrain and not retired and raw["def_id"] == "b_fishery" and not raw.get("large", false):
 			return false
 		if raw["def_id"] == "b_hall":
 			hall_count += 1
@@ -461,6 +467,39 @@ func food_capacity() -> int:
 	return capacity
 
 
+# 地形迁移：只重新安置与新水岸或资源区冲突的活动建筑，渔场扩为标准大小。
+func _relocate_legacy_sites() -> bool:
+	var occupied: Dictionary = occupied_cells()
+	var receipts: Dictionary = {}
+	for receipt: Dictionary in applied_commands.values():
+		receipts[receipt["building_id"]] = receipt
+	for building: Dictionary in buildings:
+		var id: String = building["def_id"]
+		var anchor := Vector2i(int(building["cell"][0]), int(building["cell"][1]))
+		var cells: Array[Vector2i] = Placement.footprint_cells(anchor, Catalog.footprint(building))
+		var definition: Resource = Catalog.find(id)
+		var fishery: bool = id == "b_fishery"
+		if not fishery and Terrain.check(cells, false, definition.get("required_deposit"))["ok"]:
+			continue
+		for cell: Vector2i in cells:
+			occupied.erase(cell)
+		var extent: Vector2i = Catalog.LARGE_SIZES[id] if fishery else Catalog.footprint(building)
+		definition = definition.duplicate()
+		definition.set("footprint", extent)
+		var target: Vector2i = _nearest_yard(anchor, definition, occupied)
+		if target == Grid.INVALID:
+			return false
+		building["cell"] = [target.x, target.y]
+		var receipt: Dictionary = receipts[building["id"]]
+		receipt["cell"] = building["cell"].duplicate()
+		if fishery:
+			building["large"] = true
+			receipt["large"] = true
+		for cell: Vector2i in Placement.footprint_cells(target, extent):
+			occupied[cell] = building["id"]
+	return true
+
+
 # 旧城扩建模块：稳定 ID 保留，优先原地扩大，受阻时寻找最近的无冲突锚点。
 func _expand_legacy_yards(old_version: int) -> void:
 	var occupied: Dictionary = occupied_cells()
@@ -469,7 +508,7 @@ func _expand_legacy_yards(old_version: int) -> void:
 		var receipt: Dictionary = applied_commands[command]
 		receipts_by_id[receipt["building_id"]] = receipt
 	for building: Dictionary in buildings:
-		if not Catalog.LARGE_SIZES.has(building["def_id"]) or (old_version < 20 and building.has("large")):
+		if building["def_id"] == "b_fishery" or not Catalog.LARGE_SIZES.has(building["def_id"]) or (old_version < 20 and building.has("large")):
 			continue
 		var origin := Vector2i(int(building["cell"][0]), int(building["cell"][1]))
 		var former: Array[Vector2i] = Placement.footprint_cells(origin, Catalog.footprint(building))
@@ -501,19 +540,31 @@ func _nearest_yard(origin: Vector2i, definition: Resource, occupied: Dictionary)
 				var cell: Vector2i = origin + Vector2i(x, offset_y)
 				if not Grid.contains(cell) or not Grid.contains(cell + extent - Vector2i.ONE):
 					continue
-				if _yard_site_clear(cell, extent, occupied):
+				if _yard_site_clear(cell, extent, occupied, definition.get("requires_water"), definition.get("required_deposit")):
 					return cell
 	return Grid.INVALID
 
 
 # 候选模块：在迁移扫描中遇到第一个占用即退出，避免为每个位置创建数百格中间数组。
-func _yard_site_clear(anchor: Vector2i, extent: Vector2i, occupied: Dictionary) -> bool:
+func _yard_site_clear(anchor: Vector2i, extent: Vector2i, occupied: Dictionary, water: bool, deposit: String) -> bool:
+	if water:
+		if anchor.y + extent.y < 88 or anchor.y > 141 or Terrain.dock_edge(anchor, extent).is_empty():
+			return false
+	if not deposit.is_empty():
+		var nearby: bool = false
+		for district: Dictionary in Terrain.DISTRICTS:
+			var bounds: Rect2i = district["bounds"]
+			if district["kind"] == deposit and bounds.grow(1).intersects(Rect2i(anchor, extent)):
+				nearby = true
+				break
+		if not nearby:
+			return false
 	for y: int in range(anchor.y, anchor.y + extent.y):
 		for x: int in range(anchor.x, anchor.x + extent.x):
 			var cell := Vector2i(x, y)
 			if occupied.has(cell) or Terrain.is_water(cell) or not Terrain.deposit_at(cell).is_empty():
 				return false
-	return true
+	return deposit.is_empty() or Terrain.check(Placement.footprint_cells(anchor, extent), false, deposit)["ok"]
 
 
 # 材料收获模块：木材和石材独立兑付整数，零头跨日保留，不影响粮食库存。

@@ -23,7 +23,7 @@ func _prepare() -> RefCounted:
 	var world: RefCounted = State.new()
 	_check(Build.execute(world, "b_farm", Vector2i(2, 4), "food-farm")["ok"], "农场开工失败")
 	_check(Build.execute(world, "b_ranch", Vector2i(10, 10), "food-ranch")["ok"], "牧场开工失败")
-	_check(Build.execute(world, "b_fishery", Vector2i(2, 1), "food-fish")["ok"], "临水渔场开工失败")
+	_check(Build.execute(world, "b_fishery", Vector2i(8, 71), "food-fish")["ok"], "临水渔场开工失败")
 	_check(not world.assign_producers("building_000002", 1), "允许工地安排生产")
 	world.paused = false
 	Clock.new(world).advance(240)
@@ -34,10 +34,10 @@ func _prepare() -> RefCounted:
 func _run() -> void:
 	var world: RefCounted = State.new()
 	var before: Dictionary = world.snapshot()
-	_check(Build.execute(world, "b_fishery", Vector2i(2, 4), "inland")["code"] == "NEEDS_WATER" and world.snapshot() == before, "内陆渔场未原子拒绝")
-	_check(Build.execute(world, "b_farm", Vector2i(2, 0), "water")["code"] == "WATER" and world.snapshot() == before, "农场可建在水上")
-	_check(Placement.check_building(Vector2i(2, 1), Catalog.FISHERY, {}).get("ok", false), "岸上渔场预览失败")
-	_check(Placement.check_building(Vector2i(2, 0), Catalog.FISHERY, {}).get("code") == "WATER", "渔场可建在河里")
+	_check(Build.execute(world, "b_fishery", Vector2i(2, 10), "inland")["code"] == "NEEDS_WATER" and world.snapshot() == before, "内陆渔场未原子拒绝")
+	_check(Build.execute(world, "b_farm", Vector2i(22, 96), "water")["code"] == "WATER" and world.snapshot() == before, "农场可建在水上")
+	_check(Placement.check_building(Vector2i(8, 71), Catalog.for_construction("b_fishery", true), {}).get("ok", false), "岸上渔场预览失败")
+	_check(Placement.check_building(Vector2i(22, 96), Catalog.for_construction("b_fishery", true), {}).get("code") == "WATER", "渔场可建在河里")
 	world = _prepare()
 	_check(world.assign_producers("building_000002", 3) and world.assign_producers("building_000003", 3) and world.assign_producers("building_000004", 2), "生产分配失败")
 	_check(world.production_workers() == 8 and world.idle_workers() == 14, "岗位未扣减同一劳动力池")
@@ -97,6 +97,13 @@ func _run() -> void:
 	bad["applied_commands"]["food-fish"]["cell"] = [10, 4]
 	_check(State.from_snapshot(bad) == null, "接受内陆渔场坏档")
 	var legacy: Dictionary = loaded.snapshot()
+	legacy["version"] = 23
+	legacy["buildings"][3]["cell"] = [2, 1]
+	legacy["buildings"][3]["large"] = false
+	legacy["applied_commands"]["food-fish"]["cell"] = [2, 1]
+	legacy["applied_commands"]["food-fish"]["large"] = false
+	var port_upgrade: RefCounted = State.from_snapshot(legacy)
+	_check(port_upgrade != null and port_upgrade.resources == loaded.resources and port_upgrade.buildings[3]["workers"] == loaded.buildings[3]["workers"] and Catalog.footprint(port_upgrade.buildings[3]) == Vector2i(24, 20) and State.from_snapshot(port_upgrade.snapshot()) != null, "旧渔场迁港后丢失存档数据")
 	legacy["version"] = 4
 	for record: Dictionary in legacy["buildings"]:
 		record.erase("workers")
@@ -128,8 +135,8 @@ func _run() -> void:
 	main._change_producers(1)
 	main._load()
 	_check(main.world.buildings[3]["workers"] == 1 and main.numbers["b_fishery_jobs"].text == "1 / 2", "界面读取未恢复生产")
-	main._start_preview(Catalog.FISHERY)
-	main.town_map.hovered = Vector2i(10, 4)
+	main._start_preview(Catalog.for_construction("b_fishery", true))
+	main.town_map.hovered = Vector2i(10, 28)
 	main.town_map._update_preview()
 	_check(main.town_map.preview_result["code"] == "NEEDS_WATER", "界面渔场未检查临水")
 	main.free()

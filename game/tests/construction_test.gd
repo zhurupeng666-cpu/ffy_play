@@ -132,7 +132,7 @@ func _run() -> void:
 func _check_expanded_yards() -> void:
 	var world: RefCounted = State.new()
 	var farm: Dictionary = Build.execute(world, "b_farm", Vector2i(2, 3), "legacy-farm")
-	var barn: Dictionary = Build.execute(world, "b_barracks", Vector2i(41, 60), "legacy-barracks")
+	var barn: Dictionary = Build.execute(world, "b_barracks", Vector2i(41, 66), "legacy-barracks")
 	if not farm["ok"] or not barn["ok"]:
 		_check(false, "旧城样本未能建立")
 		return
@@ -149,9 +149,9 @@ func _check_expanded_yards() -> void:
 	var migrated_farm: Dictionary = expanded.buildings[1]
 	var migrated_barn: Dictionary = expanded.buildings[2]
 	_check(Build.Catalog.footprint(migrated_farm) == Vector2i(20, 20) and migrated_farm["cell"] != [2, 3] and migrated_farm["id"] == farm["building_id"], "受阻农场未迁至合法位置")
-	_check(Build.Catalog.footprint(migrated_barn) == Vector2i(20, 20) and migrated_barn["cell"] == [41, 60] and migrated_barn["id"] == barn["building_id"], "空地军营没有原地扩大")
+	_check(Build.Catalog.footprint(migrated_barn) == Vector2i(20, 20) and migrated_barn["cell"] == [41, 66] and migrated_barn["id"] == barn["building_id"], "空地军营没有原地扩大")
 	_check(expanded.resources == world.resources and migrated_barn["work_required"] == world.buildings[2]["work_required"] and expanded.occupied_cells().size() == 816, "扩建破坏库存、原施工或占地重叠")
 	_check(State.from_snapshot(expanded.snapshot()).snapshot() == expanded.snapshot(), "扩建后再次读取不稳定")
-	var large: Dictionary = Build.execute(expanded, "b_ranch", Vector2i(150, 152), "new-yard", true)
-	_check(large["ok"] and expanded.occupied_cells().get(Vector2i(169, 171)) == large.get("building_id"), "大型牧场末端未实际占地")
-	_check(Build.execute(expanded, "b_ranch", Vector2i(150, 152), "new-yard").get("code") == "COMMAND_CONFLICT", "建造回执没有区分规格")
+	var large: Dictionary = Build.execute(expanded, "b_ranch", Vector2i(82, 152), "new-yard", true)
+	_check(large["ok"] and expanded.occupied_cells().get(Vector2i(101, 171)) == large.get("building_id"), "大型牧场末端未实际占地")
+	_check(Build.execute(expanded, "b_ranch", Vector2i(82, 152), "new-yard").get("code") == "COMMAND_CONFLICT", "建造回执没有区分规格")

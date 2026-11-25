@@ -22,6 +22,7 @@ static func check_cost(cost: Dictionary, available: Dictionary) -> Dictionary:
 static func execute(world: RefCounted, definition_id: String, anchor: Vector2i, command_id: String, large: bool = false) -> Dictionary:
 	if command_id.is_empty() or command_id.length() > 64:
 		return {"ok": false, "code": "INVALID_COMMAND", "reason": "建造命令ID无效"}
+	large = large or definition_id == "b_fishery"
 	var cell: Array = [anchor.x, anchor.y]
 	if world.applied_commands.has(command_id):
 		var receipt: Dictionary = world.applied_commands[command_id]

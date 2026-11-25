@@ -1,8 +1,9 @@
-## 文件用途：验证等距投影、反选、缩放锚点、选格和拖动释放，避免镜头变化后点错格。
+## 文件用途：验证投影、方向键、地形缓存和全图切换时的选格一致性。
 extends SceneTree
 
 const Grid = preload("res://scripts/isometric_grid.gd")
 const Map = preload("res://scripts/town_map.gd")
+const Terrain = preload("res://scripts/town_terrain.gd")
 var failed: bool = false
 
 
@@ -35,7 +36,7 @@ func _run() -> void:
 	_check(map.cell_at(screen) == cell, "默认镜头选格错误")
 	map.pan_offset += Vector2(65, -37)
 	screen = map.world_to_screen(Grid.cell_to_world(cell))
-	_check(map.cell_at(screen) == cell, "拖动后选格错误")
+	_check(map.cell_at(screen) == cell, "平移后选格错误")
 	var anchor: Vector2 = Vector2(280, 170)
 	var before: Vector2 = map.screen_to_world(anchor)
 	map._apply_zoom(anchor, 1.2)
@@ -46,7 +47,7 @@ func _run() -> void:
 	_check(is_equal_approx(map.zoom_level, 8.0), "缩放上限错误")
 	map._apply_zoom(anchor, 0.001)
 	_check(is_equal_approx(map.zoom_level, 0.025), "缩放下限错误")
-	# 输入验收模块：左键选择、右键取消、中键在地图外释放和复位。
+	# 输入验收模块：左右键选择和取消，镜头复位保留选中对象。
 	map.reset_view()
 	var click: InputEventMouseButton = InputEventMouseButton.new()
 	click.button_index = MOUSE_BUTTON_LEFT
@@ -72,14 +73,35 @@ func _run() -> void:
 	motion.relative = Vector2(50, -25)
 	motion.position = click.position + motion.relative
 	map._gui_input(motion)
-	_check(map.pan_offset.is_equal_approx(previous_pan + motion.relative), "中键拖动未响应鼠标位移")
-	click.pressed = false
-	map._input(click)
-	_check(not map.dragging, "地图外释放后拖动未停止")
-	map.dragging = true
+	_check(map.pan_offset.is_equal_approx(previous_pan), "中键仍在移动镜头")
+	var direction := InputEventKey.new()
+	direction.keycode = KEY_RIGHT
+	direction.pressed = true
+	map._unhandled_key_input(direction)
+	var old_center: Vector2 = map.screen_to_world(map.size * 0.5)
+	var texture: Texture2D = map.terrain_texture
+	map._process(0.02)
+	_check(map.screen_to_world(map.size * 0.5).x > old_center.x, "方向键未向右移动镜头")
+	_check(map.terrain_texture == texture, "移动时重复创建地形纹理")
+	direction.pressed = false
+	map._input(direction)
+	_check(map.held_directions.is_empty(), "松开方向键后镜头未停止")
+	direction.pressed = true
+	map._unhandled_key_input(direction)
 	map._notification(Node.NOTIFICATION_WM_WINDOW_FOCUS_OUT)
-	_check(not map.dragging, "失焦后拖动未停止")
+	_check(map.held_directions.is_empty(), "失焦后镜头未停止")
+	map.show_entire_map()
+	map.visit_site(Vector2i(22, 90))
+	_check(map.terrain_texture == texture and map.cell_at(map.size * 0.5) == Vector2i(22, 90), "切换视角未复用地形或远景不能定位")
+	for district: Dictionary in Terrain.DISTRICTS:
+		var bounds: Rect2i = district["bounds"]
+		var area: int = 0
+		for y: int in range(bounds.position.y, bounds.end.y):
+			for x: int in range(bounds.position.x, bounds.end.x):
+				area += int(Terrain.deposit_at(Vector2i(x, y)) == district["kind"])
+		_check(area >= 800 and bounds.position.length() > 50.0, "林矿资源区面积不足或离主城太近")
+	_check(Terrain.is_water(Vector2i(100, 110)) and not Terrain.is_water(Vector2i(6, 1)), "内陆水域未替换旧窄水带")
 	map.free()
 	if not failed:
-		print("MAP_PASS: projection, bounds, pan, zoom anchor, zoom limits, selection, reset, release")
+		print("MAP_PASS: projection, bounds, pan, zoom anchor, zoom limits, selection, keyboard pan, cache, large terrain")
 	quit(1 if failed else 0)

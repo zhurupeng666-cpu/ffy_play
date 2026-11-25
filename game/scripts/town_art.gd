@@ -3,8 +3,6 @@ extends RefCounted
 
 const Grid = preload("res://scripts/isometric_grid.gd")
 const Ink: Color = Color("#283025")
-const Grass: Array[Color] = [Color("#526c3d"), Color("#587343"), Color("#5d7846"), Color("#567140")]
-const Water: Array[Color] = [Color("#24546a"), Color("#285b71"), Color("#2c6176")]
 
 # 轮廓模块：图形先以世界像素绘制，再使用城镇镜头变换。
 static func _poly(canvas: Control, center: Vector2, offsets: Array, color: Color) -> void:
@@ -23,27 +21,44 @@ static func _pixel(canvas: Control, center: Vector2, offset: Vector2, extent: Ve
 	var end: Vector2 = canvas.art_point(center + offset + extent)
 	canvas.art_canvas.draw_rect(Rect2(start, end - start), color)
 
-# 地块模块：草地采用固定纹理变化，河格绘制浅滩和水纹。
-static func terrain(canvas: Control, cell: Vector2i, points: PackedVector2Array, water: bool) -> void:
-	var seed: int = posmod(cell.x * 17 + cell.y * 29, 31)
-	var center: Vector2 = Grid.cell_to_world(cell)
-	if canvas.zoom_level < 0.23:
-		# 远景只保留土地色带，减少绘制并让整张地图可读。
-		var band: int = posmod(floori(cell.x / 5.0) + floori(cell.y / 4.0), Grass.size())
-		canvas.art_canvas.draw_colored_polygon(points, Water[1] if water else Grass[band])
-		return
-	if water:
-		canvas.art_canvas.draw_colored_polygon(points, Water[seed % Water.size()])
-		_poly(canvas, center, [Vector2(0, 16), Vector2(32, 0), Vector2(27, 0), Vector2(-3, 14)], Color("#508391"))
-		_pixel(canvas, center, Vector2(seed % 12 - 12, -4), Vector2(12, 2), Color("#4a8a9a"))
-		_pixel(canvas, center, Vector2(0, 4), Vector2(10, 2), Color("#396f82"))
-	else:
-		canvas.art_canvas.draw_colored_polygon(points, Grass[seed % Grass.size()])
-		_pixel(canvas, center, Vector2(seed % 22 - 13, seed % 7 - 6), Vector2(4, 2), Color("#799653"))
-		_pixel(canvas, center, Vector2(9 - seed % 17, 3), Vector2(3, 2), Color("#455932"))
-	var outline: PackedVector2Array = points.duplicate()
-	outline.append(points[0])
-	canvas.art_canvas.draw_polyline(outline, Color("#24382465"), 1.0, false)
+# 渔港码头：沿真实岸线伸出木栈桥，用木桩、渔网架和系泊船标识作业区。
+static func fishing_dock(canvas: Control, cell: Vector2i, outward: Vector2i, yard_center: Vector2) -> void:
+	var start: Vector2 = Grid.cell_to_world(cell)
+	var direction: Vector2 = Grid.cell_to_world(outward)
+	var cross: Vector2 = Grid.cell_to_world(Vector2i(-outward.y, outward.x))
+	var path: Vector2 = yard_center - start
+	var shore_yard: Vector2 = -direction * 1.25
+	var width: Vector2 = cross * 0.48
+	_poly(canvas, start, [shore_yard - width, path - width, path + width, shore_yard + width], Color("#aa9060"))
+	_poly(canvas, start, [-direction * 0.6 - width * 2.5, shore_yard * 2.4 - width * 2.5, shore_yard * 2.4 + width * 2.5, -direction * 0.6 + width * 2.5], Color("#977951"))
+	for edge: float in [-1.35, 1.25]:
+		var supplies: Vector2 = start + shore_yard * 1.4 + width * edge
+		_crate(canvas, supplies)
+		_crate(canvas, supplies + cross * 0.24, Color("#9b775a"))
+	var length: float = 3.1
+	for step: int in range(2, 4):
+		if not preload("res://scripts/town_terrain.gd").is_water(cell + outward * step):
+			length = step - 0.6
+			break
+	var bank: Vector2 = -direction * 0.8
+	var end: Vector2 = direction * length
+	var side: Vector2 = cross * 0.38
+	_poly(canvas, start, [bank - side, end - side, end + side, bank + side], Color("#6a4b36"))
+	_poly(canvas, start, [bank - side * 0.82, end - side * 0.82, end + side * 0.82, bank + side * 0.82], Color("#a17a50"))
+	for step: int in range(1, 19):
+		var plank: Vector2 = bank.lerp(end, step / 19.0)
+		_stroke(canvas, start, plank - side, plank + side, Color("#c3a476" if step % 2 == 0 else "#785939"), 1.5)
+	for ratio: float in [0.14, 0.45, 0.75, 0.98]:
+		for rail: float in [-1.0, 1.0]:
+			var post: Vector2 = bank.lerp(end, ratio) + side * rail
+			_stroke(canvas, start, post + Vector2(0, 8), post - Vector2(0, 11), Color("#5d4231"), 3.4)
+			_pixel(canvas, start, post - Vector2(2, 12), Vector2(4, 3), Color("#d7a773"))
+	var berth: Vector2 = direction * 1.35 + cross * 0.77
+	_poly(canvas, start + berth, [-direction * 0.52, -direction * 0.17 - cross * 0.22, direction * 0.37 - cross * 0.22, direction * 0.63, direction * 0.4 + cross * 0.19, -direction * 0.19 + cross * 0.19], Color("#4c3528"))
+	_stroke(canvas, start + berth, -direction * 0.27, direction * 0.44, Color("#d9b176"), 5.0)
+	for offset: float in [-0.1, 0.22]:
+		_stroke(canvas, start + berth, direction * offset - cross * 0.13, direction * offset + cross * 0.13, Color("#926646"), 2.0)
+
 
 # 林矿模块：用树冠、树干与分面岩石表达资源，轮廓不参与点击判断。
 static func deposit(canvas: Control, center: Vector2, kind: String) -> void:
@@ -124,6 +139,16 @@ static func building(canvas: Control, id: String, center: Vector2, spread: float
 				_stroke(canvas, center, Vector2(-35 + i * 6, 7 - i * 3), Vector2(-6 + i * 6, 22 - i * 3), Color("#b39364"), 2.0)
 			_house(canvas, center + Vector2(9, -7), 28, 17, Color("#496f7a"), Color("#cfad79"), "timber")
 			_crate(canvas, center + Vector2(-17, 13))
+			if spread > 1.0:
+				_house(canvas, center + Vector2(42, 29), 31, 19, Color("#51686c"), Color("#bda37d"), "store", 1.65)
+				for offset: Vector2 in [Vector2(-78, 2), Vector2(-42, 30), Vector2(16, 59), Vector2(93, 36)]:
+					_crate(canvas, center + offset)
+				for offset: Vector2 in [Vector2(-71, 15), Vector2(57, 70)]:
+					_stroke(canvas, center + offset, Vector2(-20, 4), Vector2(-20, -19), Color("#705239"), 4.0)
+					_stroke(canvas, center + offset, Vector2(20, 13), Vector2(20, -10), Color("#705239"), 4.0)
+					_stroke(canvas, center + offset, Vector2(-22, -19), Vector2(22, -10), Color("#b18c59"), 3.0)
+					for i: int in range(7):
+						_stroke(canvas, center + offset, Vector2(-17 + i * 5, -18 + i), Vector2(-12 + i * 5, -3 + i), Color("#b8ac78"))
 
 # 线条模块：描边与木梁使用同一镜头刻度和像素对齐。
 static func _stroke(canvas: Control, center: Vector2, a: Vector2, b: Vector2, color: Color, width: float = 2.0) -> void:

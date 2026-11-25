@@ -22,8 +22,8 @@ func _check(value: bool, reason: String) -> void:
 # 夹具模块：使用真实建造与时钟完成两座材料建筑，不分配生产工人。
 func _prepare() -> RefCounted:
 	var world: RefCounted = State.new()
-	_check(Build.execute(world, "b_lumber", Vector2i(1, 10), "material-lumber")["ok"], "临林伐木场建造失败")
-	_check(Build.execute(world, "b_quarry", Vector2i(12, 4), "material-quarry")["ok"], "临矿采石场建造失败")
+	_check(Build.execute(world, "b_lumber", Vector2i(46, 46), "material-lumber")["ok"], "临林伐木场建造失败")
+	_check(Build.execute(world, "b_quarry", Vector2i(101, 37), "material-quarry")["ok"], "临矿采石场建造失败")
 	_check(not world.assign_producers("building_000002", 1), "工地可分配岗位")
 	world.paused = false
 	Clock.new(world).advance(240)
@@ -35,14 +35,14 @@ func _run() -> void:
 	var world: RefCounted = State.new()
 	var before: Dictionary = world.snapshot()
 	_check(Build.execute(world, "b_lumber", Vector2i(2, 4), "away")["code"] == "NEEDS_DEPOSIT" and world.snapshot() == before, "远离森林仍可建造")
-	_check(Build.execute(world, "b_lumber", Vector2i(12, 4), "wrong-type")["code"] == "NEEDS_DEPOSIT" and world.snapshot() == before, "森林建筑接受石矿")
-	_check(Build.execute(world, "b_quarry", Vector2i(1, 10), "wrong-type-2")["code"] == "NEEDS_DEPOSIT" and world.snapshot() == before, "采石场接受森林")
-	_check(Build.execute(world, "b_lumber", Vector2i(0, 11), "on-deposit")["code"] == "DEPOSIT" and world.snapshot() == before, "直接压资源点未拒绝")
-	_check(not Placement.check_building(Vector2i(1, 8), Catalog.LUMBER, {})["ok"], "仅斜角接触森林却允许建造")
-	_check(Placement.check_building(Vector2i(1, 10), Catalog.LUMBER, {})["ok"], "合法伐木场预览拒绝")
+	_check(Build.execute(world, "b_lumber", Vector2i(101, 37), "wrong-type")["code"] == "NEEDS_DEPOSIT" and world.snapshot() == before, "森林建筑接受石矿")
+	_check(Build.execute(world, "b_quarry", Vector2i(46, 46), "wrong-type-2")["code"] == "NEEDS_DEPOSIT" and world.snapshot() == before, "采石场接受森林")
+	_check(Build.execute(world, "b_lumber", Vector2i(50, 46), "on-deposit")["code"] == "DEPOSIT" and world.snapshot() == before, "直接压资源点未拒绝")
+	_check(not Placement.check_building(Vector2i(46, 31), Catalog.LUMBER, {})["ok"], "仅斜角接触森林却允许建造")
+	_check(Placement.check_building(Vector2i(46, 46), Catalog.LUMBER, {})["ok"], "合法伐木场预览拒绝")
 	# 重启生产模块：基础伐木营地只收金币，木材耗尽时仍能恢复建设资源。
 	world.resources["wood"] = 0
-	_check(Build.execute(world, "b_lumber", Vector2i(1, 10), "bootstrap")["ok"], "木材耗尽时无法建立基础伐木场")
+	_check(Build.execute(world, "b_lumber", Vector2i(46, 46), "bootstrap")["ok"], "木材耗尽时无法建立基础伐木场")
 	world.paused = false
 	Clock.new(world).advance(120)
 	world.assign_producers("building_000002", 3)

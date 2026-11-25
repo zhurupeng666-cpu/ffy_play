@@ -7,7 +7,7 @@ const Catalog = preload("res://scripts/building_catalog.gd")
 static func run(main: Control, mode: String) -> int:
 	if mode == "write":
 		main._start_preview(Catalog.LUMBER)
-		main.town_map.hovered = Vector2i(1, 10)
+		main.town_map.hovered = Vector2i(46, 46)
 		main._on_placement_clicked({})
 		if main.inspected_building_id != "building_000002" or not main.inspection_increase.disabled:
 			return 1
@@ -29,7 +29,7 @@ static func run(main: Control, mode: String) -> int:
 		var click: InputEventMouseButton = InputEventMouseButton.new()
 		click.button_index = MOUSE_BUTTON_LEFT
 		click.pressed = true
-		click.position = main.town_map.world_to_screen(Grid.cell_to_world(Vector2i(2, 11)))
+		click.position = main.town_map.world_to_screen(Grid.cell_to_world(Vector2i(47, 47)))
 		main.town_map._gui_input(click)
 		if main.inspected_building_id != "building_000002" or not (main.numbers["building_credit"].text == "1.00 木材") or not (main.numbers["building_jobs"].text == "1 / 3"):
 			return 1
