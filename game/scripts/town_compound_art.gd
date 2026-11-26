@@ -44,6 +44,8 @@ static func _farm(canvas: Control, center: Vector2) -> void:
 	for p: Vector2 in [Vector2(-7, -3), Vector2(-5.6, -3.4), Vector2(3.9, 2.8), Vector2(6.9, -2.35)]:
 		_bale(canvas, center + _tile(p.x, p.y))
 	_cart_load(canvas, center + _tile(-2.4, -2.45), Color("#d0ad63"))
+	_produce_box(canvas, center + _tile(-4.2, -1.12))
+	_produce_box(canvas, center + _tile(-2.7, -1.25))
 	_crate(canvas, center + _tile(-4.2, -2.3))
 	_crate(canvas, center + _tile(-4.6, -2.75))
 	_trough(canvas, center + _tile(-1.05, -6.75), Color("#72939a"))
@@ -69,7 +71,26 @@ static func _crop_plot(canvas: Control, at: Vector2, kind: int) -> void:
 			_stroke(canvas, p, Vector2(-5, 2), Vector2(-3, -7 if kind == 0 else -4), shade.darkened(0.17), 3.0)
 			_stroke(canvas, p, Vector2(1, 0), Vector2(3, -9 if kind == 0 else -5), shade, 3.6)
 			if kind == 1:
-				_pixel(canvas, p, Vector2(0, -5), Vector2(5, 3), Color("#b1bd72"))
+				_leaf_cluster(canvas, p, row + group)
+			else:
+				_stroke(canvas, p, Vector2(-4, -7), Vector2(4, -10), Color("#efca76"), 3.5)
+				_pixel(canvas, p, Vector2(1, -11), Vector2(4, 2), Color("#ffe3a4"))
+
+
+# 菜畦轮廓：错开的叶片包住果实，近看有颜色与形状差异。
+static func _leaf_cluster(canvas: Control, at: Vector2, variant: int) -> void:
+	_pixel(canvas, at, Vector2(-4, -6), Vector2(11, 6), Color("#526941"))
+	_pixel(canvas, at, Vector2(-4, -7), Vector2(6, 3), Color("#85a358"))
+	_pixel(canvas, at, Vector2(3, -10), Vector2(4, 5), Color("#a5b669"))
+	_pixel(canvas, at, Vector2(0, -5), Vector2(4, 4), Color("#d87952") if variant % 3 == 0 else Color("#d0c46f"))
+
+
+# 收获箱：木框包住成簇果实，靠近搬运通道摆放。
+static func _produce_box(canvas: Control, at: Vector2) -> void:
+	_crate(canvas, at, Color("#aa754e"))
+	for y: int in range(2):
+		for x: int in range(3):
+			_pixel(canvas, at, Vector2(-4 + x * 3 + y, -10 + y * 3), Vector2(3, 3), Color("#de8156") if x != 1 else Color("#b3ae62"))
 
 
 # 牧场模块：双围栏将牛羊分开，草场后方设畜棚、干草堆与饲料车。
@@ -89,8 +110,18 @@ static func _pasture(canvas: Control, center: Vector2) -> void:
 	for p: Vector2 in [Vector2(-2, -6.8), Vector2(-2.7, -5.8), Vector2(2.0, -5.0), Vector2(7.2, -5.2)]:
 		_bale(canvas, center + _tile(p.x, p.y))
 	_cart_load(canvas, center + _tile(0, -3.1), Color("#b69454"))
+	_milk_churn(canvas, center + _tile(-3.8, -4.5))
+	_milk_churn(canvas, center + _tile(-3.35, -4.6))
 	_open_shelter(canvas, center + _tile(7.25, -2.6), Color("#8b754a"))
 	_open_shelter(canvas, center + _tile(-7.55, -2.75), Color("#a08a53"))
+
+
+# 奶桶：桶盖、提把和受光金属面标示畜棚的收集区。
+static func _milk_churn(canvas: Control, at: Vector2) -> void:
+	_pixel(canvas, at, Vector2(-6, -15), Vector2(12, 16), Color("#494952"))
+	_pixel(canvas, at, Vector2(-4, -14), Vector2(7, 13), Color("#a3a8a1"))
+	_pixel(canvas, at, Vector2(-3, -15), Vector2(5, 4), Color("#dfd3af"))
+	_stroke(canvas, at, Vector2(-3, -15), Vector2(3, -18), Color("#75675f"), 2)
 
 
 # 围栏模块：每面分段绘制立柱和横梁，朝前留有中央入口。
@@ -204,7 +235,7 @@ static func draw_activity(canvas: Control, kind: String, center: Vector2, time: 
 		var step: float = sin(time * 4.0 + index * 2.1)
 		var x: float = sin(time * 0.74 + index * 2.0) * 1.9
 		var pos: Vector2 = _tile(4.8 + x, -5.4 + index * 1.4) if kind == "b_farm" else _tile(x * 0.31, -3.7 + index * 2.0)
-		_field_worker(canvas, center + pos, step, kind == "b_farm")
+		_field_worker(canvas, center + pos, step, kind == "b_farm", index)
 
 
 # 牛羊路线：两群在各自围栏内部走动，保留与栅栏和水槽的间距。
@@ -223,21 +254,15 @@ static func drill_foot(index: int, total: int, time: float) -> Vector2:
 
 
 # 农牧工人：草帽、袖口和移动工具区分田间锄作与牧场搬运。
-static func _field_worker(canvas: Control, at: Vector2, step: float, farmer: bool) -> void:
-	var coat: Color = Color("#61838e") if farmer else Color("#848f58")
-	_pixel(canvas, at, Vector2(-8, 0), Vector2(16, 4), Color("#352b206b"))
-	_stroke(canvas, at, Vector2(-3, -8), Vector2(-4 + step * 3, 2), Color("#44382f"), 3.2)
-	_stroke(canvas, at, Vector2(4, -8), Vector2(5 - step * 3, 2), Color("#44382f"), 3.2)
-	_pixel(canvas, at, Vector2(-5, -19), Vector2(11, 12), coat.darkened(0.28))
-	_pixel(canvas, at, Vector2(-3, -18), Vector2(7, 9), coat)
-	_pixel(canvas, at, Vector2(-4, -25), Vector2(9, 7), Color("#d4a580"))
-	_pixel(canvas, at, Vector2(-9, -26), Vector2(19, 3), Color("#b18c56"))
-	_pixel(canvas, at, Vector2(-6, -30), Vector2(13, 5), Color("#d0ad70"))
-	var hand := Vector2(10, -13 + step * 2.0)
-	_stroke(canvas, at, Vector2(3, -17), hand, Color("#bb9167"), 2.7)
-	if farmer:
-		var tip := Vector2(19, -3 - step * 9.0)
-		_stroke(canvas, at, hand, tip, Color("#77533b"), 2.7)
-		_stroke(canvas, at, tip, tip + Vector2(6, 3), Color("#9da394"), 3.0)
+static func _field_worker(canvas: Control, at: Vector2, step: float, farmer: bool, job: int) -> void:
+	_pixel(canvas, at, Vector2(-9, 0), Vector2(18, 4), Color("#352b206b"))
+	Sprites.draw(canvas, at, "farmer" if farmer else "herder", clampi(roundi(step) + 1, 0, 2))
+	var hand := Vector2(10, -14 + step * 2.0)
+	if farmer and job % 3 == 0:
+		var tip := Vector2(21, -6 - step * 11.0)
+		_stroke(canvas, at, hand, tip, Color("#8e6146"), 3.1)
+		_stroke(canvas, at, tip - Vector2(2, 0), tip + Vector2(6, 3), Color("#bbc6ac"), 3.1)
 	else:
-		_pixel(canvas, at, hand, Vector2(9, 7), Color("#ae7c4d"))
+		_pixel(canvas, at, hand, Vector2(10, 7), Color("#6d4938"))
+		_pixel(canvas, at, hand + Vector2(1, 1), Vector2(8, 3), Color("#c79a5a"))
+		_pixel(canvas, at, hand + Vector2(2, -2), Vector2(5, 3), Color("#ddad61") if farmer else Color("#b3aa6d"))

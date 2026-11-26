@@ -2,6 +2,7 @@
 extends RefCounted
 
 const Grid = preload("res://scripts/isometric_grid.gd")
+const Sprites = preload("res://scripts/town_character_art.gd")
 const Ink: Color = Color("#283025")
 
 # 轮廓模块：图形先以世界像素绘制，再使用城镇镜头变换。
@@ -196,6 +197,7 @@ static func _house(canvas: Control, center: Vector2, span: int, height: int, roo
 	_poly(canvas, center, [back_ridge, front_ridge, eave_e, eave_n], roof.darkened(0.34))
 	_poly(canvas, center, [back_ridge, front_ridge, eave_s, eave_w], roof)
 	_roof_rows(canvas, center, back_ridge, front_ridge, eave_w, eave_s, roof)
+	_roof_rows(canvas, center, back_ridge, front_ridge, eave_n, eave_e, roof.darkened(0.33))
 	_stroke(canvas, center, eave_w, eave_s, Ink, 3.0)
 	_stroke(canvas, center, eave_s, front_ridge, roof.lightened(0.24), 2.0)
 	_stroke(canvas, center, front_ridge, eave_e, Ink, 2.0)
@@ -210,7 +212,26 @@ static func _house(canvas: Control, center: Vector2, span: int, height: int, roo
 		for ratio: float in [0.24, 0.52, 0.8]:
 			var peg: Vector2 = eave_w.lerp(eave_s, ratio) + Vector2(0, 2)
 			_pixel(canvas, center, peg, Vector2(3, 2), Color("#bd9a71"))
+	_entry_details(canvas, center, west, south, height, mode)
 	canvas.art_scale = 1.0
+
+# 门前构件：窗箱、停靠台与悬灯按建筑用途绘在门廊前。
+static func _entry_details(canvas: Control, center: Vector2, west: Vector2, south: Vector2, height: int, mode: String) -> void:
+	var doorway: Vector2 = west.lerp(south, 0.68)
+	var along: Vector2 = (south - west).normalized()
+	var step: Vector2 = Vector2(-3, 4)
+	_poly(canvas, center + doorway, [-along * 6, along * 6, along * 6 + step, -along * 6 + step], Color("#bca180"))
+	_stroke(canvas, center + doorway, -along * 6 + step, along * 6 + step, Color("#655247"), 1.6)
+	var lamp: Vector2 = west.lerp(south, 0.83) - Vector2(0, height * 0.48)
+	_pixel(canvas, center, lamp + Vector2(-2, -2), Vector2(5, 7), Color("#49383b"))
+	_pixel(canvas, center, lamp + Vector2(-1, 0), Vector2(3, 4), Color("#f1b968"))
+	if mode in ["home", "timber"]:
+		var flowerbox: Vector2 = west.lerp(south, 0.25) - Vector2(0, height * 0.32)
+		_stroke(canvas, center + flowerbox, -along * 5, along * 5, Color("#835d43"), 4.2)
+		for x: int in [-4, 0, 4]:
+			_pixel(canvas, center + flowerbox, along * x - Vector2(0, 4), Vector2(3, 3), Color("#768c52"))
+			_pixel(canvas, center + flowerbox, along * x - Vector2(0, 6), Vector2(2, 2), Color("#df8880"))
+
 
 # 屋瓦模块：顺坡的错缝纹理增强屋顶坡度与瓦片层次。
 static func _roof_rows(canvas: Control, center: Vector2, ridge_a: Vector2, ridge_b: Vector2, eave_a: Vector2, eave_b: Vector2, roof: Color) -> void:
@@ -351,19 +372,14 @@ static func drill_position(index: int, total: int, time: float) -> Vector2:
 # 士兵绘制模块：头盔、盾牌和木质训练器械跟随操练动作。
 static func _drill_soldier(canvas: Control, at: Vector2, time: float, index: int, trainee: bool) -> void:
 	var step: float = sin(time * 7.6 + index * 0.8)
-	var raised: bool = step > 0.2
-	_pixel(canvas, at, Vector2(-6, 1), Vector2(13, 3), Color("#332c2460"))
-	_stroke(canvas, at, Vector2(-3, -7), Vector2(-4 + step * 3.0, 2), Ink, 3.0)
-	_stroke(canvas, at, Vector2(3, -7), Vector2(4 - step * 3.0, 2), Ink, 3.0)
-	_pixel(canvas, at, Vector2(-5, -19), Vector2(11, 12), Ink)
-	_pixel(canvas, at, Vector2(-4, -18), Vector2(8, 10), Color("#a68756") if trainee else Color("#a34f42"))
-	_pixel(canvas, at, Vector2(-3, -24), Vector2(7, 7), Color("#c99870"))
-	_pixel(canvas, at, Vector2(-4, -26), Vector2(9, 5), Color("#b49160") if trainee else Color("#abb0a3"))
-	_pixel(canvas, at, Vector2(-8, -16), Vector2(7, 10), Color("#51677a"))
-	_pixel(canvas, at, Vector2(-8, -14), Vector2(2, 6), Color("#a7ab99"))
-	var weapon: Vector2 = Vector2(15, -30) if raised else Vector2(17, -8)
-	_stroke(canvas, at, Vector2(4, -16), weapon, Color("#64432e"), 3.2)
-	_stroke(canvas, at, Vector2(6, -17), weapon, Color("#dbb77d"), 1.4)
+	_pixel(canvas, at, Vector2(-10, 0), Vector2(20, 4), Color("#332c2460"))
+	Sprites.draw(canvas, at, "trainee" if trainee else "guard", clampi(roundi(step) + 1, 0, 2))
+	var shield: Vector2 = Vector2(-12, -17 + step * 2.0)
+	_poly(canvas, at + shield, [Vector2(-6, -5), Vector2(5, -5), Vector2(4, 4), Vector2(-1, 8), Vector2(-5, 4)], Color("#3d3942"))
+	_stroke(canvas, at + shield, Vector2(-3, -2), Vector2(2, 4), Color("#c9a96e"), 2.2)
+	var tip: Vector2 = Vector2(17, -22 - step * 10.0)
+	_stroke(canvas, at, Vector2(9, -14), tip, Color("#966544"), 3.0)
+
 
 # 深度模块：按地面纵坐标绘制牛羊，避免远处覆盖近处。
 static func _animal_behind(left: Vector2, right: Vector2) -> bool:
@@ -371,27 +387,10 @@ static func _animal_behind(left: Vector2, right: Vector2) -> bool:
 
 # 像素动物模块：体型、毛色、耳朵和步态让羊与牛在放大画面可辨认。
 static func _animal(canvas: Control, at: Vector2, cow: bool, facing: float, step: int) -> void:
-	var width: float = 24.0 if cow else 19.0
-	var h: float = width * 0.5
-	var coat: Color = Color("#a97955") if cow else Color("#e5d6b3")
-	var dark: Color = Color("#49392f")
-	_pixel(canvas, at, Vector2(-h, 1), Vector2(width + 3, 4), Color("#262c2480"))
-	for leg: int in [-1, 1]:
-		var stride: float = float(leg * (step * 2 - 1)) * 2.0
-		_stroke(canvas, at, Vector2(leg * (h - 4), -5), Vector2(leg * (h - 4) + stride, 3), dark, 3.0)
-	_poly(canvas, at, [Vector2(-h, -6), Vector2(-h, -13), Vector2(-h + 4, -17), Vector2(h - 3, -17), Vector2(h, -13), Vector2(h, -6), Vector2(h - 4, -3), Vector2(-h + 4, -3)], dark)
-	_pixel(canvas, at, Vector2(-h + 2, -13), Vector2(width - 4, 8), coat)
-	_pixel(canvas, at, Vector2(-h + 4, -16), Vector2(width - 8, 4), coat.lightened(0.16))
-	var head: Vector2 = Vector2(facing * (h + 1), -9)
-	_pixel(canvas, at + head, Vector2(-4, -6), Vector2(9, 8), dark)
-	_pixel(canvas, at + head, Vector2(-3, 0), Vector2(8, 4), coat.darkened(0.19))
-	_pixel(canvas, at + head, Vector2(facing * 2, -4), Vector2(2, 2), Color("#faf0d7"))
-	if cow:
-		_pixel(canvas, at + head, Vector2(-6, -7), Vector2(3, 3), Color("#eee0bb"))
-		_pixel(canvas, at + head, Vector2(4, -7), Vector2(3, 3), Color("#eee0bb"))
-		_pixel(canvas, at, Vector2(-5, -13), Vector2(6, 7), Color("#69492f"))
-	else:
-		_pixel(canvas, at, Vector2(-5, -18), Vector2(7, 3), Color("#f0e2c3"))
+	var width: float = 38.0 if cow else 29.0
+	_pixel(canvas, at, Vector2(-width * 0.5, -1), Vector2(width, 4), Color("#2e34278a"))
+	Sprites.draw(canvas, at, "cow" if cow else "sheep", step, facing)
+
 
 # 围栏模块：前后两半分层，使用斜向木梁和重复立柱。
 static func _fence(canvas: Control, center: Vector2, front: bool, spread: float) -> void:

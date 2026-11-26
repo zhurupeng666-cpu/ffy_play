@@ -261,7 +261,7 @@ static func draw_resource_workers(canvas: Control, area: Dictionary, count: int,
 		var work: float = sin(time * 4.8 + i * 1.7)
 		var stride: float = sin(time * 1.6 + i * 1.7) * 5.0
 		_worker(canvas, base + Vector2(-8 + stride + floori(float(i) / sites.size()) * 9, 6),
-			"b_lumber" if lumber else "b_quarry", Color("#bd8046") if lumber else Color("#c98568"), work)
+			"b_lumber" if lumber else "b_quarry", work)
 
 
 # 水中生物：两座暂养池和码头附近分别显示鱼群，摆尾与转向独立于战略日结。
@@ -314,23 +314,14 @@ static func draw_fishers(canvas: Control, center: Vector2, dock: Dictionary, cou
 			else:
 				var direction: Vector2 = Grid.cell_to_world(dock["outward"])
 				at = Grid.cell_to_world(dock["cell"]) + direction * lerpf(-0.45, 0.85, phase)
-		_worker(canvas, at, "b_fishery", Color("#6bb1bb"), sin(time * 9.2 + index * 1.9))
+		_worker(canvas, at, "b_fishery", sin(time * 9.2 + index * 1.9))
 
 
 # 工人轮廓：帽子和动作区分木匠、石工与渔工，帽檐和衣料保持像素对齐。
-static func _worker(canvas: Control, at: Vector2, id: String, tunic: Color, step: float) -> void:
-	_pixel(canvas, at, Vector2(-7, 0), Vector2(15, 4), Color("#30281eb0"))
-	_stroke(canvas, at, Vector2(-3, -9), Vector2(-4 + step * 5, 1), Color("#302b27"), 3)
-	_stroke(canvas, at, Vector2(4, -9), Vector2(4 - step * 5, 1), Color("#302b27"), 3)
-	_pixel(canvas, at, Vector2(-6, -21), Vector2(13, 13), Color("#382e28"))
-	_pixel(canvas, at, Vector2(-4, -20), Vector2(9, 10), tunic)
-	_pixel(canvas, at, Vector2(-3, -19), Vector2(4, 8), tunic.lightened(0.27))
-	_pixel(canvas, at, Vector2(-4, -12), Vector2(10, 3), Color("#554033"))
-	_pixel(canvas, at, Vector2(-4, -27), Vector2(9, 7), Color("#d4a27b"))
-	_pixel(canvas, at, Vector2(1, -24), Vector2(3, 2), Color("#544034"))
-	_pixel(canvas, at, Vector2(-4, -23), Vector2(3, 4), Color("#906646"))
-	_pixel(canvas, at, Vector2(-8, -27), Vector2(17, 3), Color("#493b2e"))
-	_pixel(canvas, at, Vector2(-6, -31), Vector2(13, 5), Color("#d0ad68") if id == "b_fishery" else Color("#a4815d"))
+static func _worker(canvas: Control, at: Vector2, id: String, step: float) -> void:
+	var kind: String = "fisher" if id == "b_fishery" else ("logger" if id == "b_lumber" else "mason")
+	_pixel(canvas, at, Vector2(-10, 0), Vector2(21, 4), Color("#30281eb0"))
+	Sprites.draw(canvas, at, kind, clampi(roundi(step) + 1, 0, 2))
 	var hand := Vector2(9, -15 + step * 4)
 	_stroke(canvas, at, Vector2(3, -18), hand, Color("#d4a27b"), 3)
 	if id == "b_fishery":
