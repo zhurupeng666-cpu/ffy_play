@@ -4,6 +4,7 @@ extends RefCounted
 const Costs = preload("res://scripts/building_costs.gd")
 const Catalog = preload("res://scripts/building_catalog.gd")
 const Placement = preload("res://scripts/placement_validator.gd")
+const Streets = preload("res://scripts/street_frontage.gd")
 
 
 # 费用校验模块：完整检查所有成本后才允许扣费，拒绝配置中的非法资源和负数。
@@ -22,7 +23,7 @@ static func check_cost(cost: Dictionary, available: Dictionary) -> Dictionary:
 static func execute(world: RefCounted, definition_id: String, anchor: Vector2i, command_id: String, large: bool = false) -> Dictionary:
 	if command_id.is_empty() or command_id.length() > 64:
 		return {"ok": false, "code": "INVALID_COMMAND", "reason": "建造命令ID无效"}
-	large = large or definition_id == "b_fishery"
+	large = large or definition_id == "b_fishery" or (world.capital_layout and definition_id == "b_road")
 	var cell: Array = [anchor.x, anchor.y]
 	if world.applied_commands.has(command_id):
 		var receipt: Dictionary = world.applied_commands[command_id]
@@ -37,6 +38,11 @@ static func execute(world: RefCounted, definition_id: String, anchor: Vector2i, 
 	var geometry: Dictionary = Placement.check_building(anchor, definition, world.occupied_cells())
 	if not geometry["ok"]:
 		return geometry
+	var front: int = Streets.NO_FRONT
+	if world.capital_layout and definition_id == "b_house":
+		front = Streets.direction(anchor, definition.get("footprint"), Streets.network(world.buildings, true))
+		if front == Streets.NO_FRONT:
+			return {"ok": false, "code": "NEEDS_STREET", "reason": "住宅大门必须接到已铺好的道路"}
 	var affordability: Dictionary = check_cost(definition.get("cost"), world.resources)
 	if not affordability["ok"]:
 		return affordability
@@ -50,6 +56,8 @@ static func execute(world: RefCounted, definition_id: String, anchor: Vector2i, 
 	var id: String = "building_%06d" % world.next_building_id
 	var buildings: Array = world.buildings.duplicate(true)
 	buildings.append({"id": id, "def_id": definition_id, "large": large, "cell": cell, "level": 1, "state": "constructing", "work_done": 0, "work_required": int(definition.get("build_work")), "workers": 0, "food_credit": 0, "material_credit": 0, "paid_cost": Costs.normalize(definition.get("cost"))})
+	if front != Streets.NO_FRONT:
+		buildings.back()["front"] = front
 	var receipts: Dictionary = world.applied_commands.duplicate(true)
 	receipts[command_id] = {"def_id": definition_id, "large": large, "cell": cell, "building_id": id}
 	world.resources = resources

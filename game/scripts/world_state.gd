@@ -396,6 +396,10 @@ func _restore_buildings(data: Dictionary) -> bool:
 		var record: Dictionary = {"id": id, "def_id": raw["def_id"], "cell": [anchor.x, anchor.y], "level": 1, "state": raw["state"], "work_done": done, "work_required": required, "workers": workers, "food_credit": credit, "material_credit": material_credit, "paid_cost": paid}
 		if raw.has("large"):
 			record["large"] = raw["large"]
+		if raw.has("front"):
+			if raw["def_id"] not in ["b_house", "b_manor", "b_tavern", "b_restaurant", "b_bakery"] or not _valid_integer(raw["front"], 0, 3):
+				return false
+			record["front"] = int(raw["front"])
 		if raw.get("legacy_large", false) or (prior_large and raw.get("large", false)):
 			record["legacy_large"] = true
 		if retired:

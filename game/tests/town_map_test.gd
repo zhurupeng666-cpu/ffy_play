@@ -126,9 +126,10 @@ func _run() -> void:
 		_check(area >= 800 and bounds.position.length() > 50.0, "林矿资源区面积不足或离主城太近")
 	_check(Terrain.is_water(Vector2i(100, 110)) and Terrain.is_water(Vector2i(299, 130)) and not Terrain.is_water(Vector2i(6, 1)), "内陆水域未替换旧窄水带")
 	_check_capital(map)
+	_check_broad_streets(map)
 	map.free()
 	if not failed:
-		print("MAP_PASS: projection, bounds, pan, zoom anchor, zoom limits, selection, keyboard pan, cache, large terrain")
+		print("MAP_PASS: projection, terrain, capital, broad streets, saved entrances, pedestrian routes")
 	quit(1 if failed else 0)
 
 
@@ -176,3 +177,37 @@ func _check_capital(map: Control) -> void:
 	var b: Texture2D = Walker.Pedestrians._texture(0,3,false,false)
 	var child: Texture2D = Walker.Pedestrians._texture(3,0,false,false)
 	_check(a.get_image().get_data() != b.get_image().get_data() and a.get_image().get_data() != child.get_image().get_data(), "行人步态或身份剪影没有区别")
+
+
+# 宽街验收：真实占地、完工前限制、四侧门向、预览单一来源及读档。
+func _check_broad_streets(map: Control) -> void:
+	var state = preload("res://scripts/world_state.gd")
+	var build = preload("res://scripts/construction_service.gd")
+	var world: RefCounted = state.new()
+	state.HouseEconomy.activate(world, 71342)
+	world.capital_layout = true
+	var anchor := Vector2i(20,10)
+	var road: Dictionary = build.execute(world,"b_road",anchor,"wide-road")
+	_check(road["ok"] and state.Catalog.footprint(world.buildings.back()) == Vector2i(3,3), "默认道路没有完整占用3×3")
+	var house_cell := Vector2i(20,8)
+	_check(build.execute(world,"b_house",house_cell,"unready")["code"] == "NEEDS_STREET", "住宅错误接入施工中的道路")
+	var record: Dictionary = world.buildings.back()
+	record["state"] = "ready"
+	record["work_done"] = record["work_required"]
+	var ways: Dictionary = build.Streets.network(world.buildings)
+	_check(ways.size() == 9 and ways.has(anchor + Vector2i(2,2)), "宽街外缘未加入道路网络")
+	var adjacent: Array[Vector2i] = [house_cell,Vector2i(18,10),Vector2i(20,13),Vector2i(23,10)]
+	for index: int in range(adjacent.size()):
+		_check(build.Streets.direction(adjacent[index],Vector2i(2,2),ways) == index, "住宅门未向对应道路侧")
+	map.sync_buildings(world.buildings)
+	map.visit_site(house_cell)
+	map.hovered = house_cell
+	map.set_preview(state.Catalog.HOUSE)
+	_check(map.preview_result.get("front") == 0, "施工预览未标出临街入口")
+	map.cancel_preview()
+	_check(build.execute(world,"b_house",house_cell,"aligned-house")["ok"], "临街住宅无法建造")
+	var snapshot: Dictionary = world.snapshot()
+	var loaded: RefCounted = state.from_snapshot(snapshot)
+	_check(loaded != null and loaded.buildings.back().get("front") == 0, "读档丢失住宅门向")
+	snapshot["buildings"].back()["front"] = 4
+	_check(state.from_snapshot(snapshot) == null, "坏档可以注入无效门向")

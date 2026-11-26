@@ -99,27 +99,48 @@ static func _gate(canvas: Control, area: Rect2i, ns: bool, outer: bool) -> void:
 
 
 # 府邸模块：十五格院区包含正厅、东西厢房、穿院路、水池与植栽。
-static func manor(canvas: Control, cell: Vector2i, extent: Vector2i, noble: bool) -> void:
+static func manor(canvas: Control, cell: Vector2i, extent: Vector2i, noble: bool, front: int = 0) -> void:
 	if extent.x < 15:
 		Art.building(canvas, "b_manor", Grid.cell_to_world(cell) + Grid.cell_to_world(extent - Vector2i.ONE) * 0.5)
 		return
 	var area := Rect2i(cell, extent)
 	_tile(canvas, area, Color("#a99573"))
-	_manor_court(canvas, area, JADE if noble else RUBY)
-	_garden(canvas, Rect2i(cell + Vector2i(4,8), Vector2i(7,5)))
-	_hall(canvas, Rect2i(cell + Vector2i(5,13), Vector2i(5,2)), JADE, 26.0, false)
+	var color: Color = JADE if noble else RUBY
+	_manor_court(canvas, area, color, front, true)
+	_box(canvas, _court_plot(area, Rect2i(0,14,6,1), front), 0.0, 31.0, Color("#95664e"), Color("#6b685a"))
+	_box(canvas, _court_plot(area, Rect2i(9,14,6,1), front), 0.0, 31.0, Color("#95664e"), Color("#6b685a"))
+	_box(canvas, _court_plot(area, Rect2i(6,13,1,2), front), 0.0, 44.0, Color("#8c544a"), Color("#b19b79"))
+	_box(canvas, _court_plot(area, Rect2i(8,13,1,2), front), 0.0, 44.0, Color("#8c544a"), Color("#b19b79"))
+	_roof(canvas, _court_plot(area, Rect2i(6,13,3,2), front), 48.0, color, 18.0)
+
+
+# 府邸朝向模块：院墙、门楼和院内建筑共用同一次四向变换。
+static func _court_plot(area: Rect2i, local: Rect2i, front: int) -> Rect2i:
+	var start: Vector2i = local.position
+	var size: Vector2i = local.size
+	var finish: Vector2i = local.end
+	match front:
+		1:
+			return Rect2i(area.position + Vector2i(start.y, area.size.y - finish.x), Vector2i(size.y,size.x))
+		2:
+			return Rect2i(area.position + area.size - finish, size)
+		3:
+			return Rect2i(area.position + Vector2i(area.size.x - finish.y,start.x), Vector2i(size.y,size.x))
+	return Rect2i(area.position + start, size)
 
 
 # 院落模块：墙围三面、前廊开口，正厅与厢房围绕院心。
-static func _manor_court(canvas: Control, area: Rect2i, roof: Color) -> void:
+static func _manor_court(canvas: Control, area: Rect2i, roof: Color, front: int = 0, landscaped: bool = false) -> void:
 	_tile(canvas, area.grow(-1), Color("#c0ad8c"))
-	_box(canvas, Rect2i(area.position, Vector2i(area.size.x,1)), 0.0, 31.0, Color("#936751"), Color("#6d6b63"))
-	_box(canvas, Rect2i(area.position, Vector2i(1,area.size.y)), 0.0, 28.0, Color("#95664e"), Color("#6b685a"))
-	_box(canvas, Rect2i(Vector2i(area.end.x - 1,area.position.y), Vector2i(1,area.size.y)), 0.0, 28.0, Color("#936453"), Color("#6b685a"))
-	_hall(canvas, Rect2i(area.position + Vector2i(3,2), Vector2i(area.size.x - 6,3)), roof, 53.0, true)
-	_hall(canvas, Rect2i(area.position + Vector2i(1,5), Vector2i(2,3)), roof.darkened(0.14), 31.0, false)
-	_hall(canvas, Rect2i(area.position + Vector2i(area.size.x - 3,5), Vector2i(2,3)), roof.darkened(0.14), 31.0, false)
-	_tile(canvas, Rect2i(area.position + Vector2i((area.size.x - 3) / 2, 5), Vector2i(3,area.size.y - 5)), Color("#ded0aa"))
+	_tile(canvas, _court_plot(area, Rect2i((area.size.x - 3) / 2,5,3,area.size.y - 5), front), Color("#ded0aa"))
+	if landscaped:
+		_garden(canvas, _court_plot(area, Rect2i(4,8,7,5), front))
+	_box(canvas, _court_plot(area, Rect2i(0,0,area.size.x,1), front), 0.0, 31.0, Color("#936751"), Color("#6d6b63"))
+	_box(canvas, _court_plot(area, Rect2i(0,0,1,area.size.y), front), 0.0, 28.0, Color("#95664e"), Color("#6b685a"))
+	_box(canvas, _court_plot(area, Rect2i(area.size.x - 1,0,1,area.size.y), front), 0.0, 28.0, Color("#936453"), Color("#6b685a"))
+	_hall(canvas, _court_plot(area, Rect2i(3,2,area.size.x - 6,3), front), roof, 53.0, true)
+	_hall(canvas, _court_plot(area, Rect2i(1,5,2,3), front), roof.darkened(0.14), 31.0, false)
+	_hall(canvas, _court_plot(area, Rect2i(area.size.x - 3,5,2,3), front), roof.darkened(0.14), 31.0, false)
 
 
 # 御苑模块：蓝绿水池、栏杆、石桥、亭榭和种植边界。

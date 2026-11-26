@@ -5,6 +5,7 @@ const Terrain = preload("res://scripts/town_terrain.gd")
 const Grid = preload("res://scripts/isometric_grid.gd")
 const Catalog = preload("res://scripts/building_catalog.gd")
 const Market = preload("res://scripts/district_market.gd")
+const Streets = preload("res://scripts/street_frontage.gd")
 const Placement = preload("res://scripts/placement_validator.gd")
 const March = preload("res://scripts/region_march.gd")
 
@@ -319,7 +320,8 @@ static func _invest_in_buildings(world: RefCounted, day: int, trades: Dictionary
 		var cell := Vector2i(record["cell"][0], record["cell"][1])
 		match record["def_id"]:
 			"b_market": markets.append(cell)
-			"b_road": ways.append(cell)
+			"b_road":
+				ways.append_array(Placement.footprint_cells(cell, Catalog.footprint(record)))
 			"b_manor": manors[state["property"].get(record["id"], -1)] = true
 			"b_farm": field_owners[state["property"].get(record["id"], -1)] = true
 	if ways.is_empty():
@@ -328,6 +330,7 @@ static func _invest_in_buildings(world: RefCounted, day: int, trades: Dictionary
 	if families.is_empty():
 		return
 	var occupied: Dictionary = world.occupied_cells()
+	var established: Dictionary = Streets.network(world.buildings, world.capital_layout)
 	for offset: int in range(families.size()):
 		var owner: int = (day + offset) % families.size()
 		var family: Dictionary = families[owner]
@@ -351,6 +354,10 @@ static func _invest_in_buildings(world: RefCounted, day: int, trades: Dictionary
 			family["cash"] -= price
 			family["income"] -= price
 			var id: String = Market.found(world, slot, definition)
+			if kind != "b_farm":
+				var front: int = Streets.direction(slot, definition.get("footprint"), established)
+				if front >= 0:
+					world.buildings.back()["front"] = front
 			state["property"][id] = owner
 			return
 
@@ -369,7 +376,8 @@ static func _shop_site(ways: Array[Vector2i], markets: Array[Vector2i], definiti
 		for direction: Vector2i in Terrain.CARDINALS:
 			var shift := Vector2i(-int(definition.footprint.x) if direction.x < 0 else direction.x,
 				-int(definition.footprint.y) if direction.y < 0 else direction.y)
-			var candidate: Vector2i = road + shift
+			var centered := Vector2i(floori((definition.footprint.x - 1) * 0.5) if direction.y != 0 else 0, floori((definition.footprint.y - 1) * 0.5) if direction.x != 0 else 0)
+			var candidate: Vector2i = road + shift - centered
 			if Placement.check_building(candidate, definition, occupied)["ok"]:
 				return candidate
 	return Grid.INVALID

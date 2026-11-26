@@ -93,7 +93,7 @@ static func site(canvas: Control, center: Vector2) -> void:
 	_logs(canvas, center + Vector2(4, -1))
 
 # 建筑模块：依据用途组合主楼、塔楼、侧棚和生产设施。
-static func building(canvas: Control, id: String, center: Vector2, spread: float = 1.0) -> void:
+static func building(canvas: Control, id: String, center: Vector2, spread: float = 1.0, front: int = 0) -> void:
 	match id:
 		"b_hall":
 			_house(canvas, center + Vector2(0, -10), 42, 35, Color("#526b86"), Color("#baa98e"), "stone")
@@ -101,7 +101,7 @@ static func building(canvas: Control, id: String, center: Vector2, spread: float
 			_tower(canvas, center + Vector2(37, 5), 14, 37)
 			_flag(canvas, center + Vector2(-3, -73), Color("#c45d4b"))
 		"b_house":
-			_house(canvas, center, 39, 25, Color("#ab5640"), Color("#e6bf87"), "home")
+			_house(canvas, center, 39, 25, Color("#ab5640"), Color("#e6bf87"), "home", 1.45, front)
 		"b_farm":
 			var plots: int = clampi(roundi(spread), 1, 5)
 			for row: int in range(plots):
@@ -120,13 +120,13 @@ static func building(canvas: Control, id: String, center: Vector2, spread: float
 			_poly(canvas, center, [Vector2(54,-56), Vector2(78,-42), Vector2(75,-22), Vector2(54,-34)], Color("#c2693b"))
 			_stroke(canvas, center, Vector2(58,-46), Vector2(70,-39), Color("#f9dd91"), 3.0)
 		"b_tavern":
-			_house(canvas, center, 35, 28, Color("#7e4551"), Color("#bb9b65"), "timber", 1.48)
+			_house(canvas, center, 35, 28, Color("#7e4551"), Color("#bb9b65"), "timber", 1.48, front)
 			_shop_sign(canvas, center, Color("#c68948"))
 		"b_restaurant":
-			_house(canvas, center - Vector2(0, 3), 44, 41, Color("#497681"), Color("#d0b08d"), "stone", 1.63)
+			_house(canvas, center - Vector2(0, 3), 44, 41, Color("#497681"), Color("#d0b08d"), "stone", 1.63, front)
 			_shop_sign(canvas, center, Color("#bc6948"))
 		"b_bakery":
-			_house(canvas, center, 36, 25, Color("#b68a49"), Color("#d4b78c"), "home", 1.44)
+			_house(canvas, center, 36, 25, Color("#b68a49"), Color("#d4b78c"), "home", 1.44, front)
 			_crate(canvas, center + Vector2(-28, 23))
 			_shop_sign(canvas, center, Color("#dbb374"))
 		"b_manor":
@@ -233,7 +233,7 @@ static func _wall_opening(canvas: Control, center: Vector2, a: Vector2, b: Vecto
 		_pixel(canvas, center, middle + (low + high) * 0.5 + Vector2(2, 0), Vector2(2, 2), Color("#e1ae61"))
 
 # 房屋模块：根据同一屋基构建双坡屋顶、三角山墙、滴水线和墙体。
-static func _house(canvas: Control, center: Vector2, span: int, height: int, roof: Color, wall: Color, mode: String, model_scale: float = 1.45) -> void:
+static func _house(canvas: Control, center: Vector2, span: int, height: int, roof: Color, wall: Color, mode: String, model_scale: float = 1.45, front: int = 0) -> void:
 	canvas.art_origin = center
 	canvas.art_scale = model_scale
 	var west: Vector2 = Vector2(-span, -3)
@@ -242,8 +242,12 @@ static func _house(canvas: Control, center: Vector2, span: int, height: int, roo
 	var north: Vector2 = Vector2(-5, -span * 0.42)
 	var up: Vector2 = Vector2(0, -height)
 	_poly(canvas, center + Vector2(7, 5), [west, north, east, south], Color("#1b231b90"))
-	_wall(canvas, center, west, south, height, wall, mode, true)
-	_wall(canvas, center, south, east, height, wall.darkened(0.23), mode, false)
+	if front == 2:
+		_entry_details(canvas, center, north, east, height, mode, Vector2(3,-4))
+	elif front == 3:
+		_entry_details(canvas, center, west, north, height, mode, Vector2(-4,-3))
+	_wall(canvas, center, west, south, height, wall, mode, front == 0)
+	_wall(canvas, center, south, east, height, wall.darkened(0.23), mode, front == 1)
 	var ridge_height: Vector2 = Vector2(0, -span * 0.41)
 	var back_ridge: Vector2 = west.lerp(north, 0.5) + up + ridge_height
 	var front_ridge: Vector2 = south.lerp(east, 0.5) + up + ridge_height
@@ -271,14 +275,16 @@ static func _house(canvas: Control, center: Vector2, span: int, height: int, roo
 		for ratio: float in [0.24, 0.52, 0.8]:
 			var peg: Vector2 = eave_w.lerp(eave_s, ratio) + Vector2(0, 2)
 			_pixel(canvas, center, peg, Vector2(3, 2), Color("#bd9a71"))
-	_entry_details(canvas, center, west, south, height, mode)
+	if front == 0:
+		_entry_details(canvas, center, west, south, height, mode)
+	elif front == 1:
+		_entry_details(canvas, center, south, east, height, mode, Vector2(4,3))
 	canvas.art_scale = 1.0
 
 # 门前构件：窗箱、停靠台与悬灯按建筑用途绘在门廊前。
-static func _entry_details(canvas: Control, center: Vector2, west: Vector2, south: Vector2, height: int, mode: String) -> void:
+static func _entry_details(canvas: Control, center: Vector2, west: Vector2, south: Vector2, height: int, mode: String, step: Vector2 = Vector2(-3,4)) -> void:
 	var doorway: Vector2 = west.lerp(south, 0.68)
 	var along: Vector2 = (south - west).normalized()
-	var step: Vector2 = Vector2(-3, 4)
 	_poly(canvas, center + doorway, [-along * 6, along * 6, along * 6 + step, -along * 6 + step], Color("#bca180"))
 	_stroke(canvas, center + doorway, -along * 6 + step, along * 6 + step, Color("#655247"), 1.6)
 	var lamp: Vector2 = west.lerp(south, 0.83) - Vector2(0, height * 0.48)

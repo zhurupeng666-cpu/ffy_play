@@ -632,8 +632,10 @@ func _build_category(title: String, icon_id: String, ids: Array[String]) -> void
 	for i: int in range(ids.size()):
 		var id: String = ids[i]
 		var definition: Resource = Construction.Catalog.find(id)
-		var footprint: Vector2i = Construction.Catalog.footprint({"def_id": id, "large": Construction.Catalog.LARGE_SIZES.has(id)})
-		popup.add_icon_item(HudIcons.texture(icon_id), "%s   %d×%d" % [definition.get("display_name"), footprint.x, footprint.y], i)
+		var scaled: bool = Construction.Catalog.LARGE_SIZES.has(id) and (id != "b_road" or not legacy_economy_fixture)
+		var footprint: Vector2i = Construction.Catalog.footprint({"def_id": id, "large": scaled})
+		var title_text: String = "宽街" if id == "b_road" and scaled else definition.get("display_name")
+		popup.add_icon_item(HudIcons.texture(icon_id), "%s   %d×%d" % [title_text, footprint.x, footprint.y], i)
 	popup.id_pressed.connect(_build_menu_selected.bind(ids))
 
 
@@ -641,7 +643,7 @@ func _build_category(title: String, icon_id: String, ids: Array[String]) -> void
 func _build_menu_selected(index: int, ids: Array[String]) -> void:
 	var id: String = ids[index]
 	management_drawer.hide()
-	if Construction.Catalog.LARGE_SIZES.has(id):
+	if Construction.Catalog.LARGE_SIZES.has(id) and (id != "b_road" or not legacy_economy_fixture):
 		_start_large_preview(id)
 	else:
 		_start_preview(Construction.Catalog.for_construction(id, false))
@@ -1016,6 +1018,8 @@ func _start_large_preview(id: String) -> void:
 
 # 建筑选择模块：为一次放置生成唯一命令，失败时可调整位置重试。
 func _start_preview(definition: Resource) -> void:
+	if definition.get("id") == "b_road" and world.capital_layout:
+		definition = Construction.Catalog.for_construction("b_road", true)
 	_show_region_view(false)
 	_clear_inspection()
 	pending_build_command = Crypto.new().generate_random_bytes(16).hex_encode()

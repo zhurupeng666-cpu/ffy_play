@@ -15,6 +15,7 @@ const Terrain = preload("res://scripts/town_terrain.gd")
 const Catalog = preload("res://scripts/building_catalog.gd")
 const Construction = preload("res://scripts/construction_service.gd")
 const Placement = preload("res://scripts/placement_validator.gd")
+const Streets = preload("res://scripts/street_frontage.gd")
 const Grid = preload("res://scripts/isometric_grid.gd")
 const Sites = preload("res://scripts/region_sites.gd")
 const Capital = preload("res://scripts/capital_layout.gd")
@@ -73,6 +74,7 @@ const INACTIVE_PATCH_POSITION := Vector2(20000000, 20000000)
 var art_world_space: bool = false
 var work_areas: Dictionary = {}
 var ready_infrastructure: Dictionary = {}
+var street_cells: Dictionary = {}
 var equipment_cells: Dictionary = {}
 var motion_layer: Control
 var art_canvas: CanvasItem
@@ -312,6 +314,22 @@ func _draw() -> void:
 			draw_colored_polygon(corners, tint)
 			corners.append(corners[0])
 			draw_polyline(corners, edge, 2.0, false)
+			if preview_result.has("front"):
+				_draw_street_entrance(hovered, active_definition.get("footprint"), preview_result["front"])
+
+# 门向预览：在住宅临街的一边画出门槛和脚下连接线。
+func _draw_street_entrance(anchor: Vector2i, span: Vector2i, front: int) -> void:
+	var side: Vector2i = Streets.SIDES[front]
+	var start: Vector2i = Streets.edge_start(anchor, span, front)
+	var length: int = span.x if side.y != 0 else span.y
+	var along: Vector2i = Vector2i.RIGHT if side.y != 0 else Vector2i.DOWN
+	var center: Vector2 = Grid.cell_to_world(start) + Grid.cell_to_world(along) * ((length - 1) * 0.5)
+	var outside: Vector2 = Grid.cell_to_world(side)
+	var foot: Vector2 = world_to_screen(center + outside * 0.45)
+	var door: Vector2 = world_to_screen(center + outside)
+	draw_line(foot, door, Color("#ffd56a"), 3.0, true)
+	draw_circle(door, 4.0, Color("#ffd56a"))
+
 
 # 悬停模块：仅在目标格改变时通知管理界面。
 func _update_hover(point: Vector2) -> void:
@@ -610,6 +628,12 @@ func _update_preview() -> void:
 	else:
 		var taken: Dictionary = occupied_cells if capital_buildings.is_empty() else occupied_cells.merged(Capital.occupation())
 		preview_result = Placement.check_building(hovered, active_definition, taken)
+		if preview_result["ok"] and active_definition.get("id") == "b_house" and not capital_buildings.is_empty():
+			var front: int = Streets.direction(hovered, active_definition.get("footprint"), street_cells)
+			if front == Streets.NO_FRONT:
+				preview_result.merge({"ok": false, "code": "NEEDS_STREET", "reason": "住宅大门必须接到已铺好的道路"}, true)
+			else:
+				preview_result["front"] = front
 	if preview_result.get("ok", false) and economy_ready:
 		var affordability: Dictionary = Construction.check_cost(active_definition.get("cost"), available_resources)
 		if not affordability["ok"]:
@@ -669,6 +693,7 @@ func sync_capital(enabled: bool, population: int) -> void:
 	if enabled == not capital_buildings.is_empty():
 		return
 	capital_buildings = Capital.buildings() if enabled else {}
+	street_cells = Streets.network(placed_buildings, enabled)
 	if fitting_overview and showing_entire_map:
 		_fit_camera()
 		view_changed.emit()
@@ -695,7 +720,7 @@ func visit_capital_area(area: Rect2i) -> void:
 func _refresh_walking_routes() -> void:
 	if overview_only:
 		return
-	resident_routes = Walkers.routes(ready_infrastructure)
+	resident_routes = Walkers.routes(Streets.network(placed_buildings))
 	if not capital_buildings.is_empty():
 		for path: PackedVector2Array in Capital.walks():
 			for i: int in range(5):
@@ -728,6 +753,7 @@ func sync_buildings(records: Array) -> void:
 			ready_infrastructure[anchor] = record["def_id"]
 		for cell: Vector2i in Placement.footprint_cells(anchor, Catalog.footprint(record)):
 			occupied_cells[cell] = record["id"]
+	street_cells = Streets.network(placed_buildings, not capital_buildings.is_empty())
 	_refresh_walking_routes()
 	static_dirty = true
 	_update_preview()
@@ -739,7 +765,7 @@ func _same_layout(before: Array, after: Array) -> bool:
 	if before.size() != after.size():
 		return false
 	for index: int in range(before.size()):
-		for key: String in ["id", "def_id", "cell", "large", "legacy_large", "state"]:
+		for key: String in ["id", "def_id", "cell", "large", "legacy_large", "state", "front"]:
 			if before[index].get(key) != after[index].get(key):
 				return false
 	return true
@@ -780,7 +806,10 @@ func _draw_foundation(record: Dictionary) -> void:
 	var footprint: Vector2i = Catalog.footprint(record)
 	var constructing: bool = record["state"] == "constructing"
 	if not constructing and record["def_id"] == "b_road":
-		_draw_road(anchor)
+		if record.get("large", false):
+			_draw_broad_road(anchor, footprint)
+		else:
+			_draw_road(anchor)
 		return
 	var tint: Color = Color("#826340") if constructing else Color("#73664a")
 	if not constructing and record["def_id"] in ["b_farm", "b_ranch"]:
@@ -791,6 +820,29 @@ func _draw_foundation(record: Dictionary) -> void:
 	art_canvas.draw_colored_polygon(surface, tint)
 	surface.append(surface[0])
 	art_canvas.draw_polyline(surface, Color("#473e32aa"), 2.0, false)
+	if not constructing and record["def_id"] in ["b_house","b_manor","b_tavern","b_restaurant","b_bakery"]:
+		_draw_entry_path(record, anchor, footprint)
+
+
+# 门前铺装：有临街入口时，门槛石道与道路边缘相接。
+func _draw_entry_path(record: Dictionary, anchor: Vector2i, span: Vector2i) -> void:
+	var front: int = Streets.for_record(record, street_cells)
+	var outward: Vector2i = Streets.SIDES[front]
+	var along: Vector2i = Vector2i.RIGHT if outward.y != 0 else Vector2i.DOWN
+	var length: int = span.x if outward.y != 0 else span.y
+	var start: Vector2i = Streets.edge_start(anchor,span,front)
+	var middle: int = floori((length - 1) * 0.5)
+	var point: Vector2i = start + along * middle
+	if not street_cells.has(point + outward):
+		point = start + along * floori(length * 0.5)
+	if not street_cells.has(point + outward):
+		return
+	var world: Vector2 = Grid.cell_to_world(point)
+	if length % 2 == 0 and street_cells.has(start + along * middle + outward) and street_cells.has(start + along * (middle + 1) + outward):
+		world = Grid.cell_to_world(start) + Grid.cell_to_world(along) * (middle + 0.5)
+	var cross: Vector2 = Grid.cell_to_world(along) * (0.26 if length < 4 else 0.46)
+	var reach: Vector2 = Grid.cell_to_world(outward) * 0.63
+	Art._poly(self,world,[-cross,cross,cross + reach,reach - cross],Color("#d5c29f"))
 
 
 # 道路模块：整格判定占地，铺面从路心接向相邻道路和城门。
@@ -799,11 +851,31 @@ func _draw_road(cell: Vector2i) -> void:
 	var tint := Color("#af9368")
 	Art._poly(self, center, [Vector2(0, -15), Vector2(30, 0), Vector2(0, 15), Vector2(-30, 0)], tint)
 	for side: Vector2i in Terrain.CARDINALS:
-		if ready_infrastructure.get(cell + side) in ["b_road", "b_gate"]:
+		if street_cells.has(cell + side):
 			var direction: Vector2 = Grid.cell_to_world(side) * 0.5
 			var cross: Vector2 = Vector2(direction.x, -direction.y) * 1.06
 			Art._poly(self, center, [-cross, direction - cross, direction + cross, cross], tint)
 	Art._pixel(self, center, Vector2(-3, -1), Vector2(3, 2), Color("#897751"))
+
+
+# 宽街模块：路面填满3×3占地，街边石线只画在道路和房屋之间。
+func _draw_broad_road(anchor: Vector2i, span: Vector2i) -> void:
+	var pavement: PackedVector2Array = _footprint_outline(anchor, span, true)
+	art_canvas.draw_colored_polygon(pavement, Color("#bba484"))
+	for side: int in range(Streets.SIDES.size()):
+		var outward: Vector2i = Streets.SIDES[side]
+		var along: Vector2i = Vector2i.RIGHT if outward.y != 0 else Vector2i.DOWN
+		var length: int = span.x if outward.y != 0 else span.y
+		var start: Vector2i = Streets.edge_start(anchor, span, side)
+		for i: int in range(length):
+			var tile: Vector2i = start + along * i
+			if not street_cells.has(tile + outward):
+				var verge: Vector2 = Grid.cell_to_world(tile) + Grid.cell_to_world(outward) * 0.46
+				var half: Vector2 = Grid.cell_to_world(along) * 0.5
+				Art._stroke(self, verge, -half, half, Color("#786b59"), 4.0)
+	var center: Vector2 = Grid.cell_to_world(anchor + Vector2i.ONE)
+	for i: int in range(3):
+		Art._pixel(self, center, Vector2((i - 1) * 23, (i % 2) * 19), Vector2(6, 2), Color("#a08869"))
 
 
 # 城防模块：城墙连接相邻墙段，门楼依据相邻墙段选择方向。
@@ -893,13 +965,13 @@ func _draw_map_objects(visible_objects: Rect2, decorate: bool) -> void:
 			elif record["def_id"] in ["b_wall", "b_gate"]:
 				_draw_fortification(building_faces[drawing_building]["anchor"], center, record["def_id"] == "b_gate")
 			elif record["def_id"] == "b_manor" and record.get("large", false):
-				CapitalArt.manor(self, building_faces[drawing_building]["anchor"], Catalog.footprint(record), property.get(record["id"], -2) in court_houses)
+				CapitalArt.manor(self, building_faces[drawing_building]["anchor"], Catalog.footprint(record), property.get(record["id"], -2) in court_houses, Streets.for_record(record, street_cells))
 			elif compound:
 				CompoundArt.draw_compound(self, record["def_id"], center)
 			elif worksite:
 				WorksiteArt.draw_site(self, record["def_id"], center)
 			else:
-				Art.building(self, record["def_id"], center, spread)
+				Art.building(self, record["def_id"], center, spread, Streets.for_record(record, street_cells))
 			drawing_building = ""
 			if compound or worksite or record["def_id"] in ["b_ranch", "b_barracks"]:
 				animated_objects.append({
@@ -1002,6 +1074,8 @@ func building_title(id: String) -> String:
 		return site_buildings[id]["title"]
 	for record: Dictionary in placed_buildings:
 		if record["id"] == id:
+			if record["def_id"] == "b_road" and record.get("large", false):
+				return "宽街"
 			if property.has(id):
 				if record["def_id"] == "b_manor" and record.get("large", false):
 					return "官员府邸" if property[id] in court_houses else "富商府邸"

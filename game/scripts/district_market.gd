@@ -5,17 +5,17 @@ const Catalog = preload("res://scripts/building_catalog.gd")
 const Costs = preload("res://scripts/building_costs.gd")
 const Terrain = preload("res://scripts/town_terrain.gd")
 const Placement = preload("res://scripts/placement_validator.gd")
+const Streets = preload("res://scripts/street_frontage.gd")
 const HOUSE_THRESHOLD: int = 20
 const WALK_RANGE: int = 14
 const MARKET_SPACING: int = 2 * WALK_RANGE
-const WAYS: Array[String] = ["b_road", "b_gate"]
 
 
 # 日结模块：只用并入道路网的住宅，每天最多形成一处新集市。
 static func settle(world: RefCounted) -> void:
 	if world.buildings.size() >= 256 or world.next_building_id >= 1000000:
 		return
-	var ways: Dictionary = {}
+	var ways: Dictionary = Streets.network(world.buildings)
 	var houses: Array[Dictionary] = []
 	var markets: Array[Vector2i] = []
 	for building: Dictionary in world.buildings:
@@ -23,9 +23,7 @@ static func settle(world: RefCounted) -> void:
 			continue
 		var kind: String = building["def_id"]
 		var point := Vector2i(building["cell"][0], building["cell"][1])
-		if kind in WAYS:
-			ways[point] = kind
-		elif kind == "b_house":
+		if kind == "b_house":
 			houses.append(building)
 		elif kind == Catalog.MARKET.id:
 			markets.append(point)
@@ -61,7 +59,7 @@ static func _entrances(houses: Array[Dictionary], ways: Dictionary) -> Dictionar
 		for cell: Vector2i in Placement.footprint_cells(anchor, Catalog.footprint(house)):
 			for direction: Vector2i in Terrain.CARDINALS:
 				var road: Vector2i = cell + direction
-				if ways.has(road):
+				if ways.has(road) and (not house.has("front") or direction == Streets.SIDES[house["front"]]):
 					if not result.has(road):
 						result[road] = {}
 					result[road][house["id"]] = true
