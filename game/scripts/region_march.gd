@@ -81,7 +81,7 @@ static func advance(world: RefCounted) -> void:
 		if destination(world, id) == LAYOUT.home_id and remaining(world, id) == 0:
 			world.legion_trips.erase(id)
 
-# 存档校验模块：只接受现役军团、已侦察路线和合理的战略时间戳。
+# 存档校验模块：保留已派行程的原到达时间，三天路程从新派遣起生效。
 static func restore(world: RefCounted, raw: Variant, legacy: bool) -> bool:
 	if not raw is Dictionary or raw.size() > world.legions.size():
 		return false

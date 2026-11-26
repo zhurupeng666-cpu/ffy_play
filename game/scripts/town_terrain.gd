@@ -1,6 +1,7 @@
 ## 文件用途：定义城外林矿、湖河和沿岸建造规则，兼容旧档地形校验。
 extends RefCounted
 const Grid = preload("res://scripts/isometric_grid.gd")
+const Sites = preload("res://scripts/region_sites.gd")
 
 # 河道断面：每项记录横坐标、北岸和南岸，中央河段拓宽成湖盆。
 const RIVER: Array[Vector3i] = [
@@ -116,6 +117,8 @@ static func deposit_at(cell: Vector2i, legacy: bool = false) -> String:
 	_prepare()
 	if Grid.in_authored_map(cell):
 		return deposits.get(cell, "")
+	if Sites.overlaps(Rect2i(cell, Vector2i.ONE)):
+		return ""
 	var span: Vector2i = river_span(cell.x)
 	if cell.y >= span.x - 2 and cell.y <= span.y + 2:
 		return ""

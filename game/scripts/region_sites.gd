@@ -1,72 +1,158 @@
-## 文件用途：在等距世界中定位区域据点，预设营地、要塞和驻军画面。
+## 文件用途：配置林地村落和旧堡小城的建筑、公共设施、道路与驻军。
 extends RefCounted
 
 const Art = preload("res://scripts/town_art.gd")
+const Grid = preload("res://scripts/isometric_grid.gd")
 const LAYOUT = preload("res://data/regions/frontier.tres")
-const SITE_EXTENT: int = 7
+const IDS: Array[String] = ["r_woods", "r_fort"]
+const EXTENT: int = 21
+# 街区配置：设施锚点相对街心，旧堡另有一条紧凑的工匠街。
+const FORT_OFFSETS: Dictionary = {"mill": Vector2i(13, 11), "forge": Vector2i(4, -17), "ranch": Vector2i(3, 10), "inn": Vector2i(15, 17), "clinic": Vector2i(11, 4)}
+const BUILDINGS: Array[Array] = [
+	["hall", "议事厅", "b_hall", Vector2i(-8, -12), Vector2i(5, 5)],
+	["barracks", "驻军营房", "b_barracks", Vector2i(-19, -15), Vector2i(8, 8)],
+	["grain", "粮仓", "b_granary", Vector2i(4, -10), Vector2i(4, 4)],
+	["store", "补给库", "b_granary", Vector2i(11, -10), Vector2i(4, 4)],
+	["mill", "磨坊", "mill", Vector2i(5, -18), Vector2i(5, 5)],
+	["forge", "铁匠工坊", "forge", Vector2i(13, -18), Vector2i(5, 5)],
+	["market", "集市", "market", Vector2i(-7, 4), Vector2i(6, 6)],
+	["well", "公共水井", "well", Vector2i(3, 3), Vector2i(2, 2)],
+	["clinic", "医馆", "clinic", Vector2i(6, 4), Vector2i(4, 4)],
+	["stable", "驿站马厩", "stable", Vector2i(-17, 3), Vector2i(6, 5)],
+	["farm", "农田", "field", Vector2i(-19, 10), Vector2i(8, 8)],
+	["ranch", "牧场", "b_ranch", Vector2i(11, 10), Vector2i(8, 8)],
+	["home_west", "民居", "b_house", Vector2i(-16, -5), Vector2i(3, 3)],
+	["home_south", "民居", "b_house", Vector2i(-6, 13), Vector2i(3, 3)],
+	["home_east", "民居", "b_house", Vector2i(16, 2), Vector2i(3, 3)],
+	["home_north", "民居", "b_house", Vector2i(-9, -20), Vector2i(3, 3)],
+	["home_market", "民居", "b_house", Vector2i(-8, 18), Vector2i(3, 3)],
+	["inn", "旅店", "inn", Vector2i(5, 17), Vector2i(4, 4)],
+	["tower_nw", "东北哨塔", "tower", Vector2i(19, -21), Vector2i(3, 3)],
+	["tower_se", "西南哨塔", "tower", Vector2i(-21, 19), Vector2i(3, 3)],
+	["gate", "南门", "gate", Vector2i(-2, 19), Vector2i(5, 3)],
+]
 
 
-# 占地预留：阻止城镇建筑覆盖据点设施和围墙。
+# 占地模块：所有据点的范围与建筑、道路共用同一个锚点。
+static func bounds(id: String) -> Rect2i:
+	var cell: Vector2i = LAYOUT.regions[id]["position"]
+	return Rect2i(cell - Vector2i.ONE * EXTENT, Vector2i.ONE * (EXTENT * 2 + 1))
+
+
+# 预留模块：禁止城镇建筑覆盖村镇设施，也给外围地形提供建成区标记。
 static func overlaps(area: Rect2i) -> bool:
-	for id: String in ["r_woods", "r_fort"]:
-		var center: Vector2i = LAYOUT.regions[id]["position"]
-		if area.intersects(Rect2i(center - Vector2i.ONE * SITE_EXTENT, Vector2i.ONE * (SITE_EXTENT * 2 + 1))):
+	for id: String in IDS:
+		if bounds(id).intersects(area):
 			return true
 	return false
 
 
-# 据点美术：围墙四角按等距地面的前后顺序落位，近侧留出营门。
-static func draw_site(canvas: Control, id: String, center: Vector2, guards: int) -> void:
+# 街区模块：构造地图自己的静态建筑标识，选中时只展示对应设施。
+static func buildings(id: String) -> Dictionary:
+	var center: Vector2i = LAYOUT.regions[id]["position"]
+	var result: Dictionary = {}
+	for entry: Array in BUILDINGS:
+		var key: String = id + "/" + entry[0]
+		var offset: Vector2i = FORT_OFFSETS.get(entry[0], entry[3]) if id == "r_fort" else entry[3]
+		var cell: Vector2i = center + offset
+		var title: String = entry[1]
+		if entry[0] == "hall":
+			title = "林地议事厅" if id == "r_woods" else "旧堡镇政厅"
+		result[key] = {"id": key, "region": id, "title": title, "def_id": entry[2], "cell": [cell.x, cell.y], "size": entry[4]}
+	return result
+
+
+# 市镇地面：用小路连接城门、中心广场和农牧区，保留街区之间的草地。
+static func draw_ground(canvas: Control, id: String) -> void:
+	var center: Vector2i = LAYOUT.regions[id]["position"]
 	var stone: bool = id == "r_fort"
-	var back := Vector2(0, -176)
-	var left := Vector2(-352, 0)
-	var right := Vector2(352, 0)
-	var front := Vector2(0, 176)
-	var shade: Color = Color("#85887c") if stone else Color("#806340")
-	Art._poly(canvas, center, [back, right, front, left], Color("#8c7854") if stone else Color("#786346"))
-	_wall(canvas, center, back, left, shade, stone)
-	_wall(canvas, center, back, right, shade.darkened(0.15), stone)
-	_turret(canvas, center + back, stone)
-	Art._house(canvas, center + Vector2(30, -78), 48, 42, Color("#655970") if stone else Color("#8f543e"), Color("#aba697") if stone else Color("#b69262"), "stone" if stone else "timber", 2.05)
-	Art._house(canvas, center + Vector2(-145, -13), 32, 26, Color("#9b643b"), Color("#b39360"), "store", 1.72)
-	Art._house(canvas, center + Vector2(145, 16), 29, 22, Color("#745d4e"), Color("#bc9e69"), "timber", 1.62)
-	for offset: Vector2 in [Vector2(-111, 18), Vector2(-98, 24), Vector2(108, 40), Vector2(121, 46)]:
-		Art._crate(canvas, center + offset)
-	for index: int in range(guards):
-		var row: int = floori(index / 6.0)
-		var column: int = index % 6
-		var post := Vector2((column - 2.5) * 29.0 + row * 9, 37 + row * 25.0 + column * 2)
-		Art._drill_soldier(canvas, center + post, 0.0, index, false)
-	_turret(canvas, center + left, stone)
-	_turret(canvas, center + right, stone)
-	var left_gate: Vector2 = front.lerp(left, 0.16)
-	var right_gate: Vector2 = front.lerp(right, 0.16)
-	_wall(canvas, center, left, left_gate, shade.darkened(0.2), stone)
-	_wall(canvas, center, right, right_gate, shade, stone)
-	_turret(canvas, center + left_gate, stone)
-	_turret(canvas, center + right_gate, stone)
-	Art._flag(canvas, center + left_gate - Vector2(0, 75), Color("#568e9d") if guards == 0 else Color("#b74f41"))
+	var road: Color = Color("#8a8573") if stone else Color("#9b7d51")
+	for strip: Rect2i in [Rect2i(-1, -20, 3, 45), Rect2i(-20, -1, 41, 3), Rect2i(-8, 3, 20, 6), Rect2i(-19, 8, 38, 2)]:
+		canvas.art_canvas.draw_colored_polygon(canvas._footprint_outline(center + strip.position, strip.size, true), road)
+	var west := Vector2i(-21, -21)
+	var east := Vector2i(21, -21)
+	var front := Vector2i(21, 21)
+	var left := Vector2i(-21, 21)
+	_wall(canvas, center, west, east, stone)
+	_wall(canvas, center, west, left, stone)
+	_wall(canvas, center, east, front, stone)
+	_wall(canvas, center, left, Vector2i(-3, 21), stone)
+	_wall(canvas, center, Vector2i(3, 21), front, stone)
 
 
-# 围墙：石墙画出女墙与石缝，木寨用分段栅柱标示轮廓。
-static func _wall(canvas: Control, center: Vector2, a: Vector2, b: Vector2, color: Color, stone: bool) -> void:
-	var height: float = 45.0 if stone else 27.0
+# 围墙模块：以格为单位画石墙和木栅栏，墙段沿城镇边界连续排列。
+static func _wall(canvas: Control, center: Vector2i, start: Vector2i, end: Vector2i, stone: bool) -> void:
+	var a: Vector2 = Grid.cell_to_world(center + start)
+	var b: Vector2 = Grid.cell_to_world(center + end)
+	var height: float = 30.0 if stone else 20.0
 	var top := Vector2(0, -height)
-	Art._poly(canvas, center, [a, b, b + top, a + top], color)
-	Art._stroke(canvas, center, a + top, b + top, color.lightened(0.24), 4.0)
-	var pieces: int = ceili(a.distance_to(b) / (22.0 if stone else 15.0))
-	for index: int in range(pieces):
-		var base: Vector2 = a.lerp(b, float(index) / pieces)
+	var paint: Color = Color("#737b76") if stone else Color("#75573a")
+	Art._poly(canvas, a, [Vector2.ZERO, b - a, b - a + top, top], paint)
+	Art._stroke(canvas, a, top, b - a + top, paint.lightened(0.26), 3.0)
+	var segments: int = maxi(absi(end.x - start.x), absi(end.y - start.y))
+	for index: int in range(segments):
+		var post: Vector2 = (b - a) * (float(index) / segments)
+		Art._stroke(canvas, a, post, post + top - Vector2(0, 5), paint.darkened(0.3), 3.0)
 		if stone:
-			Art._stroke(canvas, center, base + top, base + top - Vector2(0, 7), color.lightened(0.25), 9.0)
-			Art._stroke(canvas, center, base, base + top * 0.65, color.darkened(0.28), 2.0)
-		else:
-			Art._stroke(canvas, center, base, base + top - Vector2(0, index % 3), color.lightened(0.14), 3.0)
+			Art._stroke(canvas, a, post + top, post + top - Vector2(0, 6), paint.lightened(0.35), 10.0)
 
 
-# 哨楼：按据点类型选用石制塔身或木制岗亭。
-static func _turret(canvas: Control, point: Vector2, stone: bool) -> void:
+# 设施模块：使用既有像素房屋造型，并为市场、水井、磨坊等绘制辨识细节。
+static func draw_building(canvas: Control, record: Dictionary, at: Vector2, guards: int) -> void:
+	var kind: String = record["def_id"]
+	var stone: bool = record["region"] == "r_fort"
+	match kind:
+		"field":
+			for plot: Vector2i in [Vector2i(-2, -2), Vector2i(2, -2), Vector2i(-2, 2), Vector2i(2, 2)]:
+				Art._fields(canvas, at + Grid.cell_to_world(plot))
+		"market":
+			for index: int in range(3):
+				var stall: Vector2 = at + Vector2((index - 1) * 78, index * 17 - 10)
+				var roof: Color = [Color("#a35243"), Color("#527584"), Color("#b18d4a")][index]
+				_market_stall(canvas, stall, roof)
+		"well":
+			Art._house(canvas, at, 17, 18, Color("#46666b"), Color("#97958c"), "stone", 1.08)
+			Art._poly(canvas, at, [Vector2(-17, 8), Vector2(0, 0), Vector2(17, 8), Vector2(0, 16)], Color("#559798"))
+		"tower":
+			_tower(canvas, at, stone)
+		"gate":
+			_tower(canvas, at + Grid.cell_to_world(Vector2i(-2, 0)), stone)
+			_tower(canvas, at + Grid.cell_to_world(Vector2i(2, 0)), stone)
+			Art._flag(canvas, at - Vector2(0, 53), Color("#568e9d") if guards == 0 else Color("#b74f41"))
+		"b_hall":
+			Art._house(canvas, at, 50, 41, Color("#586d83") if stone else Color("#976342"), Color("#b9a282"), "stone" if stone else "timber", 1.95)
+			Art._flag(canvas, at - Vector2(0, 120), Color("#568e9d") if guards == 0 else Color("#b74f41"))
+		"mill", "forge", "clinic", "stable", "inn":
+			var roofs: Dictionary = {"mill": Color("#a6824a"), "forge": Color("#78514a"), "clinic": Color("#537b78"), "stable": Color("#845e3e"), "inn": Color("#b26640")}
+			Art._house(canvas, at, 37, 27, roofs[kind], Color("#b89d76"), "stone" if stone else "timber", 1.65)
+			if kind == "mill":
+				for direction: Vector2 in [Vector2(-23, -23), Vector2(21, -23), Vector2(-23, 23), Vector2(21, 23)]:
+					Art._stroke(canvas, at, Vector2(24, -50), Vector2(24, -50) + direction, Color("#dfcd96"), 5.0)
+			else:
+				Art._crate(canvas, at + Vector2(28, 16))
+		_:
+			Art.building(canvas, kind, at)
+			if kind == "b_barracks":
+				for index: int in range(guards):
+					Art._drill_soldier(canvas, at + Vector2((index - 2.5) * 24, 43 + index * 4), 0.0, index, false)
+			elif kind == "b_ranch":
+				Art.moving_units(canvas, kind, at, 0.0, Vector2i.ZERO, 1.0)
+
+
+# 摊位模块：木柜台上方用不同色的布棚，点布棚同样能选中集市。
+static func _market_stall(canvas: Control, at: Vector2, roof: Color) -> void:
+	var counter: Array = [Vector2(-27, 5), Vector2(3, -10), Vector2(28, 3), Vector2(-2, 18)]
+	Art._poly(canvas, at, counter, Color("#bb9463"))
+	for post: Vector2 in counter:
+		Art._stroke(canvas, at, post, post - Vector2(0, 28), Color("#65452f"), 3.0)
+	Art._poly(canvas, at, [Vector2(-30, -22), Vector2(3, -40), Vector2(31, -25), Vector2(-2, -7)], roof)
+	Art._poly(canvas, at, [Vector2(-22, -18), Vector2(12, -35), Vector2(20, -31), Vector2(-13, -14)], roof.lightened(0.27))
+	Art._crate(canvas, at + Vector2(18, 16))
+
+
+# 哨楼模块：村落使用木岗楼，旧堡使用石塔。
+static func _tower(canvas: Control, at: Vector2, stone: bool) -> void:
 	if stone:
-		Art._tower(canvas, point, 30, 70)
+		Art._tower(canvas, at, 24, 66)
 	else:
-		Art._house(canvas, point, 18, 30, Color("#684735"), Color("#aa8350"), "timber", 1.35)
+		Art._house(canvas, at, 20, 35, Color("#684735"), Color("#aa8350"), "timber", 1.40)

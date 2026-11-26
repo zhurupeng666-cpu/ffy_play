@@ -32,6 +32,7 @@ func _run() -> void:
 	var map: Control = Map.new()
 	map.size = Vector2(600, 400)
 	root.add_child(map)
+	map.sync_buildings(preload("res://scripts/world_state.gd").new().buildings)
 	var cell: Vector2i = Vector2i(8, 8)
 	var screen: Vector2 = map.world_to_screen(Grid.cell_to_world(cell))
 	_check(map.cell_at(screen) == cell, "默认镜头选格错误")
@@ -55,11 +56,11 @@ func _run() -> void:
 	click.pressed = true
 	click.position = map.world_to_screen(Grid.cell_to_world(cell))
 	map._gui_input(click)
-	_check(map.selected == cell, "左键选择错误")
+	_check(map.inspected_building_id == "building_000001", "左键未选整栋建筑")
 	map.pan_offset = Vector2(120, 80)
 	map.reset_view()
 	var overview: float = (map.size.x - 32.0) / (Grid.HALF.x * (Grid.STARTER_SIZE.x + Grid.STARTER_SIZE.y))
-	_check(map.selected == cell and map.screen_to_world(map.size * 0.5).is_equal_approx(Vector2(0, 240)) and is_equal_approx(map.zoom_level, overview), "镜头复位未适配全图或改变选择")
+	_check(map.inspected_building_id == "building_000001" and map.screen_to_world(map.size * 0.5).is_equal_approx(Vector2(0, 240)) and is_equal_approx(map.zoom_level, overview), "镜头复位未适配全图或改变选择")
 	map.show_entire_map()
 	_check(Grid.SIZE == Vector2i(300, 300) and map.cell_at(map.world_to_screen(Grid.cell_to_world(Vector2i(299, 299)))) == Vector2i(299, 299) and map.zoom_level < 0.23, "全览未覆盖扩建地块")
 	_chk_compound_paths()
@@ -71,7 +72,11 @@ func _run() -> void:
 	map.reset_view()
 	click.button_index = MOUSE_BUTTON_RIGHT
 	map._gui_input(click)
-	_check(map.selected == Grid.INVALID, "右键取消选择失败")
+	_check(map.inspected_building_id.is_empty(), "右键取消选择失败")
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.position = map.world_to_screen(Grid.cell_to_world(Vector2i(2, 2)))
+	map._gui_input(click)
+	_check(map.inspected_building_id.is_empty(), "空地仍可被选中")
 	click.button_index = MOUSE_BUTTON_MIDDLE
 	click.pressed = true
 	map._gui_input(click)

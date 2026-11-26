@@ -1,8 +1,8 @@
-## 文件用途：绘制城镇等距地图，处理高亮选格、方向键镜头和鼠标中心缩放。
+## 文件用途：绘制城镇等距地图，处理建筑点选、方向键镜头和鼠标中心缩放。
 extends Control
 
 signal hovered_changed(cell: Vector2i)
-signal selected_changed(cell: Vector2i)
+signal building_selected(id: String)
 signal view_changed
 signal placement_changed(result: Dictionary)
 signal placement_clicked(result: Dictionary)
@@ -29,16 +29,18 @@ static var deposit_models: Array[Dictionary] = []
 # 视图状态模块：镜头与选格属于界面状态，不写入战略存档。
 var zoom_level: float = 0.5
 var fitting_overview: bool = true
+var fitting_region_cell: Vector2i = Grid.INVALID
 var showing_entire_map: bool = false
 const MIN_ZOOM: float = 0.025
 var pan_offset: Vector2 = Vector2.ZERO
 var hovered: Vector2i = Grid.INVALID
-var selected: Vector2i = Grid.INVALID
 var inspected_building_id: String = ""
 var held_directions: Dictionary = {}
 var ground: ColorRect
 var ground_material: ShaderMaterial
 var region_sites: Dictionary = {}
+var site_buildings: Dictionary = {}
+var site_cells: Dictionary = {}
 var overview_only: bool = false
 
 # 建筑视图模块：占用来自世界实例，视图只读并将确认请求交回控制器。
@@ -59,7 +61,7 @@ var static_layer: Node2D
 var static_patches: Array[Dictionary] = []
 var static_dirty: bool = true
 const STATIC_PATCH_LIMIT: int = 5
-const INACTIVE_PATCH_POSITION := Vector2(1000000, 1000000)
+const INACTIVE_PATCH_POSITION := Vector2(20000000, 20000000)
 var art_world_space: bool = false
 var work_areas: Dictionary = {}
 var equipment_cells: Dictionary = {}
@@ -126,6 +128,10 @@ func _make_ground() -> void:
 	ground_material.set_shader_parameter("half_cell", Grid.HALF)
 	ground_material.set_shader_parameter("west_river_span", Vector2(Terrain.river_span(0)))
 	ground_material.set_shader_parameter("east_river_span", Vector2(Terrain.river_span(Grid.SIZE.x - 1)))
+	for id: String in Sites.IDS:
+		var bounds: Rect2i = Sites.bounds(id)
+		var parameter: String = "woods_site" if id == Scout.WOODS else "fort_site"
+		ground_material.set_shader_parameter(parameter, Vector4(bounds.position.x, bounds.position.y, bounds.end.x, bounds.end.y))
 	ground.material = ground_material
 
 
@@ -246,15 +252,6 @@ func cell_at(point: Vector2) -> Vector2i:
 	return cell if Grid.contains(cell) else Grid.INVALID
 
 
-# 菱形模块：根据同一投影生成顶点，避免绘制与反选采用不同格距。
-func _diamond(cell: Vector2i) -> PackedVector2Array:
-	var center: Vector2 = Grid.cell_to_world(cell)
-	var points: PackedVector2Array = PackedVector2Array()
-	for offset: Vector2 in [Vector2(0, -16), Vector2(32, 0), Vector2(0, 16), Vector2(-32, 0)]:
-		points.append(world_to_screen(center + offset))
-	return points
-
-
 # 静景缓存：屋顶、场地和器械使用同一批完整世界几何，缩放时保留轮廓。
 func _draw_static_map(patch: Dictionary) -> void:
 	var prior_faces: Dictionary = building_faces
@@ -268,6 +265,16 @@ func _draw_static_map(patch: Dictionary) -> void:
 	for record: Dictionary in placed_buildings:
 		if coverage.intersects(_building_bounds(record)):
 			_draw_foundation(record)
+	for id: String in region_sites:
+		var cell: Vector2i = Scout.LAYOUT.regions[id]["position"]
+		var span: Vector2 = Grid.HALF * (Sites.EXTENT * 2 + 4)
+		var center: Vector2 = Grid.cell_to_world(cell)
+		if coverage.intersects(Rect2(center - span, span * 2.0)):
+			Sites.draw_ground(self, id)
+	for record: Dictionary in site_buildings.values():
+		if coverage.intersects(_building_bounds(record)):
+			var cell := Vector2i(record["cell"][0], record["cell"][1])
+			art_canvas.draw_colored_polygon(_footprint_outline(cell, record["size"], true), Color("#7d7351"))
 	_draw_map_objects(coverage, patch["decorate"])
 	patch["motion"] = animated_objects
 	if patch["node"] != static_patches[-1]["node"]:
@@ -292,18 +299,6 @@ func _draw() -> void:
 			draw_colored_polygon(corners, tint)
 			corners.append(corners[0])
 			draw_polyline(corners, edge, 2.0, false)
-	if active_definition == null and inspected_building_id.is_empty() and Grid.contains(selected):
-		draw_colored_polygon(_diamond(selected), Color("#4bdb8d65"))
-	if active_definition == null and Grid.contains(hovered):
-		_outline_cell(hovered, Color("#ffd56a"), 2.0)
-
-
-# 格线模块：在美术上方绘制悬停、选区与建造预览边界。
-func _outline_cell(cell: Vector2i, color: Color, width: float) -> void:
-	var outline: PackedVector2Array = _diamond(cell)
-	outline.append(outline[0])
-	draw_polyline(outline, color, width, false)
-
 
 # 悬停模块：仅在目标格改变时通知管理界面。
 func _update_hover(point: Vector2) -> void:
@@ -315,22 +310,22 @@ func _update_hover(point: Vector2) -> void:
 		queue_redraw()
 
 
-# 墙体和屋顶模块：点到非占地格上的可见楼体时，返回该建筑的锚点。
-func _selection_at(point: Vector2) -> Vector2i:
-	var ground: Vector2i = cell_at(point)
-	if occupied_cells.has(ground):
-		return ground
+# 建筑命中：优先选中点到的可见立面，再回退到完整占地。
+func _selection_at(point: Vector2) -> String:
+	var terrain_cell: Vector2i = cell_at(point)
+	var own_id: String = occupied_cells.get(terrain_cell, "")
+	var site_id: String = site_cells.get(terrain_cell, "")
 	var world_point: Vector2 = screen_to_world(point)
 	var ids: Array = building_faces.keys()
 	ids.reverse()
 	for id: String in ids:
 		var record: Dictionary = building_faces[id]
-		if occupied_cells.get(record["anchor"]) != id:
+		if occupied_cells.get(record["anchor"]) != id and site_cells.get(record["anchor"]) != id:
 			continue
 		for face: PackedVector2Array in record["faces"]:
 			if Geometry2D.is_point_in_polygon(world_point, face):
-				return record["anchor"]
-	return ground
+				return id
+	return own_id if not own_id.is_empty() else site_id
 
 
 # 墙面记录模块：只有绘制建筑本体时登记轮廓，地形和占地不重复登记。
@@ -339,7 +334,7 @@ func remember_building_face(face: PackedVector2Array) -> void:
 		building_faces[drawing_building]["faces"].append(face)
 
 
-# 鼠标模块：左键选格、右键取消；滚轮缩放到鼠标所在位置。
+# 鼠标模块：左键选择建筑，右键取消，滚轮定位缩放；施工模式仍按地格预览。
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		if event.pressed and event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
@@ -353,13 +348,14 @@ func _gui_input(event: InputEvent) -> void:
 					_update_preview()
 					placement_clicked.emit(preview_result.duplicate(true))
 			else:
-				selected = _selection_at(event.position) if event.button_index == MOUSE_BUTTON_LEFT else Grid.INVALID
-				selected_changed.emit(selected)
+				var id: String = _selection_at(event.position) if event.button_index == MOUSE_BUTTON_LEFT else ""
+				highlight_building(id)
+				building_selected.emit(id)
 				if event.button_index == MOUSE_BUTTON_LEFT and event.double_click:
-					if not inspected_building_id.is_empty():
-						_focus_building(inspected_building_id)
-					elif zoom_level < 0.23 and Grid.contains(selected):
-						_focus_cell(selected)
+					if not id.is_empty():
+						_focus_building(id)
+					elif zoom_level < 0.23 and Grid.contains(cell_at(event.position)):
+						_focus_cell(cell_at(event.position))
 		_update_hover(event.position)
 		accept_event()
 	elif event is InputEventMouseMotion:
@@ -382,6 +378,7 @@ func _input(event: InputEvent) -> void:
 
 # 镜头平移：越过已知区域后继续移动，只在引擎坐标精度范围内做保护。
 func _pan_camera(delta: Vector2) -> void:
+	fitting_region_cell = Grid.INVALID
 	var center: Vector2 = screen_to_world(size * 0.5) + delta / zoom_level
 	var logical := Vector2((center.x / Grid.HALF.x + center.y / Grid.HALF.y) * 0.5, (center.y / Grid.HALF.y - center.x / Grid.HALF.x) * 0.5)
 	logical = logical.clamp(-Vector2.ONE * Grid.WORLD_LIMIT, Vector2.ONE * Grid.WORLD_LIMIT)
@@ -407,11 +404,18 @@ func visit_site(cell: Vector2i) -> void:
 func visit_region_site(cell: Vector2i) -> void:
 	held_directions.clear()
 	fitting_overview = false
-	var bounds: Vector2 = (size - Vector2(30, 24)) / Vector2(800, 588)
-	zoom_level = clampf(minf(bounds.x, bounds.y), 0.18, 0.6)
-	pan_offset = (Grid.center() - Grid.cell_to_world(cell)) * zoom_level
+	fitting_region_cell = cell
+	_fit_region_site()
 	view_changed.emit()
 	_redraw_scene()
+
+
+# 据点取景模块：容器完成布局或改变大小后继续对准整个街区。
+func _fit_region_site() -> void:
+	var span: Vector2 = Grid.HALF * (Sites.EXTENT * 4 + 2) + Vector2(70, 150)
+	var bounds: Vector2 = (size - Vector2(30, 28)) / span
+	zoom_level = clampf(minf(bounds.x, bounds.y), 0.06, 0.45)
+	pan_offset = (Grid.center() - Grid.cell_to_world(fitting_region_cell)) * zoom_level
 
 
 # 林矿导航：优先对准附近已建采集场在资源格内的设备，未建时定位资源区。
@@ -431,6 +435,7 @@ func visit_work_area(fallback: Vector2i, kind: String) -> void:
 
 # 远景导航：双击全览空地可直接回到可逐格建造的局部镜头。
 func _focus_cell(cell: Vector2i) -> void:
+	fitting_region_cell = Grid.INVALID
 	fitting_overview = false
 	zoom_level = 0.6
 	pan_offset = (Grid.center() - Grid.cell_to_world(cell)) * zoom_level
@@ -440,11 +445,12 @@ func _focus_cell(cell: Vector2i) -> void:
 
 # 聚焦模块：双击后原地放大整座建筑，把地块与建筑上方留白居中。
 func _focus_building(id: String) -> void:
-	for record: Dictionary in placed_buildings:
+	fitting_region_cell = Grid.INVALID
+	for record: Dictionary in placed_buildings + site_buildings.values():
 		if record["id"] != id:
 			continue
 		var center: Vector2 = _building_center(record) - Vector2(0, 18)
-		var footprint: Vector2i = Catalog.footprint(record)
+		var footprint: Vector2i = _building_footprint(record)
 		var span: float = float(footprint.x + footprint.y) * Grid.HALF.x
 		fitting_overview = false
 		zoom_level = clampf(minf((size.x - 30.0) / span, (size.y - 24.0) / (span * 0.5 + 42.0)), 0.24, 3.2)
@@ -456,6 +462,7 @@ func _focus_building(id: String) -> void:
 
 # 缩放模块：保持鼠标所指世界位置固定，倍率限制在2.5%至800%。
 func _apply_zoom(mouse: Vector2, factor: float) -> void:
+	fitting_region_cell = Grid.INVALID
 	var anchor: Vector2 = screen_to_world(mouse)
 	fitting_overview = false
 	zoom_level = clampf(zoom_level * factor, minf(MIN_ZOOM, _overview_fit_zoom()), 8.0)
@@ -479,6 +486,7 @@ func show_entire_map() -> void:
 
 # 镜头刷新：应用总览模式，更新所指地块与界面状态。
 func _refresh_camera_fit() -> void:
+	fitting_region_cell = Grid.INVALID
 	fitting_overview = true
 	_fit_camera()
 	_update_hover(get_local_mouse_position())
@@ -488,7 +496,7 @@ func _refresh_camera_fit() -> void:
 
 # 取景模块：全图适配外围土地，复位则适配原起始城镇范围。
 func _fit_camera() -> void:
-	var area: Vector2i = Grid.SIZE if showing_entire_map else Grid.STARTER_SIZE
+	var area: Vector2i = _known_area() if showing_entire_map else Grid.STARTER_SIZE
 	var span: Vector2 = float(area.x + area.y) * Grid.HALF
 	var available: Vector2 = size - Vector2(32, 36)
 	zoom_level = _overview_fit_zoom() if showing_entire_map else clampf(minf(available.x / span.x, available.y / span.y), 0.5, 0.75)
@@ -498,15 +506,28 @@ func _fit_camera() -> void:
 
 # 全图缩放：狭窄地图栏也能缩放回能容纳完整边线的倍率。
 func _overview_fit_zoom() -> float:
-	var span: Vector2 = float(Grid.SIZE.x + Grid.SIZE.y) * Grid.HALF
+	var area: Vector2i = _known_area()
+	var span: Vector2 = float(area.x + area.y) * Grid.HALF
 	var available: Vector2 = size - Vector2(32, 36)
 	return clampf(minf(available.x / span.x, available.y / span.y), 0.005, 0.75)
+
+
+# 总览范围：区域图同时容纳外围据点，城镇全览沿用首府腹地的取景范围。
+func _known_area() -> Vector2i:
+	var extent: Vector2i = Grid.SIZE
+	if overview_only:
+		for id: String in Sites.IDS:
+			extent = extent.max(Sites.bounds(id).end + Vector2i(8, 8))
+	return extent
 
 
 # 尺寸模块：总览模式适应变化，手动移动或缩放后保留镜头。
 func _on_resized() -> void:
 	if fitting_overview:
 		_fit_camera()
+		view_changed.emit()
+	elif Grid.contains(fitting_region_cell):
+		_fit_region_site()
 		view_changed.emit()
 	_update_hover(get_local_mouse_position())
 	_redraw_scene()
@@ -569,6 +590,17 @@ func sync_region_sites(world: RefCounted) -> void:
 		known[Scout.WOODS] = 0 if Field.report(world)["status"] == "victory" else Scout.LAYOUT.woods_guards
 		known[Scout.FORT] = 0 if Siege.report(world)["status"] == "victory" else Scout.LAYOUT.fort_guards
 	if known != region_sites:
+		if known.keys() != region_sites.keys():
+			site_buildings.clear()
+			site_cells.clear()
+			for id: String in known:
+				site_buildings.merge(Sites.buildings(id))
+			for record: Dictionary in site_buildings.values():
+				var cell := Vector2i(record["cell"][0], record["cell"][1])
+				for tile: Vector2i in Placement.footprint_cells(cell, record["size"]):
+					site_cells[tile] = record["id"]
+			if inspected_building_id.begins_with("r_") and not site_buildings.has(inspected_building_id):
+				highlight_building("")
 		region_sites = known
 		static_dirty = true
 		_redraw_scene()
@@ -576,12 +608,12 @@ func sync_region_sites(world: RefCounted) -> void:
 
 # 据点标牌：只在局部视角显示驻军，与区域总览的名称标记互不叠加。
 func _draw_region_site_labels() -> void:
-	if zoom_level < 0.12:
+	if zoom_level < 0.065:
 		return
 	var font: Font = ThemeDB.fallback_font
 	for id: String in region_sites:
 		var cell: Vector2i = Scout.LAYOUT.regions[id]["position"]
-		var baseline: Vector2 = world_to_screen(Grid.cell_to_world(cell) + Vector2(0, 195)).round()
+		var baseline: Vector2 = world_to_screen(Grid.cell_to_world(cell) + Vector2(0, -(Sites.EXTENT * 2 + 2) * Grid.HALF.y)).round()
 		if not Rect2(Vector2.ZERO, size).has_point(baseline):
 			continue
 		var guards: int = region_sites[id]
@@ -685,11 +717,9 @@ func _draw_map_objects(visible_objects: Rect2, decorate: bool) -> void:
 			if deposit_view.has_point(item["center"]) and not equipment_cells.has(Grid.world_to_cell(item["center"])):
 				objects.append(item)
 		_append_outer_deposits(objects, deposit_view)
-	for id: String in region_sites:
-		var cell: Vector2i = Scout.LAYOUT.regions[id]["position"]
-		var center: Vector2 = Grid.cell_to_world(cell)
-		if visible_objects.grow(430.0).has_point(center):
-			objects.append({"center": center, "site": id})
+	for record: Dictionary in site_buildings.values():
+		if visible_objects.intersects(_building_bounds(record)):
+			objects.append({"center": _building_center(record), "site_building": record})
 	for area: Dictionary in work_areas.values():
 		var sites: Array = area["sites"]
 		for role: int in range(sites.size()):
@@ -705,8 +735,12 @@ func _draw_map_objects(visible_objects: Rect2, decorate: bool) -> void:
 	animated_objects.clear()
 	for item: Dictionary in objects:
 		var center: Vector2 = item["center"]
-		if item.has("site"):
-			Sites.draw_site(self, item["site"], center, region_sites[item["site"]])
+		if item.has("site_building"):
+			var record: Dictionary = item["site_building"]
+			drawing_building = record["id"]
+			building_faces[drawing_building] = {"anchor": Vector2i(record["cell"][0], record["cell"][1]), "faces": []}
+			Sites.draw_building(self, record, center, region_sites[record["region"]])
+			drawing_building = ""
 		elif item.has("equipment"):
 			WorksiteArt.draw_resource_equipment(self, item["equipment"], center, item["role"])
 		elif item.has("deposit"):
@@ -766,7 +800,7 @@ func _has_compound(record: Dictionary) -> bool:
 
 # 世界包围盒：涵盖地基、屋顶和伸出岸线的码头，边缘进入视窗即保留整座建筑。
 func _building_bounds(record: Dictionary) -> Rect2:
-	var footprint: Vector2 = Vector2(Catalog.footprint(record))
+	var footprint: Vector2 = Vector2(_building_footprint(record))
 	var half_span: Vector2 = (footprint.x + footprint.y) * Grid.HALF * 0.5
 	var extent: Vector2 = half_span + Vector2(170, 155)
 	return Rect2(_building_center(record) - extent, extent * 2.0)
@@ -804,29 +838,45 @@ func _farther_first(left: Dictionary, right: Dictionary) -> bool:
 	return a.x < b.x if a.y == b.y else a.y < b.y
 
 
+# 占地模块：据点设施独立于首府经济，地图使用其本地尺寸。
+func _building_footprint(record: Dictionary) -> Vector2i:
+	return record["size"] if record.has("region") else Catalog.footprint(record)
+
+
+# 名称模块：稳定建筑标识映射到现场标牌与详情标题。
+func building_title(id: String) -> String:
+	if site_buildings.has(id):
+		return site_buildings[id]["title"]
+	for record: Dictionary in placed_buildings:
+		if record["id"] == id:
+			return Catalog.find(record["def_id"]).get("display_name")
+	return ""
+
+
 # 坐标模块：美术和名称使用建筑占地的投影中心。
 func _building_center(record: Dictionary) -> Vector2:
 	var anchor: Vector2i = Vector2i(int(record["cell"][0]), int(record["cell"][1]))
-	var footprint: Vector2i = Catalog.footprint(record)
+	var footprint: Vector2i = _building_footprint(record)
 	return (Grid.cell_to_world(anchor) + Grid.cell_to_world(anchor + footprint - Vector2i.ONE)) * 0.5
 
 
 # 标牌模块：在画面顶部叠加建筑名称、施工进度和选中边界。
 func _draw_building_feedback() -> void:
-	for record: Dictionary in placed_buildings:
-		var definition: Resource = Catalog.find(record["def_id"])
-		if zoom_level < 0.14 and record["id"] != inspected_building_id:
+	for record: Dictionary in placed_buildings + site_buildings.values():
+		var selected: bool = record["id"] == inspected_building_id
+		var constructing: bool = record.get("state") == "constructing"
+		if not selected and (not constructing or zoom_level < 0.14):
 			continue
-		if record["id"] == inspected_building_id:
+		var footprint: Vector2i = _building_footprint(record)
+		if selected:
 			var anchor: Vector2i = Vector2i(int(record["cell"][0]), int(record["cell"][1]))
-			_outline_building(anchor, Catalog.footprint(record))
-		var footprint: Vector2i = Catalog.footprint(record)
+			_outline_building(anchor, footprint)
 		var bottom_offset: float = maxf(28.0, (footprint.x + footprint.y) * Grid.HALF.y * 0.5 * zoom_level + 12.0)
 		var baseline: Vector2 = (world_to_screen(_building_center(record)) + Vector2(0, bottom_offset)).round()
 		if not Rect2(Vector2.ZERO, size).grow(100.0).has_point(baseline):
 			continue
-		var label: String = definition.get("display_name")
-		if record["state"] == "constructing":
+		var label: String = building_title(record["id"])
+		if constructing:
 			label += " %d%%" % floori(100.0 * record["work_done"] / record["work_required"])
 		var font: Font = ThemeDB.fallback_font
 		var text_size: Vector2 = font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14)

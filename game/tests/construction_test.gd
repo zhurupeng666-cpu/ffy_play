@@ -98,7 +98,7 @@ func _run() -> void:
 	# 外围存档：在两侧建设，拒绝覆盖据点，重开数据库后恢复原坐标。
 	_check(Build.execute(loaded, "b_house", Vector2i(-1, -1), "outer-west")["ok"], "外围负坐标建造失败")
 	_check(Build.execute(loaded, "b_house", Vector2i(320, 320), "outer-east")["ok"], "旧东南边界外建造失败")
-	_check(Build.execute(loaded, "b_house", Vector2i(94, 60), "region-site")["code"] == "REGION_SITE", "允许在预设据点覆盖建造")
+	_check(Build.execute(loaded, "b_house", preload("res://data/regions/frontier.tres").regions["r_woods"]["position"], "region-site")["code"] == "REGION_SITE", "允许在预设据点覆盖建造")
 	_check(store.save_world(loaded), "外围新档保存失败")
 	var outer_restored: RefCounted = store.load_world()
 	_check(outer_restored != null and outer_restored.snapshot() == loaded.snapshot(), "外围建筑、占地或操作回执未恢复")

@@ -31,7 +31,7 @@ func _run() -> void:
 	click.pressed = true
 	click.position = main.town_map.world_to_screen(Vector2(0, 256))
 	main.town_map._gui_input(click)
-	var map_safe: bool = before_map == main.world.snapshot() and main.map_info.tooltip_text.contains("(8,8)")
+	var map_safe: bool = before_map == main.world.snapshot() and main.map_info.tooltip_text.contains("领主厅")
 	# 区域验收：切换会清理未确认施工，关闭视图或尝试进入锁定区域不会写世界。
 	var city_zoom: float = main.town_map.zoom_level
 	main._start_preview(load("res://data/buildings/house.tres"))
@@ -184,6 +184,25 @@ func _check_scout(main: Control) -> bool:
 	overview.site_button.pressed.emit()
 	if overview.visible or main.town_map.cell_at(main.town_map.size * 0.5) != site or main.world.snapshot() != site_before:
 		return false
+	# 两处村镇各自有完整设施，所有建筑都具备独立占地。
+	var facilities: Dictionary = main.town_map.site_buildings
+	for region: String in [Scout.WOODS, Scout.FORT]:
+		for name: String in ["hall", "barracks", "grain", "store", "forge", "mill", "clinic", "market", "farm", "ranch", "well", "gate"]:
+			if not facilities.has(region + "/" + name):
+				return false
+	for facility: Dictionary in facilities.values():
+		var anchor := Vector2i(facility["cell"][0], facility["cell"][1])
+		for tile: Vector2i in main.town_map.Placement.footprint_cells(anchor, facility["size"]):
+			if main.town_map.site_cells.get(tile) != facility["id"] or main.town_map.Terrain.is_water(tile):
+				return false
+	var well: Dictionary = facilities[Scout.WOODS + "/well"]
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	click.position = main.town_map.world_to_screen(main.town_map.Grid.cell_to_world(Vector2i(well["cell"][0], well["cell"][1])))
+	main.town_map._gui_input(click)
+	if not main.inspection_label.text.contains("公共水井") or main.inspection_remove.visible or main.world.snapshot() != site_before:
+		return false
 	main.region_toggle.pressed.emit()
 	overview.select_region(Scout.LAYOUT.home_id)
 	overview.enter_button.pressed.emit()
@@ -191,6 +210,8 @@ func _check_scout(main: Control) -> bool:
 		return false
 	main.region_toggle.pressed.emit()
 	overview.select_region(Scout.WOODS)
+	# 多次三日往返需要备用口粮，避免饥荒干扰战力和路线断言。
+	main.world.resources["food"] = 2500
 	if not _check_march(main, id, troop):
 		return false
 	var legacy: Dictionary = main.world.snapshot()
@@ -217,16 +238,22 @@ func _check_march(main: Control, legion_id: String, troop_id: String) -> bool:
 	var food: int = main.world.resources["food"]
 	overview.march_button.pressed.emit()
 	overview.march_button.pressed.emit()
-	if March.remaining(main.world, legion_id) != 120 or main.world.resources["food"] != food:
+	if Scout.LAYOUT.march_ticks < State.DAY_TICKS * 3 or March.remaining(main.world, legion_id) != Scout.LAYOUT.march_ticks or main.world.resources["food"] != food or not overview.detail.text.contains("3 天"):
 		return false
 	if Legions.set_count(main.world, legion_id, troop_id, 0)["ok"] or Disband.quote(main.world, troop_id)["ok"]:
 		return false
+	# 旧行程按存下的原到达时间恢复，之后重新派遣才使用三日路程。
+	var old_trip: Dictionary = main.world.snapshot()
+	old_trip["legion_trips"][legion_id]["arrives"] = main.world.tick + State.DAY_TICKS
+	var restored: RefCounted = State.from_snapshot(old_trip)
+	if restored == null or March.remaining(restored, legion_id) != State.DAY_TICKS:
+		return false
 	main.world.paused = false
-	main.clock.advance(60)
+	main.clock.advance(Scout.LAYOUT.march_ticks - 60)
 	main.world.paused = true
 	main._save()
 	main._load()
-	if March.remaining(main.world, legion_id) != 60 or not overview.detail.text.contains("剩余 60"):
+	if March.remaining(main.world, legion_id) != 60 or not overview.detail.text.contains("剩余 12 小时"):
 		return false
 	var legacy: Dictionary = main.world.snapshot()
 	legacy["version"] = 14
@@ -248,7 +275,7 @@ func _check_march(main: Control, legion_id: String, troop_id: String) -> bool:
 		return false
 	overview.march_button.pressed.emit()
 	main.world.paused = false
-	main.clock.advance(120)
+	main.clock.advance(Scout.LAYOUT.march_ticks)
 	main.world.paused = true
 	overview.sync(main.world)
 	return main.world.legion_trips.is_empty() and Disband.quote(main.world, troop_id)["ok"] \
@@ -262,7 +289,7 @@ func _check_battle(main: Control, legion_id: String, troop_id: String) -> bool:
 		return false
 	overview.march_button.pressed.emit()
 	main.world.paused = false
-	main.clock.advance(120)
+	main.clock.advance(Scout.LAYOUT.march_ticks)
 	main.world.paused = true
 	overview.sync(main.world)
 	overview.battle_button.pressed.emit()
@@ -276,7 +303,7 @@ func _check_battle(main: Control, legion_id: String, troop_id: String) -> bool:
 		return false
 	overview.march_button.pressed.emit()
 	main.world.paused = false
-	main.clock.advance(120)
+	main.clock.advance(Scout.LAYOUT.march_ticks)
 	var reinforcement: Dictionary = Army.recruit(main.world, "building_000002", "woods-reinforcement")
 	if not reinforcement["ok"]:
 		return false
@@ -289,7 +316,7 @@ func _check_battle(main: Control, legion_id: String, troop_id: String) -> bool:
 	overview.sync(main.world)
 	overview.march_button.pressed.emit()
 	main.world.paused = false
-	main.clock.advance(120)
+	main.clock.advance(Scout.LAYOUT.march_ticks)
 	# 把胜利对局放在日初附近，以便分别核对占领日和首个完整日。
 	main.clock.advance(120 - main.world.tick % 120 + 5)
 	main.world.paused = true
@@ -328,7 +355,7 @@ func _check_battle(main: Control, legion_id: String, troop_id: String) -> bool:
 	var bill: Dictionary = main.world.last_material_ledger
 	if main.world.resources["wood"] != wood_before + 5 or bill.get("woods_wood") != 5:
 		return false
-	if not main.numbers["woods_wood"].text == "5" or not main.world.legion_trips.is_empty():
+	if not main.numbers["woods_wood"].text == "5" or March.remaining(main.world, legion_id) <= 0:
 		return false
 	main._save()
 	main._load()
@@ -346,7 +373,10 @@ func _check_battle(main: Control, legion_id: String, troop_id: String) -> bool:
 	bill = main.world.last_material_ledger
 	if bill.get("woods_wood") != 5 or bill["wood"]["stored"] != 2 or bill["wood"]["overflow"] != 3:
 		return false
-	return _check_fort_route(main, legion_id)
+	main.world.paused = false
+	main.clock.advance(March.remaining(main.world, legion_id))
+	main.world.paused = true
+	return main.world.legion_trips.is_empty() and _check_fort_route(main, legion_id)
 
 
 # 旧堡验收：在真实区域界面检查中转、旧版迁移、途中存读档和返程。
@@ -364,7 +394,7 @@ func _check_fort_route(main: Control, legion_id: String) -> bool:
 	if migrated == null or migrated.legion_trips[legion_id]["origin"] != Scout.LAYOUT.home_id:
 		return false
 	main.world.paused = false
-	main.clock.advance(120)
+	main.clock.advance(Scout.LAYOUT.march_ticks)
 	main.world.paused = true
 	overview.markers[Scout.FORT].pressed.emit()
 	if overview.march_button.disabled or overview.march_button.text != "前往旧堡":
@@ -375,11 +405,11 @@ func _check_fort_route(main: Control, legion_id: String) -> bool:
 	if State.from_snapshot(invalid) != null:
 		return false
 	main.world.paused = false
-	main.clock.advance(60)
+	main.clock.advance(Scout.LAYOUT.march_ticks - 60)
 	main.world.paused = true
 	main._save()
 	main._load()
-	if March.remaining(main.world, legion_id) != 60 or not overview.detail.text.contains("剩余 60"):
+	if March.remaining(main.world, legion_id) != 60 or not overview.detail.text.contains("剩余 12 小时"):
 		return false
 	main.world.paused = false
 	main.clock.advance(60)
@@ -391,14 +421,14 @@ func _check_fort_route(main: Control, legion_id: String) -> bool:
 		return false
 	overview.march_button.pressed.emit()
 	main.world.paused = false
-	main.clock.advance(120)
+	main.clock.advance(Scout.LAYOUT.march_ticks)
 	main.world.paused = true
 	overview.markers[Scout.WOODS].pressed.emit()
 	if not overview.detail.text.contains("驻地为北部林地"):
 		return false
 	overview.march_button.pressed.emit()
 	main.world.paused = false
-	main.clock.advance(120)
+	main.clock.advance(Scout.LAYOUT.march_ticks)
 	main.world.paused = true
 	overview.sync(main.world)
 	main._save()

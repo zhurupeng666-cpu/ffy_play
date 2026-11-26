@@ -9,6 +9,7 @@ const Siege = preload("res://scripts/fort_siege.gd")
 const March = preload("res://scripts/region_march.gd")
 const Scout = preload("res://scripts/region_scout.gd")
 const LAYOUT = Scout.LAYOUT
+const DAY_TICKS: int = preload("res://scripts/world_state.gd").DAY_TICKS
 
 # 视图模块：只保存当前选择，所有地区数据取自区域配置。
 var selected_id: String = ""
@@ -239,11 +240,11 @@ func _refresh_fort() -> void:
 	if not March.fort_access(world):
 		detail.text = "旧堡 ｜ 道路未开放\n需先取得北部林地控制权。"
 	elif remaining > 0:
-		detail.text = "旧堡 ｜ 道路开放\n前往%s，剩余 %d 战略秒。" % [location, remaining]
+		detail.text = "旧堡 ｜ 道路开放\n前往%s，剩余 %s。" % [location, _march_time(remaining)]
 	elif location == LAYOUT.regions[Scout.FORT]["title"]:
 		detail.text = "旧堡 ｜ 军团已抵达堡外\n可沿原路返回北部林地。"
 	else:
-		detail.text = "旧堡 ｜ 道路开放\n军团驻地为%s。请从北部林地出发。" % location
+		detail.text = "旧堡 ｜ 道路开放\n军团驻地为%s。请从北部林地出发，单程 %s。" % [location, _march_time(LAYOUT.march_ticks)]
 		if not blocked.is_empty():
 			detail.text += "\n" + blocked
 	detail.text += _siege_summary(siege)
@@ -261,7 +262,7 @@ func _refresh_march() -> void:
 	if remaining > 0:
 		march_button.text = "行军中"
 		march_button.disabled = true
-		detail.text = "%s\n前往%s，剩余 %d 战略秒。" % [briefing, location, remaining] + _battle_summary(report)
+		detail.text = "%s\n前往%s，剩余 %s。" % [briefing, location, _march_time(remaining)] + _battle_summary(report)
 		return
 	march_button.text = "调回边境镇" if target == LAYOUT.home_id else "前往北部林地"
 	var blocked: String = March.reason(world, id, target)
@@ -269,7 +270,17 @@ func _refresh_march() -> void:
 	if not blocked.is_empty():
 		detail.text = briefing + "\n" + blocked + _battle_summary(report)
 	else:
-		detail.text = "%s\n军团驻地为%s。单程 %d 战略秒。" % [briefing, location, LAYOUT.march_ticks] + _battle_summary(report)
+		detail.text = "%s\n军团驻地为%s。单程 %s。" % [briefing, location, _march_time(LAYOUT.march_ticks)] + _battle_summary(report)
+
+# 行军时间：按游戏日与小时显示，抵达前至少显示一小时。
+func _march_time(ticks: int) -> String:
+	var hours: int = ceili(ticks * 24.0 / DAY_TICKS)
+	var days: int = floori(hours / 24.0)
+	var remainder: int = hours % 24
+	if days == 0:
+		return "%d 小时" % remainder
+	return "%d 天" % days if remainder == 0 else "%d 天 %d 小时" % [days, remainder]
+
 
 # 遭遇指令：派驻林地的军团可迎战，开战后暂停调动参战军团。
 func _refresh_battle(legion_id: String, report: Dictionary) -> void:

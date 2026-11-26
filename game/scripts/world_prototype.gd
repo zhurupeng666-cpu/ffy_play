@@ -345,7 +345,7 @@ func _build_map(columns: HBoxContainer) -> void:
 	map_actions.add_child(map_icon)
 	map_actions.add_child(map_info)
 	town_map.hovered_changed.connect(_on_map_cell_changed)
-	town_map.selected_changed.connect(_on_town_selected)
+	town_map.building_selected.connect(_on_town_selected)
 	town_map.view_changed.connect(_refresh_map_info)
 	town_map.placement_changed.connect(_on_placement_changed)
 	town_map.placement_clicked.connect(_on_placement_clicked)
@@ -570,10 +570,13 @@ func _on_map_cell_changed(_cell: Vector2i) -> void:
 	_refresh_map_info()
 
 
-# 地图提示模块：分别显示悬停和选择，使用从0开始的逻辑坐标。
+# 地图提示模块：平时显示选中的建筑，施工模式附带地块坐标。
 func _refresh_map_info() -> void:
 	map_info.text = "%d%%" % roundi(town_map.zoom_level * 100)
-	map_info.tooltip_text = "缩放 · 悬停 %s · 选中 %s\n方向键移动，滚轮缩放，双击聚焦，右键取消。" % [_cell_text(town_map.hovered), _cell_text(town_map.selected)]
+	var title: String = town_map.building_title(town_map.inspected_building_id)
+	map_info.tooltip_text = "已选建筑 · %s\n方向键移动，滚轮缩放，双击聚焦，右键取消。" % ("—" if title.is_empty() else title)
+	if town_map.active_definition != null:
+		map_info.tooltip_text += "\n施工地块 %s" % _cell_text(town_map.hovered)
 
 
 # 坐标文本模块：地图外或未选择时显示短横线。
@@ -636,6 +639,7 @@ func _enter_home_region() -> void:
 # 据点导航：从区域标注返回同一张地图，镜头移到对应营地。
 func _view_region_site(cell: Vector2i) -> void:
 	_show_region_view(false)
+	town_map.sync_region_sites(world)
 	town_map.visit_region_site(cell)
 
 
@@ -1512,10 +1516,9 @@ func _build_inspection_card() -> void:
 	_refresh_inspection()
 
 
-# 地图选择模块：仅普通选格触发详情，建筑任一占地格都按权威世界识别。
-func _on_town_selected(cell: Vector2i) -> void:
-	_refresh_map_info()
-	_inspect_building(Inspector.at_cell(world, cell), true)
+# 地图选择模块：地图反馈整栋建筑的标识，详情根据归属提供对应操作。
+func _on_town_selected(id: String) -> void:
+	_inspect_building(id, true)
 
 
 # 下拉选择模块：生产列表与地图详情使用同一建筑ID，避免两处操作不同对象。
@@ -1529,10 +1532,8 @@ func _on_producer_selected(index: int) -> void:
 # 身份绑定模块：只记稳定ID，更新全建筑高亮并同步已有生产列表。
 func _inspect_building(id: String, reveal: bool) -> void:
 	inspected_building_id = id if not Inspector.find(world, id).is_empty() else ""
-	if not inspected_building_id.is_empty() and Inspector.at_cell(world, town_map.selected) != inspected_building_id:
-		var record: Dictionary = Inspector.find(world, inspected_building_id)
-		town_map.selected = Vector2i(int(record["cell"][0]), int(record["cell"][1]))
-	town_map.highlight_building(inspected_building_id)
+	var focus: String = id if town_map.site_buildings.has(id) else inspected_building_id
+	town_map.highlight_building(focus)
 	_refresh_map_info()
 	if producer_picker != null:
 		for index: int in range(producer_picker.item_count):
@@ -1540,7 +1541,7 @@ func _inspect_building(id: String, reveal: bool) -> void:
 				producer_picker.select(index)
 		_refresh_production()
 	_refresh_inspection()
-	if reveal and not inspected_building_id.is_empty():
+	if reveal and not focus.is_empty():
 		_open_management(0)
 		management_scroll.set_deferred("scroll_vertical", 0)
 
@@ -1550,6 +1551,12 @@ func _refresh_inspection() -> void:
 	if inspection_label == null:
 		return
 	var detail: Dictionary = Inspector.describe(world, inspected_building_id)
+	var site: Dictionary = town_map.site_buildings.get(town_map.inspected_building_id, {})
+	if not site.is_empty():
+		var region: Dictionary = RegionOverview.LAYOUT.regions[site["region"]]
+		detail["text"] = "%s ｜ %s\n据点设施" % [site["title"], region["title"]]
+		var footprint: Vector2i = site["size"]
+		detail["numbers"]["size"] = "%d × %d" % [footprint.x, footprint.y]
 	inspection_label.text = detail["text"]
 	for key: String in ["level", "size", "progress", "queue", "builders", "jobs", "rate", "credit", "housing", "capacity"]:
 		var metric: String = "building_" + key
@@ -1592,7 +1599,6 @@ func _refresh_inspection() -> void:
 # 清理模块：读档或进入建造模式时清除临时选择，不让相同ID误指向新世界建筑。
 func _clear_inspection() -> void:
 	inspected_building_id = ""
-	town_map.selected = TownMap.Grid.INVALID
 	town_map.highlight_building("")
 	_refresh_map_info()
 	_refresh_inspection()

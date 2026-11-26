@@ -10,11 +10,18 @@ uniform vec2 map_extent;
 uniform vec2 half_cell;
 uniform vec2 west_river_span;
 uniform vec2 east_river_span;
+uniform vec4 woods_site;
+uniform vec4 fort_site;
 uniform float zoom = 0.5;
 
 // 手绘区沿用原有遮罩，外围按与城镇建造相同的规则继续生成河流和资源区。
 bool authored(vec2 cell) {
 	return all(greaterThanEqual(cell, vec2(0.0))) && all(lessThan(cell, map_extent));
+}
+
+// 据点建成区：保留地表，清理建筑占地内的程序林矿。
+bool inside_site(vec2 cell, vec4 bounds) {
+	return all(greaterThanEqual(cell, bounds.xy)) && all(lessThan(cell, bounds.zw));
 }
 
 vec4 sample_tile(vec2 cell) {
@@ -33,6 +40,9 @@ vec4 sample_tile(vec2 cell) {
 	float edge = 0.87 + mod(cell.x * 17.0 + cell.y * 23.0, 7.0) * 0.05;
 	vec2 grove = (local - (vec2(22.0) + mod(vec2(seed), vec2(9.0, 7.0)))) / vec2(17.0, 19.0);
 	vec2 quarry = (local - (vec2(59.0, 60.0) - mod(vec2(seed), vec2(5.0, 9.0)))) / vec2(17.0, 14.0);
+	if (inside_site(cell, woods_site) || inside_site(cell, fort_site)) {
+		return vec4(0.0);
+	}
 	float forest = step(1.0, mod(seed, 7.0)) * step(dot(grove, grove), edge);
 	float stone = step(1.0, mod(seed, 5.0)) * step(dot(quarry, quarry), edge);
 	return vec4(step(0.0, margin), clamp(margin / 12.0, 0.0, 1.0), mix(stone, 0.5, forest) * (1.0 - step(-2.0, margin)), step(-1.0, margin) * (1.0 - step(0.0, margin)));
