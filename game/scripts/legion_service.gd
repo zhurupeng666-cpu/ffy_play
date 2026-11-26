@@ -108,6 +108,7 @@ static func dissolve(world: RefCounted, id: String, expected: Dictionary = {}) -
 					replacement["state"] = "closed"
 					replacement["members"] = []
 			world.legions = records
+			world.release_commander(id)
 			return {"ok": true, "replayed": false}
 	return {"ok": false, "reason": "军团不存在"}
 

@@ -21,6 +21,7 @@ func _run() -> void:
 	var scene: PackedScene = load("res://scenes/world_prototype.tscn")
 	var main: Control = scene.instantiate()
 	var path: String = ProjectSettings.globalize_path("res://local_data/tests/world_ui_%s.db" % Time.get_ticks_usec())
+	main.legacy_economy_fixture = true
 	main.store_path_override = path
 	root.add_child(main)
 	var hud_safe: bool = _check_hud(main)

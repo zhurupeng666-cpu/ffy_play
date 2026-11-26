@@ -1,0 +1,11 @@
+[gd_resource type="Resource" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/building_definition.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "b_wall"
+display_name = "石城墙"
+footprint = Vector2i(1, 1)
+cost = {"stone":3}
+build_work = 8

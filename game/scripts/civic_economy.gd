@@ -13,7 +13,7 @@ static func estimate(population: int, satisfaction: int, policy: String) -> int:
 	return roundi(population * float(SETTINGS.tax_rates[policy]) * satisfaction / float(SETTINGS.tax_divisor))
 
 # 日结模块：先收税再改变满意度，粮食不足按实际缺口扣分，收入上限明确记录。
-static func calculate(day: int, policy: String, before: int, population: int, shortage: int, gold: int, fort_income: int = 0) -> Dictionary:
+static func calculate(day: int, policy: String, before: int, population: int, shortage: int, gold: int, fort_income: int = 0, shop_income: int = 0) -> Dictionary:
 	var needed: int = ceili(population * 0.5)
 	var penalty: int = ceili(float(SETTINGS.full_shortage_penalty) * shortage / maxi(needed, 1))
 	var recovery: int = int(SETTINGS.recovery_per_day) if shortage == 0 and before < int(SETTINGS.recovery_target) else 0
@@ -26,6 +26,10 @@ static func calculate(day: int, policy: String, before: int, population: int, sh
 		var fort_stored: int = mini(fort_income, GOLD_LIMIT - int(result["gold_after"]))
 		result["fort_gold"] = {"income": fort_income, "stored": fort_stored, "overflow": fort_income - fort_stored}
 		result["gold_after"] += fort_stored
+	if shop_income > 0:
+		var shop_stored: int = mini(shop_income, GOLD_LIMIT - int(result["gold_after"]))
+		result["shop_gold"] = {"income": shop_income, "stored": shop_stored, "overflow": shop_income - shop_stored}
+		result["gold_after"] += shop_stored
 	return result
 
 # 数值模块：只接受有限整数，JSON浮点表示的整数会在恢复时统一类型。
@@ -38,7 +42,7 @@ static func valid(raw: Variant, day: int, population: int, satisfaction: int, fo
 		return false
 	if raw.is_empty():
 		return true
-	var field_count: int = 15 if raw.has("fort_gold") else 14
+	var field_count: int = 14 + int(raw.has("fort_gold")) + int(raw.has("shop_gold"))
 	if raw.size() != field_count or not raw.get("policy") is String or raw["policy"] not in POLICIES or food_bill.is_empty():
 		return false
 	for key: String in ["day", "before", "after", "tax", "recovery", "shortage", "food_penalty", "gold_before", "tax_stored", "tax_overflow", "gold_after"]:
@@ -55,13 +59,20 @@ static func valid(raw: Variant, day: int, population: int, satisfaction: int, fo
 		if not fort is Dictionary or fort.size() != 3 or not _integer(fort.get("income"), 1, GOLD_LIMIT):
 			return false
 		fort_income = int(fort["income"])
-	var expected: Dictionary = calculate(day, raw["policy"], int(raw["before"]), population, int(raw["shortage"]), int(raw["gold_before"]), fort_income)
-	if fort_income > 0:
-		for key: String in ["stored", "overflow"]:
-			if not _integer(raw["fort_gold"].get(key), 0, GOLD_LIMIT) or int(raw["fort_gold"][key]) != int(expected["fort_gold"][key]):
-				return false
+	var shop_income: int = 0
+	if raw.has("shop_gold"):
+		var shop: Variant = raw["shop_gold"]
+		if not shop is Dictionary or shop.size() != 3 or not _integer(shop.get("income"), 1, GOLD_LIMIT):
+			return false
+		shop_income = int(shop["income"])
+	var expected: Dictionary = calculate(day, raw["policy"], int(raw["before"]), population, int(raw["shortage"]), int(raw["gold_before"]), fort_income, shop_income)
+	for account: String in ["fort_gold", "shop_gold"]:
+		if raw.has(account):
+			for key: String in ["stored", "overflow"]:
+				if not _integer(raw[account].get(key), 0, GOLD_LIMIT) or int(raw[account][key]) != int(expected[account][key]):
+					return false
 	for key: String in expected:
-		if key not in ["policy", "fort_gold"] and int(raw[key]) != int(expected[key]):
+		if key not in ["policy", "fort_gold", "shop_gold"] and int(raw[key]) != int(expected[key]):
 			return false
 	return true
 
@@ -70,4 +81,4 @@ static func restore(raw: Dictionary, population: int) -> Dictionary:
 	if raw.is_empty():
 		return {}
 	var fort_income: int = int(raw.get("fort_gold", {}).get("income", 0))
-	return calculate(int(raw["day"]), raw["policy"], int(raw["before"]), population, int(raw["shortage"]), int(raw["gold_before"]), fort_income)
+	return calculate(int(raw["day"]), raw["policy"], int(raw["before"]), population, int(raw["shortage"]), int(raw["gold_before"]), fort_income, int(raw.get("shop_gold", {}).get("income", 0)))

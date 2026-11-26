@@ -126,6 +126,7 @@ func _run() -> void:
 	DirAccess.remove_absolute(path)
 	# 实际界面模块：政策按钮、当前预测与历史账单明确区分，并随读档恢复。
 	var main: Control = load("res://scenes/world_prototype.tscn").instantiate()
+	main.legacy_economy_fixture = true
 	main.store_path_override = path + "-ui.db"
 	root.add_child(main)
 	main.tax_buttons["high"].pressed.emit()

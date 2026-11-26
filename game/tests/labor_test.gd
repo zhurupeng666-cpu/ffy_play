@@ -76,6 +76,7 @@ func _run() -> void:
 	DirAccess.remove_absolute(path)
 	# 界面验收模块：直接操作场景入口，验证提示和保存读取一致。
 	var main: Control = load("res://scenes/world_prototype.tscn").instantiate()
+	main.legacy_economy_fixture = true
 	main.store_path_override = path + "-ui.db"
 	root.add_child(main)
 	main._change_builders(-1)

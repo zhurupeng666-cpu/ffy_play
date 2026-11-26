@@ -46,6 +46,7 @@ var overview_only: bool = false
 # 建筑视图模块：占用来自世界实例，视图只读并将确认请求交回控制器。
 var occupied_cells: Dictionary = {}
 var placed_buildings: Array = []
+var property: Dictionary = {}
 # 点击几何：可见楼体与占地格共同用于选择，楼体以世界坐标缓存。
 var drawing_building: String = ""
 # 景物动画：在地图中低频重画按岗位分配的工人、牲畜与训练单位。
@@ -64,6 +65,7 @@ const STATIC_PATCH_LIMIT: int = 5
 const INACTIVE_PATCH_POSITION := Vector2(20000000, 20000000)
 var art_world_space: bool = false
 var work_areas: Dictionary = {}
+var ready_infrastructure: Dictionary = {}
 var equipment_cells: Dictionary = {}
 var motion_layer: Control
 var art_canvas: CanvasItem
@@ -633,6 +635,7 @@ func sync_buildings(records: Array) -> void:
 			queue_redraw()
 		return
 	occupied_cells.clear()
+	ready_infrastructure.clear()
 	work_areas.clear()
 	equipment_cells.clear()
 	has_ranch = false
@@ -645,6 +648,8 @@ func sync_buildings(records: Array) -> void:
 			if not area.is_empty():
 				work_areas[record["id"]] = area
 		var anchor: Vector2i = Vector2i(int(record["cell"][0]), int(record["cell"][1]))
+		if record["state"] == "ready" and record["def_id"] in ["b_road", "b_wall", "b_gate"]:
+			ready_infrastructure[anchor] = record["def_id"]
 		for cell: Vector2i in Placement.footprint_cells(anchor, Catalog.footprint(record)):
 			occupied_cells[cell] = record["id"]
 	static_dirty = true
@@ -697,6 +702,9 @@ func _draw_foundation(record: Dictionary) -> void:
 	var anchor: Vector2i = Vector2i(int(record["cell"][0]), int(record["cell"][1]))
 	var footprint: Vector2i = Catalog.footprint(record)
 	var constructing: bool = record["state"] == "constructing"
+	if not constructing and record["def_id"] == "b_road":
+		_draw_road(anchor)
+		return
 	var tint: Color = Color("#826340") if constructing else Color("#73664a")
 	if not constructing and record["def_id"] in ["b_farm", "b_ranch"]:
 		tint = Color("#786747") if record["def_id"] == "b_farm" else Color("#687343")
@@ -706,6 +714,47 @@ func _draw_foundation(record: Dictionary) -> void:
 	art_canvas.draw_colored_polygon(surface, tint)
 	surface.append(surface[0])
 	art_canvas.draw_polyline(surface, Color("#473e32aa"), 2.0, false)
+
+
+# 道路模块：整格判定占地，铺面从路心接向相邻道路和城门。
+func _draw_road(cell: Vector2i) -> void:
+	var center: Vector2 = Grid.cell_to_world(cell)
+	var tint := Color("#af9368")
+	Art._poly(self, center, [Vector2(0, -8), Vector2(16, 0), Vector2(0, 8), Vector2(-16, 0)], tint)
+	for side: Vector2i in Terrain.CARDINALS:
+		if ready_infrastructure.get(cell + side) in ["b_road", "b_gate"]:
+			var direction: Vector2 = Grid.cell_to_world(side) * 0.5
+			var cross: Vector2 = Vector2(direction.x, -direction.y) * 0.53
+			Art._poly(self, center, [-cross, direction - cross, direction + cross, cross], tint)
+	Art._pixel(self, center, Vector2(-3, -1), Vector2(3, 2), Color("#897751"))
+
+
+# 城防模块：城墙连接相邻墙段，门楼依据相邻墙段选择方向。
+func _draw_fortification(cell: Vector2i, center: Vector2, gate: bool) -> void:
+	var along_x: bool = ready_infrastructure.get(cell + Vector2i.LEFT) in ["b_wall", "b_gate"] or ready_infrastructure.get(cell + Vector2i.RIGHT) in ["b_wall", "b_gate"]
+	var side: Vector2i = Vector2i.RIGHT if along_x else Vector2i.DOWN
+	if gate:
+		var edge: Vector2 = Grid.cell_to_world(side) * 0.43
+		Art._tower(self, center - edge, 9, 34)
+		Art._tower(self, center + edge, 9, 34)
+		Art._stroke(self, center, -edge - Vector2(0, 29), edge - Vector2(0, 29), Color("#a4987a"), 7.0)
+		return
+	var joined: bool = false
+	for neighbor: Vector2i in Terrain.CARDINALS:
+		if ready_infrastructure.get(cell + neighbor) in ["b_wall", "b_gate"]:
+			_wall_segment(center, Grid.cell_to_world(neighbor) * 0.5)
+			joined = true
+	if not joined:
+		_wall_segment(center, Vector2(-12, 6))
+		_wall_segment(center, Vector2(12, -6))
+
+
+# 石墙模块：墙身、顶沿和垛口分层绘制，墙体可被点击。
+func _wall_segment(center: Vector2, end: Vector2) -> void:
+	var height := Vector2(0, -25)
+	Art._poly(self, center, [Vector2.ZERO, end, end + height, height], Color("#817e72"))
+	Art._stroke(self, center, height, end + height, Color("#b1a78e"), 4.0)
+	Art._stroke(self, center, height, height + Vector2(0, -5), Color("#baae92"), 7.0)
 
 
 # 深度模块：按等距投影纵坐标绘制场景物件，近处覆盖远处。
@@ -759,7 +808,11 @@ func _draw_map_objects(visible_objects: Rect2, decorate: bool) -> void:
 					Art.fishing_dock(self, dock["cell"], dock["outward"], center)
 			var worksite: bool = record["def_id"] in WorksiteArt.TYPES
 			var compound: bool = _has_compound(record)
-			if compound:
+			if record["def_id"] == "b_road":
+				pass
+			elif record["def_id"] in ["b_wall", "b_gate"]:
+				_draw_fortification(building_faces[drawing_building]["anchor"], center, record["def_id"] == "b_gate")
+			elif compound:
 				CompoundArt.draw_compound(self, record["def_id"], center)
 			elif worksite:
 				WorksiteArt.draw_site(self, record["def_id"], center)
@@ -843,12 +896,24 @@ func _building_footprint(record: Dictionary) -> Vector2i:
 	return record["size"] if record.has("region") else Catalog.footprint(record)
 
 
+# 地籍同步：只影响地图命名，私人归属由世界存档权威维护。
+func sync_property(titles: Dictionary) -> void:
+	if property != titles:
+		property = titles.duplicate()
+		queue_redraw()
+
+
 # 名称模块：稳定建筑标识映射到现场标牌与详情标题。
 func building_title(id: String) -> String:
 	if site_buildings.has(id):
 		return site_buildings[id]["title"]
 	for record: Dictionary in placed_buildings:
 		if record["id"] == id:
+			if property.has(id):
+				if record["def_id"] == "b_farm":
+					return "民田"
+				if record["def_id"] == "b_fishery":
+					return "民用码头"
 			return Catalog.find(record["def_id"]).get("display_name")
 	return ""
 

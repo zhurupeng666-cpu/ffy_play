@@ -177,6 +177,7 @@ func _run() -> void:
 	DirAccess.remove_absolute(path)
 	# 界面模块：选中军营实际点击招募，训练与占用提示随保存读取恢复。
 	var main: Control = load("res://scenes/world_prototype.tscn").instantiate()
+	main.legacy_economy_fixture = true
 	main.store_path_override = path + "-ui.db"
 	root.add_child(main)
 	main._start_preview(Catalog.BARRACKS)

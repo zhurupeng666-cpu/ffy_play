@@ -60,7 +60,7 @@ static func start(world: RefCounted, legion_id: String) -> bool:
 		var people: int = member_count(legion)
 		if people == 0:
 			return false
-		world.woods_battle = {"legion_id": legion_id, "people": people, "guards": LAYOUT.woods_guards, "morale": world.army_morale, "started": world.tick}
+		world.woods_battle = {"legion_id": legion_id, "people": people, "guards": LAYOUT.woods_guards, "morale": world.effective_battle_morale(legion_id), "started": world.tick}
 		return true
 	return false
 

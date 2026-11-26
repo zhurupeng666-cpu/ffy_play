@@ -158,6 +158,7 @@ func _run() -> void:
 	DirAccess.remove_absolute(path)
 	# 真实界面模块：数值设置可将一批拆成2和3，未保存输入不被每秒维护刷新打断。
 	var main: Control = load("res://scenes/world_prototype.tscn").instantiate()
+	main.legacy_economy_fixture = true
 	main.store_path_override = path + "-ui.db"
 	root.add_child(main)
 	main.world = _prepare()

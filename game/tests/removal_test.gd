@@ -124,6 +124,7 @@ func _run() -> void:
 	DirAccess.remove_absolute(path)
 	# 确认窗口模块：取消完全恢复原状态，确认后世界校验拦截过期预览。
 	var main: Control = load("res://scenes/world_prototype.tscn").instantiate()
+	main.legacy_economy_fixture = true
 	main.store_path_override = path + "-ui.db"
 	root.add_child(main)
 	main._start_preview(Catalog.HOUSE)

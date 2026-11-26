@@ -3,17 +3,21 @@ extends RefCounted
 const SOURCES: Array[String] = ["b_farm", "b_ranch", "b_fishery"]
 
 # 结算模块：先接收容量内的新粮，再供居民消费，旧有超容量库存不被删除。
-static func calculate(day: int, opening: int, capacity: int, sources: Dictionary, population: int) -> Dictionary:
+static func calculate(day: int, opening: int, capacity: int, sources: Dictionary, population: int, relief: int = -1) -> Dictionary:
 	var produced: int = 0
 	var normalized: Dictionary = {}
-	for id: String in SOURCES:
+	var kinds: Array = SOURCES + ["tax_grain", "fish_levy"] if relief >= 0 else SOURCES
+	for id: String in kinds:
 		normalized[id] = int(sources[id])
 		produced += normalized[id]
 	var stored: int = mini(produced, maxi(0, capacity - opening))
-	var needed: int = ceili(population * 0.5)
+	var needed: int = ceili(population * 0.5) if relief < 0 else relief
 	var consumed: int = mini(needed, opening + stored)
 	var closing: int = opening + stored - consumed
-	return {"day": day, "opening": opening, "capacity": capacity, "by_source": normalized, "produced": produced, "stored": stored, "overflow": produced - stored, "needed": needed, "consumed": consumed, "shortage": needed - consumed, "closing": closing, "net": closing - opening}
+	var bill: Dictionary = {"day": day, "opening": opening, "capacity": capacity, "by_source": normalized, "produced": produced, "stored": stored, "overflow": produced - stored, "needed": needed, "consumed": consumed, "shortage": needed - consumed, "closing": closing, "net": closing - opening}
+	if relief >= 0:
+		bill["relief_needed"] = relief
+	return bill
 
 # 数值模块：JSON数字必须为有限整数，避免小数或异常值进入账单。
 static func _integer(value: Variant, low: int, high: int) -> bool:
@@ -25,9 +29,13 @@ static func valid(raw: Variant, settled_day: int, population: int) -> bool:
 		return false
 	if raw.is_empty():
 		return true
-	if raw.size() != 12 or not raw.get("by_source") is Dictionary or raw["by_source"].size() != SOURCES.size():
+	var private_food: bool = raw.has("relief_needed")
+	var kinds: Array = SOURCES + ["tax_grain", "fish_levy"] if private_food else SOURCES
+	if raw.size() != (13 if private_food else 12) or not raw.get("by_source") is Dictionary or raw["by_source"].size() != kinds.size():
 		return false
-	for id: String in SOURCES:
+	if private_food and not _integer(raw["relief_needed"], 0, population):
+		return false
+	for id: String in kinds:
 		if not _integer(raw["by_source"].get(id), 0, 1000000000):
 			return false
 	for key: String in ["day", "opening", "capacity", "produced", "stored", "overflow", "needed", "consumed", "shortage", "closing"]:
@@ -35,7 +43,7 @@ static func valid(raw: Variant, settled_day: int, population: int) -> bool:
 			return false
 	if not _integer(raw.get("net"), -1000000000, 1000000000) or raw["day"] != settled_day or settled_day < 1 or raw["capacity"] < 300:
 		return false
-	var expected: Dictionary = calculate(int(raw["day"]), int(raw["opening"]), int(raw["capacity"]), raw["by_source"], population)
+	var expected: Dictionary = calculate(int(raw["day"]), int(raw["opening"]), int(raw["capacity"]), raw["by_source"], population, int(raw.get("relief_needed", -1)))
 	for key: String in expected:
 		if key != "by_source" and int(raw[key]) != int(expected[key]):
 			return false

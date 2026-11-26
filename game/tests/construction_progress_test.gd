@@ -74,6 +74,7 @@ func _run() -> void:
 	# 界面验收模块：实际确认建造，推进到25%，保存后恢复同样的工地显示。
 	var scene: PackedScene = load("res://scenes/world_prototype.tscn")
 	var main: Control = scene.instantiate()
+	main.legacy_economy_fixture = true
 	main.store_path_override = path + "-ui.db"
 	root.add_child(main)
 	main._start_preview(load("res://data/buildings/house.tres"))

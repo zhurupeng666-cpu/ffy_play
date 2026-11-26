@@ -32,6 +32,7 @@ const HudTheme = preload("res://scripts/hud_theme.gd")
 const TownMap = preload("res://scripts/town_map.gd")
 const State = preload("res://scripts/world_state.gd")
 const Population = preload("res://scripts/population_service.gd")
+const HouseEconomy = preload("res://scripts/household_economy.gd")
 const Estate = preload("res://scripts/estate_labor.gd")
 const Clock = preload("res://scripts/strategic_clock.gd")
 const Store = preload("res://scripts/world_save_repository.gd")
@@ -39,6 +40,13 @@ const ExportProbe = preload("res://scripts/export_probe.gd")
 
 # 控制模块：界面只持有世界引用，资源计算和SQL分别由独立模块承担。
 var world: RefCounted = State.new()
+var legacy_economy_fixture: bool = false
+var household_detail: Label
+var household_report: Label
+var civil_button: Button
+var marshal_button: Button
+var appointment_legion: OptionButton
+var selected_household: int = 0
 var clock: RefCounted = Clock.new(world)
 var store: RefCounted = Store.new()
 var store_path_override: String = ""
@@ -146,7 +154,6 @@ func _ready() -> void:
 		set_process(false)
 		get_tree().call_deferred("change_scene_to_file", "res://scenes/main.tscn")
 		return
-	_build_ui()
 	var world_probe: String = ""
 	var build_probe: String = ""
 	var food_probe: String = ""
@@ -204,6 +211,12 @@ func _ready() -> void:
 		store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/disband_export.db")
 	if not legion_probe.is_empty():
 		store_path_override = OS.get_executable_path().get_base_dir().path_join("local_data/tests/legion_export.db")
+	var probes: Array[String] = [world_probe, build_probe, food_probe, storage_probe, material_probe, inspection_probe,
+		removal_probe, civic_probe, army_probe, disband_probe, legion_probe]
+	legacy_economy_fixture = legacy_economy_fixture or probes.any(func(probe: String) -> bool: return not probe.is_empty())
+	if not legacy_economy_fixture:
+		HouseEconomy.activate(world, randi_range(1, 999999))
+	_build_ui()
 	if not store.open_store(store_path_override):
 		status_label.text = "存档不可用：" + store.error_message
 		if not world_probe.is_empty() or not build_probe.is_empty() or not food_probe.is_empty() or not storage_probe.is_empty() or not material_probe.is_empty() or not inspection_probe.is_empty() or not removal_probe.is_empty() or not civic_probe.is_empty() or not army_probe.is_empty() or not disband_probe.is_empty() or not legion_probe.is_empty():
@@ -381,7 +394,7 @@ func _build_management_drawer(columns: HBoxContainer) -> void:
 	town_picker.add_icon_item(HudIcons.texture("people"), "库存与民生")
 	town_picker.add_icon_item(HudIcons.texture("work"), "劳动力与施工")
 	town_picker.add_icon_item(HudIcons.texture("food"), "生产岗位")
-	town_picker.add_icon_item(HudIcons.texture("people"), "人口与家庭")
+	town_picker.add_icon_item(HudIcons.texture("people"), "人口与户籍")
 	town_picker.add_icon_item(HudIcons.texture("work"), "领主劳役")
 	panel = _data_section(town_page, town_sections)
 	_number_grid(panel, "", [
@@ -456,6 +469,21 @@ func _build_population_sections(town_page: VBoxContainer) -> void:
 	household_list = ItemList.new()
 	household_list.custom_minimum_size.y = 125
 	panel.add_child(household_list)
+	if not legacy_economy_fixture:
+		household_list.item_selected.connect(_select_household)
+		household_detail = _label("")
+		household_report = _label("")
+		var posts: HBoxContainer = _row()
+		civil_button = _button(posts, "任命税务官", _appoint_household.bind(false))
+		marshal_button = _button(posts, "任命武将", _appoint_household.bind(true))
+		appointment_legion = OptionButton.new()
+		appointment_legion.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		appointment_legion.item_selected.connect(_update_appointment.bind())
+		panel.add_child(appointment_legion)
+		# 户籍页先显示可点选的账册，人口趋势放在任命工具之后。
+		household_list.custom_minimum_size.y = 84
+		for control: Control in [household_report, appointment_legion, posts, household_detail, household_list]:
+			panel.move_child(control, 0)
 
 	panel = _data_section(town_page, town_sections)
 	estate_buy_button = _button(_row(), "购买1人 · %d金币" % Estate.PRICE, _purchase_estate)
@@ -509,9 +537,12 @@ func _build_command_bar(layout: VBoxContainer) -> void:
 	build_toolbar.add_theme_constant_override("separation", 6)
 	toolbar.add_child(build_toolbar)
 	_build_category("民居仓储", "house", ["b_house", "b_granary"])
-	_build_category("农业渔牧", "food", ["b_farm", "b_ranch", "b_fishery"])
-	_build_category("林矿采集", "wood", ["b_lumber", "b_quarry"])
-	_build_category("军事建造", "shield", ["b_barracks"])
+	if legacy_economy_fixture:
+		_build_category("农业渔牧", "food", ["b_farm", "b_ranch", "b_fishery"])
+	else:
+		_build_category("领主畜牧", "ranch", ["b_ranch"])
+	_build_category("采集工坊", "wood", ["b_lumber", "b_quarry", "b_smithy"])
+	_build_category("道路城防", "shield", ["b_barracks", "b_road", "b_wall", "b_gate"])
 	cancel_build_button = _button(build_toolbar, "取消建造", _cancel_preview)
 	cancel_build_button.hide()
 	var divider := Control.new()
@@ -710,6 +741,7 @@ func _refresh() -> void:
 	town_map.sync_worksite_staff(world.buildings)
 	if displayed_building_tick != world.tick:
 		displayed_building_tick = world.tick
+		town_map.sync_property(world.household_economy.get("property", {}))
 		town_map.sync_buildings(world.buildings)
 
 
@@ -855,6 +887,9 @@ func _load(save_id: int = 0) -> void:
 		return
 	_clear_inspection()
 	world = candidate
+	if not legacy_economy_fixture:
+		HouseEconomy.activate(world)
+	selected_household = 0
 	clock = Clock.new(world)
 	town_map.cancel_preview()
 	_sync_building_view()
@@ -954,7 +989,7 @@ func _on_placement_changed(result: Dictionary) -> void:
 		placement_label.text = str(town_map.active_definition.get("display_name")) + "：" + str(result.get("reason", ""))
 
 
-# 确认建造模块：重新检查权威世界，成功后同步视图并退出单次放置模式。
+# 确认建造模块：校验并提交一次建造，道路和城墙保留预览供连续铺设。
 func _on_placement_clicked(_result: Dictionary) -> void:
 	if town_map.active_definition == null:
 		return
@@ -964,9 +999,13 @@ func _on_placement_clicked(_result: Dictionary) -> void:
 		status_label.text = "建造失败：" + str(result.get("reason", ""))
 		return
 	_sync_building_view()
-	town_map.cancel_preview()
-	_refresh()
-	_inspect_building(str(result["building_id"]), true)
+	if definition.get("id") in ["b_road", "b_wall"]:
+		pending_build_command = Crypto.new().generate_random_bytes(16).hex_encode()
+		_refresh()
+	else:
+		town_map.cancel_preview()
+		_refresh()
+		_inspect_building(str(result["building_id"]), true)
 	var cost: Dictionary = result["cost"]
 	status_label.text = "建造成功：%s工地已入队；木材-%d，石材-%d，金币-%d（请保存）" % [definition.get("display_name"), cost.get("wood", 0), cost.get("stone", 0), cost.get("gold", 0)]
 
@@ -980,6 +1019,7 @@ func _on_placement_cancelled() -> void:
 
 # 视图同步模块：建造或读档后，从权威数据重建建筑占用与费用提示。
 func _sync_building_view() -> void:
+	town_map.sync_property(world.household_economy.get("property", {}))
 	town_map.sync_buildings(world.buildings)
 	town_map.sync_resources(world.resources)
 
@@ -1030,11 +1070,14 @@ func _refresh_population() -> void:
 	var report: Dictionary = world.population_report
 	population_event.text = "上次日结：迁入%d · 出生%d · 成年%d" % [report.get("joined", 0), report.get("born", 0), report.get("matured", 0)]
 	population_event.visible = not report.is_empty()
-	var signature: String = JSON.stringify(world.households)
+	var signature: String = JSON.stringify([world.households, world.household_economy, world.legions])
 	if signature == household_signature:
 		return
 	household_signature = signature
 	household_list.clear()
+	if not world.household_economy.is_empty():
+		_refresh_register()
+		return
 	for i: int in range(world.households.size()):
 		var family: Dictionary = world.households[i]
 		var dates := PackedStringArray()
@@ -1042,6 +1085,74 @@ func _refresh_population() -> void:
 			dates.append("第%d日" % day)
 		var note: String = " · 成年 " + "、".join(dates) if not dates.is_empty() else ""
 		household_list.add_item("第%d户 · 成人%d 儿童%d%s" % [i + 1, family["adults"], dates.size(), note], HudIcons.texture("people"), false)
+
+
+# 户籍界面：按户显示资产、田亩、人口与职业，详情可用于选任。
+func _refresh_register() -> void:
+	var state: Dictionary = world.household_economy
+	for i: int in range(world.households.size()):
+		var family: Dictionary = world.households[i]
+		var members: int = int(family["adults"]) + family["children"].size()
+		var asset: Dictionary = state["families"][i]
+		household_list.add_item("第%d户 · %d人 · %d金资产 · %d亩" % [i + 1, members, HouseEconomy.worth(world, i), asset["land"]])
+	selected_household = clampi(selected_household, 0, world.households.size() - 1)
+	household_list.select(selected_household)
+	var selected_legion: String = _appointment_legion_id()
+	appointment_legion.clear()
+	for legion: Dictionary in world.legions:
+		if legion["state"] != "active" or legion["members"].is_empty():
+			continue
+		appointment_legion.add_item(legion["name"])
+		appointment_legion.set_item_metadata(appointment_legion.item_count - 1, legion["id"])
+		if selected_legion == legion["id"]:
+			appointment_legion.select(appointment_legion.item_count - 1)
+	if appointment_legion.selected < 0 and appointment_legion.item_count > 0:
+		appointment_legion.select(0)
+	_update_appointment(0)
+
+
+# 户籍选择：刷新此户资产、就业与任命规则。
+func _select_household(index: int) -> void:
+	selected_household = index
+	_update_appointment(0)
+
+
+# 军团下拉：只有带现役成员的军团会成为可选目标。
+func _appointment_legion_id() -> String:
+	if appointment_legion.selected < 0:
+		return ""
+	return str(appointment_legion.get_item_metadata(appointment_legion.selected))
+
+
+# 任命说明：任职效果来自能力，家资只决定是否进入候选名单。
+func _update_appointment(_option: int) -> void:
+	var state: Dictionary = world.household_economy
+	var family: Dictionary = world.households[selected_household]
+	var asset: Dictionary = state["families"][selected_household]
+	var buildings: PackedStringArray = []
+	var wealth: int = HouseEconomy.worth(world, selected_household)
+	var standing: String = "富裕" if wealth >= HouseEconomy.OFFICE_WEALTH else ("贫困" if wealth < 75 else "殷实")
+	for building: Dictionary in world.buildings:
+		if state["property"].get(building["id"], -1) == selected_household:
+			buildings.append(HouseEconomy.TITLES[building["def_id"]])
+	household_detail.text = "第%d户 · %s · 成人%d · 儿童%d\n现金%d金 · 田地%d亩 · 渔船%d艘\n%s · 上日净入%+d金 · 雇工%d · 商税%d金\n私产：%s\n文才%d · 武略%d；候选家资至少%d金，能力至少60。" % [
+		selected_household + 1, standing, family["adults"], family["children"].size(), asset["cash"], asset["land"], asset["boats"],
+		asset["occupation"], asset["income"], asset["hired"], asset["tax"], "、".join(buildings) if not buildings.is_empty() else "无",
+		asset["civil"], asset["marshal"], HouseEconomy.OFFICE_WEALTH]
+	civil_button.disabled = not HouseEconomy.eligible(world, selected_household, false) or selected_household in [state["civil"], state["general"]]
+	marshal_button.disabled = not HouseEconomy.eligible(world, selected_household, true) or selected_household == state["civil"] or _appointment_legion_id().is_empty()
+	var report: Dictionary = state["report"]
+	household_report.text = "税务官：%s　武将：%s\n最近结算 · 税粮%d · 渔税%d · 商税%d金 · 雇工%d\n标准税：田亩税粮18%% · 店铺营业税22%%" % [
+		"第%d户" % (state["civil"] + 1) if state["civil"] >= 0 else "空缺",
+		"第%d户" % (state["general"] + 1) if state["general"] >= 0 else "空缺",
+		report.get("tax_grain", 0), report.get("fish_levy", 0), report.get("shop_tax", 0), report.get("hires", 0)]
+
+
+# 任命命令：由世界校验文武资格和军团驻地。
+func _appoint_household(military: bool) -> void:
+	var appointed: bool = HouseEconomy.appoint(world, selected_household, military, _appointment_legion_id())
+	status_label.text = "任命成功" if appointed else "任命失败：请检查候选资格和军团是否驻守主城"
+	_refresh_population()
 
 
 # 独立施工按钮：仅使用领主人手，共享城镇施工队容量。
@@ -1263,18 +1374,18 @@ func _build_ledger() -> void:
 		["口粮", "food", [
 			["food_day", "结算日", "clock"],
 			["grain_in", "粮食入库", "food"],
-			["grain_used", "居民口粮", "people"],
+			["grain_used", "居民口粮" if legacy_economy_fixture else "公共救济", "people"],
 			["grain_open", "期初储粮", "food"],
 			["grain_close", "口粮后余额", "food"],
 			["grain_net", "基础口粮净变化", "food"],
 			["grain_short", "居民缺粮", "warn"],
 			["grain_produced", "粮食总产出", "food"],
 			["grain_over", "库存溢出", "warn"],
-			["grain_need", "居民需粮", "people"],
+			["grain_need", "居民需粮" if legacy_economy_fixture else "居民缺口", "people"],
 			["grain_cap", "结算时容量", "house"],
-			["farm_out", "农场", "food"],
+			["farm_out", "农场" if legacy_economy_fixture else "田亩税粮", "food"],
 			["ranch_out", "牧场", "ranch"],
-			["fish_out", "渔场", "fish"],
+			["fish_out", "渔场" if legacy_economy_fixture else "渔税", "fish"],
 			["grain_military", "扣除军粮", "shield"],
 			["grain_total", "军需后余粮", "food"],
 			["grain_day_net", "全日净变化", "food"],
@@ -1375,9 +1486,9 @@ func _refresh_ledger() -> void:
 			"grain_over": bill["overflow"],
 			"grain_need": bill["needed"],
 			"grain_cap": bill["capacity"],
-			"farm_out": bill["by_source"]["b_farm"],
+			"farm_out": bill["by_source"].get("tax_grain", bill["by_source"]["b_farm"]),
 			"ranch_out": bill["by_source"]["b_ranch"],
-			"fish_out": bill["by_source"]["b_fishery"],
+			"fish_out": bill["by_source"].get("fish_levy", bill["by_source"]["b_fishery"]),
 			"grain_military": ("−%d" % army["food_used"]) if army.has("food_used") else "—",
 			"grain_total": army.get("food_after", "—"),
 			"grain_day_net": "%+d" % (int(army["food_after"]) - int(bill["opening"])) if army.has("food_after") else "—",
@@ -1386,7 +1497,7 @@ func _refresh_ledger() -> void:
 	if _ledger_available(1, not bill.is_empty()):
 		_set_numbers({
 			"civic_day": "第%d日" % bill["day"],
-			"tax_stored": "+%d" % bill["tax_stored"],
+			"tax_stored": "+%d" % (int(bill["tax_stored"]) + int(bill.get("shop_gold", {}).get("stored", 0))),
 			"tax_over": bill["tax_overflow"],
 			"tax_policy": Civic.policy_name(bill["policy"]),
 			"satisfaction_change": "%d → %d" % [bill["before"], bill["after"]],
@@ -1552,6 +1663,13 @@ func _refresh_inspection() -> void:
 		return
 	var detail: Dictionary = Inspector.describe(world, inspected_building_id)
 	var site: Dictionary = town_map.site_buildings.get(town_map.inspected_building_id, {})
+	var owner: int = world.household_economy.get("property", {}).get(inspected_building_id, -1)
+	if owner >= 0:
+		var property: Dictionary = Inspector.find(world, inspected_building_id)
+		var extent: Vector2i = Construction.Catalog.footprint(property)
+		detail = {"text": "%s ｜ 第%d户私产%s" % [town_map.building_title(inspected_building_id), owner + 1,
+			" · 施工中" if property["state"] == "constructing" else ""],
+			"numbers": {"size": "%d × %d" % [extent.x, extent.y]}, "increase": false, "decrease": false}
 	if not site.is_empty():
 		var region: Dictionary = RegionOverview.LAYOUT.regions[site["region"]]
 		detail["text"] = "%s ｜ %s\n据点设施" % [site["title"], region["title"]]
@@ -1574,8 +1692,8 @@ func _refresh_inspection() -> void:
 		var definition: Resource = Construction.Catalog.find(record["def_id"])
 		estate_producer_add.disabled = world.estate_idle() == 0 or int(record["workers"]) >= int(definition.get("worker_slots"))
 		estate_producer_remove.disabled = int(world.estate_posts.get(inspected_building_id, 0)) == 0
-	site_builder_actions.visible = record.get("state") == "constructing"
-	inspection_remove.visible = not record.is_empty() and record["def_id"] != "b_hall"
+	site_builder_actions.visible = owner < 0 and record.get("state") == "constructing"
+	inspection_remove.visible = owner < 0 and not record.is_empty() and record["def_id"] not in ["b_hall", "b_market"]
 	inspection_remove.text = "取消施工" if record.get("state") == "constructing" else "拆除建筑"
 	var military: bool = record.get("def_id") == "b_barracks"
 	army_recruit_button.get_parent().visible = military

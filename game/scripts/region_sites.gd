@@ -106,10 +106,7 @@ static func draw_building(canvas: Control, record: Dictionary, at: Vector2, guar
 			for plot: Vector2i in [Vector2i(-2, -2), Vector2i(2, -2), Vector2i(-2, 2), Vector2i(2, 2)]:
 				Art._fields(canvas, at + Grid.cell_to_world(plot))
 		"market":
-			for index: int in range(3):
-				var stall: Vector2 = at + Vector2((index - 1) * 78, index * 17 - 10)
-				var roof: Color = [Color("#a35243"), Color("#527584"), Color("#b18d4a")][index]
-				_market_stall(canvas, stall, roof)
+			Art._market(canvas, at, 1.0)
 		"well":
 			Art._house(canvas, at, 17, 18, Color("#46666b"), Color("#97958c"), "stone", 1.08)
 			Art._poly(canvas, at, [Vector2(-17, 8), Vector2(0, 0), Vector2(17, 8), Vector2(0, 16)], Color("#559798"))
@@ -137,17 +134,6 @@ static func draw_building(canvas: Control, record: Dictionary, at: Vector2, guar
 					Art._drill_soldier(canvas, at + Vector2((index - 2.5) * 24, 43 + index * 4), 0.0, index, false)
 			elif kind == "b_ranch":
 				Art.moving_units(canvas, kind, at, 0.0, Vector2i.ZERO, 1.0)
-
-
-# 摊位模块：木柜台上方用不同色的布棚，点布棚同样能选中集市。
-static func _market_stall(canvas: Control, at: Vector2, roof: Color) -> void:
-	var counter: Array = [Vector2(-27, 5), Vector2(3, -10), Vector2(28, 3), Vector2(-2, 18)]
-	Art._poly(canvas, at, counter, Color("#bb9463"))
-	for post: Vector2 in counter:
-		Art._stroke(canvas, at, post, post - Vector2(0, 28), Color("#65452f"), 3.0)
-	Art._poly(canvas, at, [Vector2(-30, -22), Vector2(3, -40), Vector2(31, -25), Vector2(-2, -7)], roof)
-	Art._poly(canvas, at, [Vector2(-22, -18), Vector2(12, -35), Vector2(20, -31), Vector2(-13, -14)], roof.lightened(0.27))
-	Art._crate(canvas, at + Vector2(18, 16))
 
 
 # 哨楼模块：村落使用木岗楼，旧堡使用石塔。

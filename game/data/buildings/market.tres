@@ -1,0 +1,11 @@
+[gd_resource type="Resource" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/building_definition.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "b_market"
+display_name = "街区集市"
+footprint = Vector2i(3, 3)
+buildable = false
+build_work = 0

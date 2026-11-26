@@ -16,6 +16,8 @@ static func quote(world: RefCounted, id: String) -> Dictionary:
 	var building: Dictionary = Inspector.find(world, id)
 	if building.is_empty() or building["def_id"] == "b_hall":
 		return {"ok": false, "reason": "未选择可移除建筑；领主厅不能拆除"}
+	if building["def_id"] == "b_market" or world.household_economy.get("property", {}).has(id):
+		return {"ok": false, "reason": "这项产业属于居民，不能用领主拆除命令"}
 	if building["def_id"] == "b_barracks":
 		for troop: Dictionary in world.troops:
 			if troop["barracks_id"] == id:

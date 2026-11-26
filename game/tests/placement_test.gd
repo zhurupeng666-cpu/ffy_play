@@ -6,6 +6,10 @@ const Placement = preload("res://scripts/placement_validator.gd")
 const Map = preload("res://scripts/town_map.gd")
 const House = preload("res://data/buildings/house.tres")
 const Farm = preload("res://data/buildings/farm.tres")
+const Catalog = preload("res://scripts/building_catalog.gd")
+const Construct = preload("res://scripts/construction_service.gd")
+const State = preload("res://scripts/world_state.gd")
+const Clock = preload("res://scripts/strategic_clock.gd")
 var failed: bool = false
 
 
@@ -78,6 +82,7 @@ func _run() -> void:
 	var scene: PackedScene = load("res://scenes/world_prototype.tscn")
 	var main: Control = scene.instantiate()
 	var path: String = ProjectSettings.globalize_path("res://local_data/tests/placement_%s.db" % Time.get_ticks_usec())
+	main.legacy_economy_fixture = true
 	main.store_path_override = path
 	root.add_child(main)
 	var world_before: Dictionary = main.world.snapshot()
@@ -99,8 +104,66 @@ func _run() -> void:
 	escape.pressed = true
 	main._unhandled_key_input(escape)
 	_check(main.town_map.active_definition == null, "Esc没有优先取消预览")
+	# 市政建造：道路连铺共用正常施工队列，单次放置各用一条独立回执。
+	main._start_preview(Catalog.ROAD)
+	for cell: Vector2i in [Vector2i(-5, 1), Vector2i(-4, 1)]:
+		click.position = main.town_map.world_to_screen(Grid.cell_to_world(cell))
+		main.town_map._gui_input(click)
+	_check(main.town_map.active_definition == Catalog.ROAD and main.world.buildings.size() == 4, "道路未保留连续建造模式")
+	main._cancel_preview()
+	for definition: Resource in [Catalog.WALL, Catalog.GATE, Catalog.SMITHY]:
+		var slot: Dictionary = {"b_wall": Vector2i(-3, 1), "b_gate": Vector2i(-3, 2), "b_smithy": Vector2i(-7, 3)}
+		var result: Dictionary = Construct.execute(main.world, definition.id, slot[definition.id], "verify-" + definition.id)
+		_check(result["ok"], "市政设施建造失败 " + definition.id)
+	main.world.paused = false
+	main.clock.advance(150)
+	main.world.paused = true
+	main._sync_building_view()
+	_check(main.town_map.ready_infrastructure.size() == 4, "完工后没有生成连通路面与城防")
+	var restored: RefCounted = State.from_snapshot(main.world.snapshot())
+	_check(restored != null and restored.buildings == main.world.buildings, "市政建筑存档恢复失败")
 	main.free()
 	DirAccess.remove_absolute(path)
+	_check_district_market()
 	if not failed:
-		print("PLACEMENT_PASS: resources, footprint, bounds, overlap, pan, zoom, cancel, single commit")
+		print("PLACEMENT_PASS: resources, footprint, bounds, overlap, pan, zoom, city works, district market")
 	quit(1 if failed else 0)
+
+
+# 商业验收：住宅数量和街路连通都达标才形成集市，保存后不再重复生成。
+func _check_district_market() -> void:
+	var world: RefCounted = State.new()
+	world.resources["wood"] = 500
+	world.resources["gold"] = 500
+	for x: int in range(20, 46):
+		if x != 31:
+			_finish_fixture(world, "b_road", Vector2i(x, 0))
+	for x: int in range(20, 40, 2):
+		_finish_fixture(world, "b_house", Vector2i(x, -2))
+	for x: int in [20, 22, 24, 26, 32, 34, 36, 38, 40]:
+		_finish_fixture(world, "b_house", Vector2i(x, 1))
+	world.paused = false
+	Clock.new(world).advance(State.DAY_TICKS)
+	_check(world.buildings.back()["def_id"] == "b_house", "19座住宅提前开市")
+	_finish_fixture(world, "b_house", Vector2i(42, 1))
+	Clock.new(world).advance(State.DAY_TICKS)
+	_check(world.buildings.back()["def_id"] == "b_house", "断路两侧住宅被合并统计")
+	_finish_fixture(world, "b_road", Vector2i(31, 0))
+	Clock.new(world).advance(State.DAY_TICKS)
+	_check(world.buildings.back()["def_id"] == "b_market", "连通的20座住宅没有形成街区集市")
+	var count: int = world.buildings.size()
+	var loaded: RefCounted = State.from_snapshot(world.snapshot())
+	_check(loaded != null and loaded.buildings == world.buildings, "集市地址与回执未恢复")
+	if loaded != null:
+		Clock.new(loaded).advance(State.DAY_TICKS)
+		_check(loaded.buildings.size() == count, "同一街区在读档后重复开市")
+
+
+# 夹具模块：按正式建造生成历史回执，直接完成施工便于单独测试街区规则。
+func _finish_fixture(world: RefCounted, id: String, cell: Vector2i) -> void:
+	var result: Dictionary = Construct.execute(world, id, cell, "%s-%s" % [id, cell])
+	_check(result["ok"], "街区样本建造失败 %s %s" % [cell, result.get("code", "")])
+	if result["ok"]:
+		var record: Dictionary = world.buildings.back()
+		record["state"] = "ready"
+		record["work_done"] = record["work_required"]

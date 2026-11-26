@@ -12,6 +12,15 @@ const QUARRY = preload("res://data/buildings/quarry.tres")
 const PRODUCERS: Array[String] = ["b_farm", "b_ranch", "b_fishery", "b_lumber", "b_quarry"]
 const BARRACKS = preload("res://data/buildings/barracks.tres")
 const HALL = preload("res://data/buildings/hall.tres")
+const ROAD = preload("res://data/buildings/road.tres")
+const WALL = preload("res://data/buildings/wall.tres")
+const GATE = preload("res://data/buildings/gate.tres")
+const SMITHY = preload("res://data/buildings/smithy.tres")
+const MARKET = preload("res://data/buildings/market.tres")
+const TAVERN = preload("res://data/buildings/tavern.tres")
+const RESTAURANT = preload("res://data/buildings/restaurant.tres")
+const BAKERY = preload("res://data/buildings/bakery.tres")
+const MANOR = preload("res://data/buildings/manor.tres")
 
 
 # 场地模块：独立维护大型用地尺寸，保留原类型、生产和军营归属。
@@ -63,4 +72,22 @@ static func find(id: String) -> Resource:
 			return BARRACKS
 		"b_hall":
 			return HALL
+		"b_road":
+			return ROAD
+		"b_wall":
+			return WALL
+		"b_gate":
+			return GATE
+		"b_smithy":
+			return SMITHY
+		"b_market":
+			return MARKET
+		"b_tavern":
+			return TAVERN
+		"b_restaurant":
+			return RESTAURANT
+		"b_bakery":
+			return BAKERY
+		"b_manor":
+			return MANOR
 	return null

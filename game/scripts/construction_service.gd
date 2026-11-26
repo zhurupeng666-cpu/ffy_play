@@ -29,6 +29,8 @@ static func execute(world: RefCounted, definition_id: String, anchor: Vector2i, 
 		if receipt["def_id"] != definition_id or receipt["cell"] != cell or receipt.get("large", false) != large:
 			return {"ok": false, "code": "COMMAND_CONFLICT", "reason": "同一命令ID不能用于不同建筑或位置"}
 		return {"ok": true, "code": "REPLAYED", "building_id": receipt["building_id"], "replayed": true, "cost": {}}
+	if not world.household_economy.is_empty() and definition_id in ["b_farm", "b_fishery"]:
+		return {"ok": false, "code": "RESIDENT_PROPERTY", "reason": "耕作和捕鱼由居民自主经营"}
 	var definition: Resource = Catalog.for_construction(definition_id, large)
 	if definition == null or not definition.get("buildable"):
 		return {"ok": false, "code": "UNKNOWN_BUILDING", "reason": "此建筑不能建造"}

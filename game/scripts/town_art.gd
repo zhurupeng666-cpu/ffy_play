@@ -114,6 +114,25 @@ static func building(canvas: Control, id: String, center: Vector2, spread: float
 			_ranch(canvas, center, spread)
 		"b_barracks":
 			_barracks(canvas, center, spread)
+		"b_market":
+			_market(canvas, center, 0.65)
+		"b_tavern":
+			_house(canvas, center, 35, 28, Color("#7e4551"), Color("#bb9b65"), "timber", 1.48)
+			_shop_sign(canvas, center, Color("#c68948"))
+		"b_restaurant":
+			_house(canvas, center - Vector2(0, 3), 44, 41, Color("#497681"), Color("#d0b08d"), "stone", 1.63)
+			_shop_sign(canvas, center, Color("#bc6948"))
+		"b_bakery":
+			_house(canvas, center, 36, 25, Color("#b68a49"), Color("#d4b78c"), "home", 1.44)
+			_crate(canvas, center + Vector2(-28, 23))
+			_shop_sign(canvas, center, Color("#dbb374"))
+		"b_manor":
+			_house(canvas, center - Vector2(0, 12), 52, 43, Color("#56687e"), Color("#ccc1a4"), "stone", 1.62)
+			_tower(canvas, center + Vector2(-61, 19), 13, 28)
+			_tower(canvas, center + Vector2(63, 11), 13, 28)
+			_flag(canvas, center - Vector2(0, 92), Color("#c2a762"))
+		"b_smithy":
+			_smithy(canvas, center)
 		"b_granary":
 			_house(canvas, center + Vector2(-6, -5), 36, 30, Color("#ad783b"), Color("#d0ae73"), "store", 2.2 if spread > 1.0 else 1.45)
 			for offset: Vector2 in [Vector2(-23, 12), Vector2(-15, 16), Vector2(23, 9)]:
@@ -122,6 +141,43 @@ static func building(canvas: Control, id: String, center: Vector2, spread: float
 				_house(canvas, center + Vector2(44 * spread, 4), 38, 26, Color("#936838"), Color("#bc9866"), "store", 2.1)
 				for offset: Vector2 in [Vector2(41, 40), Vector2(58, 36), Vector2(76, 32), Vector2(96, 23)]:
 					_crate(canvas, center + offset)
+
+# 商铺招牌：挂靠屋檐与入口，颜色随行业区分。
+static func _shop_sign(canvas: Control, center: Vector2, color: Color) -> void:
+	_stroke(canvas, center, Vector2(24, -24), Vector2(45, -16), Color("#3b352e"), 3.0)
+	_poly(canvas, center, [Vector2(32, -20), Vector2(46, -14), Vector2(46, -4), Vector2(32, -10)], color)
+
+
+# 集市模块：主城和据点共用布棚与木柜台，较小街区在更紧凑的格内摆摊。
+static func _market(canvas: Control, center: Vector2, model_scale: float) -> void:
+	canvas.art_origin = center
+	canvas.art_scale = model_scale
+	for index: int in range(3):
+		var at: Vector2 = center + Vector2((index - 1) * 68, index * 16 - 10)
+		var roof: Color = [Color("#a35243"), Color("#527584"), Color("#b18d4a")][index]
+		var counter: Array = [Vector2(-27, 5), Vector2(3, -10), Vector2(28, 3), Vector2(-2, 18)]
+		_poly(canvas, at, counter, Color("#bb9463"))
+		for post: Vector2 in counter:
+			_stroke(canvas, at, post, post - Vector2(0, 28), Color("#65452f"), 3.0)
+		_poly(canvas, at, [Vector2(-30, -22), Vector2(3, -40), Vector2(31, -25), Vector2(-2, -7)], roof)
+		_poly(canvas, at, [Vector2(-22, -18), Vector2(12, -35), Vector2(20, -31), Vector2(-13, -14)], roof.lightened(0.27))
+		_crate(canvas, at + Vector2(18, 16))
+	canvas.art_scale = 1.0
+
+
+# 铁匠铺：深瓦、砖烟囱、锻炉和门外铁砧区分于普通住宅。
+static func _smithy(canvas: Control, center: Vector2) -> void:
+	_house(canvas, center + Vector2(-14, -8), 36, 25, Color("#675051"), Color("#9f876e"), "stone", 1.48)
+	_poly(canvas, center, [Vector2(2, -33), Vector2(20, -41), Vector2(20, -73), Vector2(2, -65)], Color("#8a5342"))
+	_poly(canvas, center, [Vector2(20, -41), Vector2(29, -37), Vector2(29, -69), Vector2(20, -73)], Color("#634139"))
+	for row: int in range(3):
+		var shift := Vector2(0, -row * 8)
+		_stroke(canvas, center, Vector2(2, -42) + shift, Vector2(20, -50) + shift, Color("#513c35"), 1.5)
+	_crate(canvas, center + Vector2(-34, 24))
+	_pixel(canvas, center, Vector2(32, 8), Vector2(12, 12), Color("#8c6344"))
+	_pixel(canvas, center, Vector2(25, 5), Vector2(24, 5), Color("#535e60"))
+	_pixel(canvas, center, Vector2(33, -4), Vector2(9, 10), Color("#798381"))
+
 
 # 线条模块：描边与木梁使用同一镜头刻度和像素对齐。
 static func _stroke(canvas: Control, center: Vector2, a: Vector2, b: Vector2, color: Color, width: float = 2.0) -> void:

@@ -26,6 +26,7 @@ if (-not $SkipTests) {
     Invoke-GodotStep @('--headless', '--path', $project, '--script', 'res://tests/construction_progress_test.gd')
     Invoke-GodotStep @('--headless', '--path', $project, '--script', 'res://tests/labor_test.gd')
     Invoke-GodotStep @('--headless', '--path', $project, '--script', 'res://tests/population_test.gd')
+    Invoke-GodotStep @('--headless', '--path', $project, '--script', 'res://tests/household_economy_test.gd')
     Invoke-GodotStep @('--headless', '--path', $project, '--script', 'res://tests/food_test.gd')
     Invoke-GodotStep @('--headless', '--path', $project, '--script', 'res://tests/storage_test.gd')
     Invoke-GodotStep @('--headless', '--path', $project, '--script', 'res://tests/material_test.gd')

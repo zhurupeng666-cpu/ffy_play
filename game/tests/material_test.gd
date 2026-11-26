@@ -145,6 +145,7 @@ func _run() -> void:
 	DirAccess.remove_absolute(path)
 	# 界面模块：生产下拉框支持采石场，单位与日结材料摘要随保存读取恢复。
 	var main: Control = load("res://scenes/world_prototype.tscn").instantiate()
+	main.legacy_economy_fixture = true
 	main.store_path_override = path + "-ui.db"
 	root.add_child(main)
 	main.world = _prepare()

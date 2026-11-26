@@ -38,7 +38,7 @@ static func start(world: RefCounted, legion_id: String) -> bool:
 			"people": Field.member_count(legion),
 			"guards": LAYOUT.fort_guards,
 			"gate": LAYOUT.fort_gate_power,
-			"morale": world.army_morale,
+			"morale": world.effective_battle_morale(legion_id),
 			"started": world.tick,
 		}
 		return true

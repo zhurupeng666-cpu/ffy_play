@@ -120,6 +120,7 @@ func _run() -> void:
 	DirAccess.remove_absolute(path)
 	# 确认界面模块：保留无副作用，过期预览拒绝，成功后当前军营列表与人口同步。
 	var main: Control = load("res://scenes/world_prototype.tscn").instantiate()
+	main.legacy_economy_fixture = true
 	main.store_path_override = path + "-ui.db"
 	root.add_child(main)
 	main.world = _prepare()
