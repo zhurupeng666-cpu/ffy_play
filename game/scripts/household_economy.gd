@@ -345,7 +345,7 @@ static func _invest_in_buildings(world: RefCounted, day: int, trades: Dictionary
 			price = 0
 		if kind.is_empty():
 			continue
-		var definition: Resource = Catalog.find(kind)
+		var definition: Resource = Catalog.for_construction(kind, world.capital_layout and kind == "b_manor")
 		var slot: Vector2i = _shop_site(ways, markets, definition, occupied)
 		if slot != Grid.INVALID:
 			family["cash"] -= price

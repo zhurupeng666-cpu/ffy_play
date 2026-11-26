@@ -168,6 +168,7 @@ func select_region(id: String) -> void:
 # 世界同步模块：发现旧堡时显示标记与道路，读入较早进度时恢复对应地图。
 func sync(state: RefCounted) -> void:
 	world = state
+	map_overlay.sync_capital(world.capital_layout, world.population)
 	map_overlay.sync_buildings(world.buildings)
 	map_overlay.sync_region_sites(world)
 	var discovered: bool = Scout.complete(world)

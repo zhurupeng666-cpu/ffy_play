@@ -20,6 +20,7 @@ const FoodLedger = preload("res://scripts/food_ledger.gd")
 const Placement = preload("res://scripts/placement_validator.gd")
 const Population = preload("res://scripts/population_service.gd")
 const DistrictMarket = preload("res://scripts/district_market.gd")
+const Capital = preload("res://scripts/capital_layout.gd")
 const HouseEconomy = preload("res://scripts/household_economy.gd")
 const Estate = preload("res://scripts/estate_labor.gd")
 var tick: int = 0
@@ -27,6 +28,7 @@ var subsecond: float = 0.0
 var last_settled_day: int = 0
 var population: int = Population.START_POPULATION
 var household_economy: Dictionary = {}
+var capital_layout: bool = false
 var households: Array = Population.initial(Population.START_POPULATION, Population.START_CHILDREN, 1)
 var population_report: Dictionary = {}
 # 领主劳役：建筑工人数包含双方，单独记录领主人手以保留原生产公式。
@@ -140,6 +142,9 @@ func snapshot() -> Dictionary:
 	if not household_economy.is_empty():
 		data["version"] = 27
 		data["household_economy"] = household_economy.duplicate(true)
+	if capital_layout:
+		data["version"] = 28
+		data["capital_layout"] = true
 	return data
 
 
@@ -150,7 +155,7 @@ static func from_snapshot(data: Variant) -> RefCounted:
 	for key: String in ["version", "tick", "last_settled_day", "population", "speed"]:
 		if not _valid_integer(data.get(key), 0, 120000000):
 			return null
-	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27] or int(data["speed"]) not in [1, 2, 4]:
+	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28] or int(data["speed"]) not in [1, 2, 4]:
 		return null
 	var version: int = int(data["version"])
 	if not _valid_integer(data["population"], Population.START_POPULATION, Population.MAX_POPULATION) or (version < 25 and data["population"] != Population.START_POPULATION):
@@ -265,6 +270,10 @@ static func from_snapshot(data: Variant) -> RefCounted:
 		var opening_tick: int = (state.last_settled_day - 1) * DAY_TICKS
 		if int(data["version"]) < 17 or Battle.report(state, opening_tick)["status"] != "victory":
 			return null
+	if version >= 28:
+		if data.get("capital_layout") != true:
+			return null
+		state.capital_layout = true
 	if version >= 27 and not HouseEconomy.restore(state, data.get("household_economy")):
 		return null
 	if state.idle_workers() < 0 or state.population > state.housing_capacity():
@@ -279,7 +288,7 @@ static func _valid_integer(value: Variant, minimum: int, maximum: int) -> bool:
 
 # 占用模块：从真实实例推导占用，不将冗余格表另行存档。
 func occupied_cells() -> Dictionary:
-	var occupied: Dictionary = {}
+	var occupied: Dictionary = Capital.occupation().duplicate() if capital_layout else {}
 	for record: Dictionary in buildings:
 		var anchor: Vector2i = Vector2i(int(record["cell"][0]), int(record["cell"][1]))
 		for cell: Vector2i in Placement.footprint_cells(anchor, Catalog.footprint(record)):
@@ -301,7 +310,7 @@ func _restore_buildings(data: Dictionary) -> bool:
 	var records: Array = []
 	var archives: Array = []
 	var by_id: Dictionary = {}
-	var occupied: Dictionary = {}
+	var occupied: Dictionary = Capital.occupation().duplicate() if int(data["version"]) >= 28 else {}
 	var hall_count: int = 0
 	var all_records: Array = data["buildings"] + retired_raw
 	for index: int in range(all_records.size()):

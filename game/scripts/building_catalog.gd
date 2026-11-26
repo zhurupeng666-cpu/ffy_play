@@ -24,7 +24,7 @@ const MANOR = preload("res://data/buildings/manor.tres")
 
 
 # 场地模块：独立维护大型用地尺寸，保留原类型、生产和军营归属。
-const LARGE_SIZES: Dictionary = {"b_farm": Vector2i(20, 20), "b_ranch": Vector2i(20, 20), "b_barracks": Vector2i(20, 20), "b_granary": Vector2i(10, 10), "b_fishery": Vector2i(24, 20)}
+const LARGE_SIZES: Dictionary = {"b_farm": Vector2i(20, 20), "b_ranch": Vector2i(20, 20), "b_barracks": Vector2i(20, 20), "b_granary": Vector2i(10, 10), "b_fishery": Vector2i(24, 20), "b_manor": Vector2i(15, 15)}
 
 
 # 尺寸模块：实例规格同时用于占地校验、选择和绘制。

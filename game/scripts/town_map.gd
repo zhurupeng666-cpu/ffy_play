@@ -17,6 +17,9 @@ const Construction = preload("res://scripts/construction_service.gd")
 const Placement = preload("res://scripts/placement_validator.gd")
 const Grid = preload("res://scripts/isometric_grid.gd")
 const Sites = preload("res://scripts/region_sites.gd")
+const Capital = preload("res://scripts/capital_layout.gd")
+const CapitalArt = preload("res://scripts/capital_art.gd")
+const Walkers = preload("res://scripts/capital_walkers.gd")
 const Scout = preload("res://scripts/region_scout.gd")
 const Field = preload("res://scripts/woods_battle.gd")
 const Siege = preload("res://scripts/fort_siege.gd")
@@ -42,11 +45,15 @@ var region_sites: Dictionary = {}
 var site_buildings: Dictionary = {}
 var site_cells: Dictionary = {}
 var overview_only: bool = false
+var capital_buildings: Dictionary = {}
+var resident_routes: Array[PackedVector2Array] = []
+var town_population: int = 0
 
 # 建筑视图模块：占用来自世界实例，视图只读并将确认请求交回控制器。
 var occupied_cells: Dictionary = {}
 var placed_buildings: Array = []
 var property: Dictionary = {}
+var court_houses: Array = []
 # 点击几何：可见楼体与占地格共同用于选择，楼体以世界坐标缓存。
 var drawing_building: String = ""
 # 景物动画：在地图中低频重画按岗位分配的工人、牲畜与训练单位。
@@ -228,13 +235,13 @@ func _process(delta: float) -> void:
 			direction += PAN_KEYS[arrow]
 		if direction != Vector2.ZERO:
 			_pan_camera(direction.normalized() * PAN_SPEED * minf(delta, 0.05))
-	if zoom_level < 0.12 or (not has_ranch and not has_fishery and yard_counts_by_barracks.is_empty() and staff_by_site.is_empty()):
+	if zoom_level < 0.12 or (resident_routes.is_empty() and not has_ranch and not has_fishery and yard_counts_by_barracks.is_empty() and staff_by_site.is_empty()):
 		return
 	scenery_time += delta
 	var frame: int = floori(scenery_time * 12.0)
 	if frame != scenery_frame:
 		scenery_frame = frame
-		if not animated_objects.is_empty():
+		if not animated_objects.is_empty() or not resident_routes.is_empty():
 			motion_layer.queue_redraw()
 
 
@@ -264,6 +271,10 @@ func _draw_static_map(patch: Dictionary) -> void:
 	art_world_space = true
 	art_scale = 1.0
 	var coverage: Rect2 = patch["coverage"]
+	if not capital_buildings.is_empty():
+		CapitalArt.ground(self, coverage)
+		CapitalArt.walls(self, coverage, false)
+		CapitalArt.walls(self, coverage, true)
 	for record: Dictionary in placed_buildings:
 		if coverage.intersects(_building_bounds(record)):
 			_draw_foundation(record)
@@ -317,12 +328,15 @@ func _selection_at(point: Vector2) -> String:
 	var terrain_cell: Vector2i = cell_at(point)
 	var own_id: String = occupied_cells.get(terrain_cell, "")
 	var site_id: String = site_cells.get(terrain_cell, "")
+	var capital_cell: String = Capital.occupation().get(terrain_cell, "") if not capital_buildings.is_empty() else ""
+	if capital_buildings.has(capital_cell):
+		site_id = capital_cell
 	var world_point: Vector2 = screen_to_world(point)
 	var ids: Array = building_faces.keys()
 	ids.reverse()
 	for id: String in ids:
 		var record: Dictionary = building_faces[id]
-		if occupied_cells.get(record["anchor"]) != id and site_cells.get(record["anchor"]) != id:
+		if occupied_cells.get(record["anchor"]) != id and site_cells.get(record["anchor"]) != id and not capital_buildings.has(id):
 			continue
 		for face: PackedVector2Array in record["faces"]:
 			if Geometry2D.is_point_in_polygon(world_point, face):
@@ -333,7 +347,25 @@ func _selection_at(point: Vector2) -> String:
 # 墙面记录模块：只有绘制建筑本体时登记轮廓，地形和占地不重复登记。
 func remember_building_face(face: PackedVector2Array) -> void:
 	if not drawing_building.is_empty():
-		building_faces[drawing_building]["faces"].append(face)
+		var entry: Dictionary = building_faces[drawing_building]
+		entry["faces"].append(face)
+		var bounds: Rect2 = entry.get("visual_bounds", Rect2(face[0], Vector2.ZERO))
+		for point: Vector2 in face:
+			bounds = bounds.expand(point)
+		entry["visual_bounds"] = bounds
+
+
+# 遮挡模块：遮住被近侧屋顶或立面挡住的行人，避免出现踩屋顶的错觉。
+func street_view_hidden(foot: Vector2) -> bool:
+	var torso: Vector2 = foot - Vector2(0,25)
+	for entry: Dictionary in building_faces.values():
+		var bounds: Rect2 = entry.get("visual_bounds", Rect2())
+		if bounds.end.y + 3.0 < foot.y or not bounds.has_point(torso):
+			continue
+		for face: PackedVector2Array in entry["faces"]:
+			if Geometry2D.is_point_in_polygon(torso, face):
+				return true
+	return false
 
 
 # 鼠标模块：左键选择建筑，右键取消，滚轮定位缩放；施工模式仍按地格预览。
@@ -448,7 +480,7 @@ func _focus_cell(cell: Vector2i) -> void:
 # 聚焦模块：双击后原地放大整座建筑，把地块与建筑上方留白居中。
 func _focus_building(id: String) -> void:
 	fitting_region_cell = Grid.INVALID
-	for record: Dictionary in placed_buildings + site_buildings.values():
+	for record: Dictionary in placed_buildings + site_buildings.values() + capital_buildings.values():
 		if record["id"] != id:
 			continue
 		var center: Vector2 = _building_center(record) - Vector2(0, 18)
@@ -503,6 +535,8 @@ func _fit_camera() -> void:
 	var available: Vector2 = size - Vector2(32, 36)
 	zoom_level = _overview_fit_zoom() if showing_entire_map else clampf(minf(available.x / span.x, available.y / span.y), 0.5, 0.75)
 	var center: Vector2 = Grid.cell_to_world(area - Vector2i.ONE) * 0.5
+	if showing_entire_map and not capital_buildings.is_empty():
+		center += Grid.cell_to_world(Capital.OUTER.position)
 	pan_offset = (Grid.center() - center) * zoom_level
 
 
@@ -520,6 +554,8 @@ func _known_area() -> Vector2i:
 	if overview_only:
 		for id: String in Sites.IDS:
 			extent = extent.max(Sites.bounds(id).end + Vector2i(8, 8))
+		if not capital_buildings.is_empty():
+			extent -= Capital.OUTER.position
 	return extent
 
 
@@ -572,7 +608,8 @@ func _update_preview() -> void:
 	if not Grid.contains(hovered):
 		preview_result = {"ok": false, "code": "NO_ANCHOR", "reason": "请将鼠标移到地图内", "cells": []}
 	else:
-		preview_result = Placement.check_building(hovered, active_definition, occupied_cells)
+		var taken: Dictionary = occupied_cells if capital_buildings.is_empty() else occupied_cells.merged(Capital.occupation())
+		preview_result = Placement.check_building(hovered, active_definition, taken)
 	if preview_result.get("ok", false) and economy_ready:
 		var affordability: Dictionary = Construction.check_cost(active_definition.get("cost"), available_resources)
 		if not affordability["ok"]:
@@ -626,6 +663,45 @@ func _draw_region_site_labels() -> void:
 		draw_string(font, origin, label, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("#fff0cc"))
 
 
+# 首都同步：场景重建只在布局切换时触发；人口变化只改变行人密度。
+func sync_capital(enabled: bool, population: int) -> void:
+	town_population = population
+	if enabled == not capital_buildings.is_empty():
+		return
+	capital_buildings = Capital.buildings() if enabled else {}
+	if fitting_overview and showing_entire_map:
+		_fit_camera()
+		view_changed.emit()
+	_refresh_walking_routes()
+	static_dirty = true
+	_redraw_scene()
+
+
+# 景点导航：按指定院区的等距边界取景。
+func visit_capital_area(area: Rect2i) -> void:
+	fitting_overview = false
+	fitting_region_cell = Grid.INVALID
+	held_directions.clear()
+	var extent: Vector2 = Grid.HALF * (area.size.x + area.size.y) + Vector2(120,310)
+	var allowed: Vector2 = (size - Vector2(22,26)) / extent
+	zoom_level = clampf(minf(allowed.x,allowed.y),0.007,0.6)
+	var center: Vector2 = Grid.cell_to_world(area.position) + Grid.cell_to_world(area.size - Vector2i.ONE) * 0.5 - Vector2(0,90)
+	pan_offset = (Grid.center() - center) * zoom_level
+	view_changed.emit()
+	_redraw_scene()
+
+
+# 居民路线：沿用普通路段连接，宫苑主街另有观景与巡行路线。
+func _refresh_walking_routes() -> void:
+	if overview_only:
+		return
+	resident_routes = Walkers.routes(ready_infrastructure)
+	if not capital_buildings.is_empty():
+		for path: PackedVector2Array in Capital.walks():
+			for i: int in range(5):
+				resident_routes.push_front(path)
+
+
 # 实例同步模块：从世界传入只读副本，重新推导格表以避免视图与存档各存一份占用。
 func sync_buildings(records: Array) -> void:
 	var before: Array = placed_buildings
@@ -652,6 +728,7 @@ func sync_buildings(records: Array) -> void:
 			ready_infrastructure[anchor] = record["def_id"]
 		for cell: Vector2i in Placement.footprint_cells(anchor, Catalog.footprint(record)):
 			occupied_cells[cell] = record["id"]
+	_refresh_walking_routes()
 	static_dirty = true
 	_update_preview()
 	_redraw_scene()
@@ -720,11 +797,11 @@ func _draw_foundation(record: Dictionary) -> void:
 func _draw_road(cell: Vector2i) -> void:
 	var center: Vector2 = Grid.cell_to_world(cell)
 	var tint := Color("#af9368")
-	Art._poly(self, center, [Vector2(0, -8), Vector2(16, 0), Vector2(0, 8), Vector2(-16, 0)], tint)
+	Art._poly(self, center, [Vector2(0, -15), Vector2(30, 0), Vector2(0, 15), Vector2(-30, 0)], tint)
 	for side: Vector2i in Terrain.CARDINALS:
 		if ready_infrastructure.get(cell + side) in ["b_road", "b_gate"]:
 			var direction: Vector2 = Grid.cell_to_world(side) * 0.5
-			var cross: Vector2 = Vector2(direction.x, -direction.y) * 0.53
+			var cross: Vector2 = Vector2(direction.x, -direction.y) * 1.06
 			Art._poly(self, center, [-cross, direction - cross, direction + cross, cross], tint)
 	Art._pixel(self, center, Vector2(-3, -1), Vector2(3, 2), Color("#897751"))
 
@@ -766,7 +843,7 @@ func _draw_map_objects(visible_objects: Rect2, decorate: bool) -> void:
 			if deposit_view.has_point(item["center"]) and not equipment_cells.has(Grid.world_to_cell(item["center"])):
 				objects.append(item)
 		_append_outer_deposits(objects, deposit_view)
-	for record: Dictionary in site_buildings.values():
+	for record: Dictionary in site_buildings.values() + capital_buildings.values():
 		if visible_objects.intersects(_building_bounds(record)):
 			objects.append({"center": _building_center(record), "site_building": record})
 	for area: Dictionary in work_areas.values():
@@ -788,7 +865,10 @@ func _draw_map_objects(visible_objects: Rect2, decorate: bool) -> void:
 			var record: Dictionary = item["site_building"]
 			drawing_building = record["id"]
 			building_faces[drawing_building] = {"anchor": Vector2i(record["cell"][0], record["cell"][1]), "faces": []}
-			Sites.draw_building(self, record, center, region_sites[record["region"]])
+			if record["region"] == "capital":
+				CapitalArt.landmark(self, record)
+			else:
+				Sites.draw_building(self, record, center, region_sites[record["region"]])
 			drawing_building = ""
 		elif item.has("equipment"):
 			WorksiteArt.draw_resource_equipment(self, item["equipment"], center, item["role"])
@@ -812,6 +892,8 @@ func _draw_map_objects(visible_objects: Rect2, decorate: bool) -> void:
 				pass
 			elif record["def_id"] in ["b_wall", "b_gate"]:
 				_draw_fortification(building_faces[drawing_building]["anchor"], center, record["def_id"] == "b_gate")
+			elif record["def_id"] == "b_manor" and record.get("large", false):
+				CapitalArt.manor(self, building_faces[drawing_building]["anchor"], Catalog.footprint(record), property.get(record["id"], -2) in court_houses)
 			elif compound:
 				CompoundArt.draw_compound(self, record["def_id"], center)
 			elif worksite:
@@ -837,6 +919,8 @@ func _append_outer_deposits(objects: Array[Dictionary], view: Rect2) -> void:
 		for y: int in range(ne.y - posmod(ne.y, step), sw.y + step, step):
 			var cell := Vector2i(x + posmod(y * 2459 ^ x * 7927, step), y + posmod(x * 601 ^ y * 1789, step))
 			if not Grid.contains(cell) or Grid.in_authored_map(cell) or equipment_cells.has(cell) or occupied_cells.has(cell):
+				continue
+			if not capital_buildings.is_empty() and Capital.occupation().has(cell):
 				continue
 			var center: Vector2 = Grid.cell_to_world(cell)
 			if not view.has_point(center):
@@ -865,6 +949,7 @@ func _draw_motion() -> void:
 	if zoom_level < 0.12:
 		return
 	var view: Rect2 = _world_viewport().grow(65.0)
+	Walkers.draw(self, resident_routes, scenery_time, view, town_population)
 	for item: Dictionary in animated_objects:
 		if not view.intersects(item["bounds"]):
 			continue
@@ -897,19 +982,29 @@ func _building_footprint(record: Dictionary) -> Vector2i:
 
 
 # 地籍同步：只影响地图命名，私人归属由世界存档权威维护。
-func sync_property(titles: Dictionary) -> void:
-	if property != titles:
+func sync_property(titles: Dictionary, officers: Array = []) -> void:
+	var style_changed: bool = court_houses != officers
+	if property != titles or style_changed:
 		property = titles.duplicate()
-		queue_redraw()
+		court_houses = officers.duplicate()
+		if style_changed:
+			static_dirty = true
+			_redraw_scene()
+		else:
+			queue_redraw()
 
 
 # 名称模块：稳定建筑标识映射到现场标牌与详情标题。
 func building_title(id: String) -> String:
+	if capital_buildings.has(id):
+		return capital_buildings[id]["title"]
 	if site_buildings.has(id):
 		return site_buildings[id]["title"]
 	for record: Dictionary in placed_buildings:
 		if record["id"] == id:
 			if property.has(id):
+				if record["def_id"] == "b_manor" and record.get("large", false):
+					return "官员府邸" if property[id] in court_houses else "富商府邸"
 				if record["def_id"] == "b_farm":
 					return "民田"
 				if record["def_id"] == "b_fishery":
@@ -927,10 +1022,11 @@ func _building_center(record: Dictionary) -> Vector2:
 
 # 标牌模块：在画面顶部叠加建筑名称、施工进度和选中边界。
 func _draw_building_feedback() -> void:
-	for record: Dictionary in placed_buildings + site_buildings.values():
+	for record: Dictionary in placed_buildings + site_buildings.values() + capital_buildings.values():
 		var selected: bool = record["id"] == inspected_building_id
 		var constructing: bool = record.get("state") == "constructing"
-		if not selected and (not constructing or zoom_level < 0.14):
+		var marker: bool = (record["def_id"] == "b_market" and zoom_level >= 0.18) or (record["id"].begins_with("capital/") and (record["id"].ends_with("_gate") or record["id"].ends_with("/ceremony")))
+		if not selected and not marker and (not constructing or zoom_level < 0.14):
 			continue
 		var footprint: Vector2i = _building_footprint(record)
 		if selected:

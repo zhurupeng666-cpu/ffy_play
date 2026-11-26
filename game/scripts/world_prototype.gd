@@ -33,6 +33,7 @@ const TownMap = preload("res://scripts/town_map.gd")
 const State = preload("res://scripts/world_state.gd")
 const Population = preload("res://scripts/population_service.gd")
 const HouseEconomy = preload("res://scripts/household_economy.gd")
+const Capital = preload("res://scripts/capital_layout.gd")
 const Estate = preload("res://scripts/estate_labor.gd")
 const Clock = preload("res://scripts/strategic_clock.gd")
 const Store = preload("res://scripts/world_save_repository.gd")
@@ -47,6 +48,7 @@ var civil_button: Button
 var marshal_button: Button
 var appointment_legion: OptionButton
 var selected_household: int = 0
+var city_navigation: MenuButton
 var clock: RefCounted = Clock.new(world)
 var store: RefCounted = Store.new()
 var store_path_override: String = ""
@@ -216,6 +218,7 @@ func _ready() -> void:
 	legacy_economy_fixture = legacy_economy_fixture or probes.any(func(probe: String) -> bool: return not probe.is_empty())
 	if not legacy_economy_fixture:
 		HouseEconomy.activate(world, randi_range(1, 999999))
+		world.capital_layout = true
 	_build_ui()
 	if not store.open_store(store_path_override):
 		status_label.text = "存档不可用：" + store.error_message
@@ -342,6 +345,7 @@ func _build_map(columns: HBoxContainer) -> void:
 	_button(map_actions, "林场", town_map.visit_work_area.bind(Vector2i(50, 46), "forest"))
 	_button(map_actions, "石矿", town_map.visit_work_area.bind(Vector2i(106, 39), "stone"))
 	_button(map_actions, "河港", town_map.visit_site.bind(Vector2i(22, 90)))
+	_build_city_navigation(map_actions)
 	map_info = Label.new()
 	map_info.custom_minimum_size.x = 39
 	map_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -363,6 +367,53 @@ func _build_map(columns: HBoxContainer) -> void:
 	town_map.placement_changed.connect(_on_placement_changed)
 	town_map.placement_clicked.connect(_on_placement_clicked)
 	town_map.placement_cancelled.connect(_on_placement_cancelled)
+
+
+# 导览模块：外城、皇城、普通集市、府邸与四座城门均可一键定位。
+func _build_city_navigation(row: HBoxContainer) -> void:
+	city_navigation = MenuButton.new()
+	city_navigation.text = "城内导览 ▾"
+	city_navigation.flat = false
+	city_navigation.focus_mode = Control.FOCUS_NONE
+	row.add_child(city_navigation)
+	var popup: PopupMenu = city_navigation.get_popup()
+	for title: String in ["外城 · 300×300", "皇城全景", "太和殿", "御花园", "居民集市", "府邸", "北城门", "南城门", "西城门", "东城门"]:
+		popup.add_item(title)
+	popup.id_pressed.connect(_visit_city)
+
+
+# 导览入口：每处设施保留整栋点选与用途说明。
+func _visit_city(index: int) -> void:
+	management_drawer.hide()
+	if index < 2:
+		town_map.visit_capital_area(Capital.OUTER if index == 0 else Capital.INNER)
+		return
+	if index in [4, 5]:
+		var candidates: Array = []
+		for building: Dictionary in world.buildings:
+			if building["def_id"] == ("b_market" if index == 4 else "b_manor"):
+				candidates.append(building)
+		if candidates.is_empty():
+			status_label.text = "暂未形成集市" if index == 4 else "居民尚未营建府邸"
+			return
+		var record: Dictionary = candidates[0]
+		if index == 5:
+			for manor: Dictionary in candidates:
+				if manor.get("large", false):
+					record = manor
+					break
+		var point := Vector2i(record["cell"][0], record["cell"][1])
+		var area := Rect2i(point, Construction.Catalog.footprint(record))
+		town_map.visit_capital_area(area.grow(4))
+		_inspect_building(record["id"], false)
+		return
+	var key: String = "ceremony" if index == 2 else "garden"
+	if index >= 6:
+		key = Capital.GATES[index - 6][0]
+	var landmark: Dictionary = Capital.buildings()["capital/" + key]
+	var cell := Vector2i(landmark["cell"][0], landmark["cell"][1])
+	town_map.visit_capital_area(Rect2i(cell, landmark["size"]).grow(4))
+	_inspect_building(landmark["id"], false)
 
 
 # 管理抽屉：按当前对象、城镇、军团与账本分组，默认给地图留足空间。
@@ -696,6 +747,7 @@ func _refresh() -> void:
 	_refresh_civic()
 	_refresh_builder_controls()
 	_refresh_population()
+	town_map.sync_capital(world.capital_layout, world.population)
 	_refresh_estate()
 	_refresh_inspection()
 	_set_numbers({
@@ -741,7 +793,7 @@ func _refresh() -> void:
 	town_map.sync_worksite_staff(world.buildings)
 	if displayed_building_tick != world.tick:
 		displayed_building_tick = world.tick
-		town_map.sync_property(world.household_economy.get("property", {}))
+		town_map.sync_property(world.household_economy.get("property", {}), [world.household_economy.get("civil",-1),world.household_economy.get("general",-1)])
 		town_map.sync_buildings(world.buildings)
 
 
@@ -1019,7 +1071,9 @@ func _on_placement_cancelled() -> void:
 
 # 视图同步模块：建造或读档后，从权威数据重建建筑占用与费用提示。
 func _sync_building_view() -> void:
-	town_map.sync_property(world.household_economy.get("property", {}))
+	town_map.sync_capital(world.capital_layout, world.population)
+	city_navigation.visible = world.capital_layout
+	town_map.sync_property(world.household_economy.get("property", {}), [world.household_economy.get("civil",-1),world.household_economy.get("general",-1)])
 	town_map.sync_buildings(world.buildings)
 	town_map.sync_resources(world.resources)
 
@@ -1643,7 +1697,7 @@ func _on_producer_selected(index: int) -> void:
 # 身份绑定模块：只记稳定ID，更新全建筑高亮并同步已有生产列表。
 func _inspect_building(id: String, reveal: bool) -> void:
 	inspected_building_id = id if not Inspector.find(world, id).is_empty() else ""
-	var focus: String = id if town_map.site_buildings.has(id) else inspected_building_id
+	var focus: String = id if town_map.site_buildings.has(id) or town_map.capital_buildings.has(id) else inspected_building_id
 	town_map.highlight_building(focus)
 	_refresh_map_info()
 	if producer_picker != null:
@@ -1663,6 +1717,11 @@ func _refresh_inspection() -> void:
 		return
 	var detail: Dictionary = Inspector.describe(world, inspected_building_id)
 	var site: Dictionary = town_map.site_buildings.get(town_map.inspected_building_id, {})
+	var landmark: Dictionary = town_map.capital_buildings.get(town_map.inspected_building_id, {})
+	if not landmark.is_empty():
+		detail["text"] = "%s ｜ 首府\n%s" % [landmark["title"], landmark["description"]]
+		var scale: Vector2i = landmark["size"]
+		detail["numbers"]["size"] = "%d × %d" % [scale.x, scale.y]
 	var owner: int = world.household_economy.get("property", {}).get(inspected_building_id, -1)
 	if owner >= 0:
 		var property: Dictionary = Inspector.find(world, inspected_building_id)

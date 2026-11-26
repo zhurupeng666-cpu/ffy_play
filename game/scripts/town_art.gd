@@ -115,7 +115,10 @@ static func building(canvas: Control, id: String, center: Vector2, spread: float
 		"b_barracks":
 			_barracks(canvas, center, spread)
 		"b_market":
-			_market(canvas, center, 0.65)
+			_market(canvas, center, 0.86)
+			_stroke(canvas, center, Vector2(52,17), Vector2(52,-55), Color("#594735"), 5.0)
+			_poly(canvas, center, [Vector2(54,-56), Vector2(78,-42), Vector2(75,-22), Vector2(54,-34)], Color("#c2693b"))
+			_stroke(canvas, center, Vector2(58,-46), Vector2(70,-39), Color("#f9dd91"), 3.0)
 		"b_tavern":
 			_house(canvas, center, 35, 28, Color("#7e4551"), Color("#bb9b65"), "timber", 1.48)
 			_shop_sign(canvas, center, Color("#c68948"))

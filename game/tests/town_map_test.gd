@@ -5,6 +5,8 @@ const Grid = preload("res://scripts/isometric_grid.gd")
 const Map = preload("res://scripts/town_map.gd")
 const Terrain = preload("res://scripts/town_terrain.gd")
 const CompoundArt = preload("res://scripts/town_compound_art.gd")
+const Capital = preload("res://scripts/capital_layout.gd")
+const Walker = preload("res://scripts/capital_walkers.gd")
 var failed: bool = false
 
 
@@ -123,6 +125,7 @@ func _run() -> void:
 				area += int(Terrain.deposit_at(Vector2i(x, y)) == district["kind"])
 		_check(area >= 800 and bounds.position.length() > 50.0, "林矿资源区面积不足或离主城太近")
 	_check(Terrain.is_water(Vector2i(100, 110)) and Terrain.is_water(Vector2i(299, 130)) and not Terrain.is_water(Vector2i(6, 1)), "内陆水域未替换旧窄水带")
+	_check_capital(map)
 	map.free()
 	if not failed:
 		print("MAP_PASS: projection, bounds, pan, zoom anchor, zoom limits, selection, keyboard pan, cache, large terrain")
@@ -141,3 +144,35 @@ func _chk_compound_paths() -> void:
 		var cell: Vector2i = Grid.world_to_cell(CompoundArt.drill_foot(index, 20, 0.5))
 		_check(absi(cell.x) < 8 and cell.y >= 0 and cell.y < 6 and not seen.has(cell), "操练站位重叠或离开场地")
 		seen[cell] = true
+
+
+# 首府验收：检查河道退界、四门、大宅用地、连路行人和版本往返。
+func _check_capital(map: Control) -> void:
+	var State = preload("res://scripts/world_state.gd")
+	var world: RefCounted = State.new()
+	State.HouseEconomy.activate(world, 71342)
+	world.capital_layout = true
+	var restored: RefCounted = State.from_snapshot(world.snapshot())
+	_check(restored != null and restored.capital_layout, "扩建布局未从战略存档恢复")
+	_check(Capital.OUTER.size == Vector2i(300,300) and Capital.OUTER.encloses(Capital.INNER), "外城面积错误或皇城越界")
+	for x: int in range(Capital.OUTER.position.x, Capital.OUTER.end.x):
+		_check(not Terrain.is_water(Vector2i(x,Capital.OUTER.end.y - 1)), "外城南墙进入河道")
+	_check(State.Catalog.footprint({"def_id":"b_manor","large":true}) == Vector2i(15,15), "府邸不是15×15")
+	map.sync_capital(true,58)
+	map.show_entire_map()
+	var visible := Rect2(Vector2.ZERO,map.size)
+	for record: Array in Capital.GATES.slice(0,4):
+		var area: Rect2i = record[2]
+		var projected: Vector2 = map.world_to_screen(Grid.cell_to_world(area.get_center()))
+		_check(area.get_area() >= 200 and visible.has_point(projected), "外城大门没有完整随地图定位")
+	var ways: Dictionary = {Vector2i(2,1):"b_road", Vector2i(3,1):"b_gate", Vector2i(4,1):"b_road", Vector2i(5,1):"b_wall"}
+	var routes: Array[PackedVector2Array] = Walker.routes(ways)
+	_check(not routes.is_empty(), "连通道路没有生成行人路径")
+	for path: PackedVector2Array in routes:
+		for point: Vector2 in path:
+			var cell: Vector2i = Grid.world_to_cell(point)
+			_check(ways.get(cell) in ["b_road","b_gate"], "行人路线经过城墙")
+	var a: Texture2D = Walker.Pedestrians._texture(0,0,false,false)
+	var b: Texture2D = Walker.Pedestrians._texture(0,3,false,false)
+	var child: Texture2D = Walker.Pedestrians._texture(3,0,false,false)
+	_check(a.get_image().get_data() != b.get_image().get_data() and a.get_image().get_data() != child.get_image().get_data(), "行人步态或身份剪影没有区别")

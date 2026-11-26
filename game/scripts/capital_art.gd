@@ -1,0 +1,208 @@
+## 文件用途：用等距像素绘制皇城、重檐楼门、外城墙与可观察的府邸院落。
+extends RefCounted
+
+const Layout = preload("res://scripts/capital_layout.gd")
+const Grid = Layout.Grid
+const Art = preload("res://scripts/town_art.gd")
+const GOLD := Color("#cc9c41")
+const JADE := Color("#568671")
+const RUBY := Color("#995649")
+
+
+# 地面模块：皇家禁地使用石砖广场，外城主干道保留宽路肩和中线。
+static func ground(canvas: Control, view: Rect2) -> void:
+	if _visible(canvas, Layout.INNER, view):
+		_tile(canvas, Layout.INNER, Color("#b2a082"))
+		for x: int in range(Layout.INNER.position.x + 6, Layout.INNER.end.x, 9):
+			Art._stroke(canvas, Grid.cell_to_world(Vector2i(x, Layout.INNER.position.y)), Vector2.ZERO,
+				Grid.cell_to_world(Vector2i(0, Layout.INNER.size.y - 1)), Color("#a89677"), 3.0)
+	for road: Rect2i in Layout.BOULEVARDS:
+		if not _visible(canvas, road, view):
+			continue
+		_tile(canvas, road, Color("#897963"))
+		var stone: Rect2i = road.grow(-1)
+		_tile(canvas, stone, Color("#c0ad8b"))
+		if road.size.x > road.size.y:
+			_tile(canvas, Rect2i(road.position + Vector2i(0, road.size.y / 2), Vector2i(road.size.x, 1)), Color("#d3bf97"))
+		else:
+			_tile(canvas, Rect2i(road.position + Vector2i(road.size.x / 2, 0), Vector2i(1, road.size.y)), Color("#d3bf97"))
+
+
+# 城墙模块：长墙按区块裁剪，拐角、墙台和女墙保有可辨识的轮廓。
+static func walls(canvas: Control, view: Rect2, palace: bool) -> void:
+	var bounds: Rect2i = Layout.INNER if palace else Layout.OUTER
+	var main: Color = Color("#923f35") if palace else Color("#737676")
+	var rim: Color = Color("#c58d55") if palace else Color("#adb3ad")
+	for wall: Rect2i in Layout.walls(bounds, palace):
+		var long_x: bool = wall.size.x > wall.size.y
+		var count: int = wall.size.x if long_x else wall.size.y
+		for index: int in range(0, count, 18):
+			var offset := Vector2i(index, 0) if long_x else Vector2i(0, index)
+			var length: int = mini(18, count - index)
+			var span := Vector2i(length, wall.size.y) if long_x else Vector2i(wall.size.x, length)
+			var segment := Rect2i(wall.position + offset, span)
+			if not _visible(canvas, segment, view):
+				continue
+			var high: float = 80.0 if palace else 102.0
+			_box(canvas, segment, 0.0, high, main, rim)
+			for merlon: int in range(0, length, 3):
+				var edge := Vector2i(merlon, span.y - 1) if long_x else Vector2i(span.x - 1, merlon)
+				_box(canvas, Rect2i(segment.position + edge, Vector2i.ONE), high, 18.0, main.lightened(0.12), rim)
+
+
+# 地标模块：前朝、后宫、祀典、园林与内务使用不同形制。
+static func landmark(canvas: Control, record: Dictionary) -> void:
+	var area := Rect2i(Vector2i(record["cell"][0],record["cell"][1]), record["size"])
+	match record["def_id"]:
+		"gate_ns", "gate_ew":
+			_gate(canvas, area, record["def_id"] == "gate_ns", not record["id"].begins_with("capital/palace_"))
+		"garden":
+			_garden(canvas, area)
+		"residence":
+			_tile(canvas, area, Color("#9f755d"))
+			for row: int in range(3):
+				for column: int in range(2):
+					_manor_court(canvas, Rect2i(area.position + Vector2i(column * 14, row * 9), Vector2i(13,8)), RUBY)
+		"altar":
+			_tile(canvas, area, Color("#8f9674"))
+			var stage := Rect2i(area.position + Vector2i(7,3), Vector2i(13,8))
+			_box(canvas, stage, 0.0, 32.0, Color("#9a8880"), Color("#d4ba96"))
+			_box(canvas, stage.grow(-2), 32.0, 24.0, Color("#a48d72"), Color("#dbc99c"))
+			_hall(canvas, Rect2i(area.position + Vector2i(1,2), Vector2i(4,8)), RUBY, 42.0, false)
+			_hall(canvas, Rect2i(area.end - Vector2i(6,11), Vector2i(5,8)), RUBY, 42.0, false)
+		_:
+			var royal: bool = record["def_id"] in ["ruby", "gold"]
+			var roof: Color = GOLD if record["def_id"] == "gold" else (RUBY if record["def_id"] == "ruby" else JADE)
+			_tile(canvas, area, Color("#d2c3a5") if royal else Color("#a39378"))
+			var main: Rect2i = area.grow(-1)
+			_hall(canvas, main, roof, float(clampi(area.size.y * 9, 48, 155)), royal)
+			if area.size.x >= 18:
+				for offset: Vector2i in [Vector2i(2, area.size.y - 2), Vector2i(area.size.x - 3, area.size.y - 2)]:
+					_incense(canvas, area.position + offset)
+
+
+# 北南门与东西门保留中间门洞，门楼以横跨洞口的台梁连接两座墩台。
+static func _gate(canvas: Control, area: Rect2i, ns: bool, outer: bool) -> void:
+	var main: Color = Color("#6e7474") if outer else Color("#a74f42")
+	var rim: Color = Color("#b7b4a3")
+	var plaza: Rect2i = area.grow(1)
+	_tile(canvas, plaza, Color("#b6a389"))
+	var one: Rect2i = Rect2i(area.position, Vector2i(5, area.size.y)) if ns else Rect2i(area.position, Vector2i(area.size.x, 5))
+	var two: Rect2i = Rect2i(Vector2i(area.end.x - 5, area.position.y), one.size) if ns else Rect2i(Vector2i(area.position.x, area.end.y - 5), one.size)
+	_box(canvas, one, 0.0, 105.0, main, rim)
+	_box(canvas, two, 0.0, 105.0, main, rim)
+	_box(canvas, area.grow(-1), 105.0, 34.0, main, rim)
+	_roof(canvas, area.grow(-1), 214.0, GOLD if not outer else JADE, 43.0)
+	_roof(canvas, area.grow(-3), 245.0, GOLD if not outer else JADE, 27.0)
+	var mast: Vector2 = Grid.cell_to_world(area.position + Vector2i(2,2))
+	Art._flag(canvas, mast - Vector2(0, 103), Color("#ac533a"))
+
+
+# 府邸模块：十五格院区包含正厅、东西厢房、穿院路、水池与植栽。
+static func manor(canvas: Control, cell: Vector2i, extent: Vector2i, noble: bool) -> void:
+	if extent.x < 15:
+		Art.building(canvas, "b_manor", Grid.cell_to_world(cell) + Grid.cell_to_world(extent - Vector2i.ONE) * 0.5)
+		return
+	var area := Rect2i(cell, extent)
+	_tile(canvas, area, Color("#a99573"))
+	_manor_court(canvas, area, JADE if noble else RUBY)
+	_garden(canvas, Rect2i(cell + Vector2i(4,8), Vector2i(7,5)))
+	_hall(canvas, Rect2i(cell + Vector2i(5,13), Vector2i(5,2)), JADE, 26.0, false)
+
+
+# 院落模块：墙围三面、前廊开口，正厅与厢房围绕院心。
+static func _manor_court(canvas: Control, area: Rect2i, roof: Color) -> void:
+	_tile(canvas, area.grow(-1), Color("#c0ad8c"))
+	_box(canvas, Rect2i(area.position, Vector2i(area.size.x,1)), 0.0, 31.0, Color("#936751"), Color("#6d6b63"))
+	_box(canvas, Rect2i(area.position, Vector2i(1,area.size.y)), 0.0, 28.0, Color("#95664e"), Color("#6b685a"))
+	_box(canvas, Rect2i(Vector2i(area.end.x - 1,area.position.y), Vector2i(1,area.size.y)), 0.0, 28.0, Color("#936453"), Color("#6b685a"))
+	_hall(canvas, Rect2i(area.position + Vector2i(3,2), Vector2i(area.size.x - 6,3)), roof, 53.0, true)
+	_hall(canvas, Rect2i(area.position + Vector2i(1,5), Vector2i(2,3)), roof.darkened(0.14), 31.0, false)
+	_hall(canvas, Rect2i(area.position + Vector2i(area.size.x - 3,5), Vector2i(2,3)), roof.darkened(0.14), 31.0, false)
+	_tile(canvas, Rect2i(area.position + Vector2i((area.size.x - 3) / 2, 5), Vector2i(3,area.size.y - 5)), Color("#ded0aa"))
+
+
+# 御苑模块：蓝绿水池、栏杆、石桥、亭榭和种植边界。
+static func _garden(canvas: Control, area: Rect2i) -> void:
+	_tile(canvas, area, Color("#68865d"))
+	var water := Rect2i(area.position + Vector2i(2,1), Vector2i(maxi(2, area.size.x - 4),maxi(2,area.size.y - 2)))
+	_tile(canvas, water, Color("#6ca7a1"))
+	_tile(canvas, water.grow(-1), Color("#397579"))
+	var bridge := Rect2i(area.position + Vector2i((area.size.x - 1) / 2,0), Vector2i(1,area.size.y))
+	_box(canvas, bridge, 0.0, 10.0, Color("#887554"), Color("#d0bc94"))
+	if area.size.x > 10:
+		_hall(canvas, Rect2i(area.position + Vector2i(2,2), Vector2i(4,4)), JADE, 43.0, false)
+		_hall(canvas, Rect2i(area.end - Vector2i(7,7), Vector2i(5,4)), GOLD, 43.0, false)
+	for column: int in range(1, area.size.x, 3):
+		var point: Vector2 = Grid.cell_to_world(area.position + Vector2i(column, area.size.y - 1))
+		Art.deposit(canvas, point, "forest")
+
+
+# 殿堂模块：石台、朱柱、窗槅与重檐构成可点选的立体轮廓。
+static func _hall(canvas: Control, area: Rect2i, roof: Color, height: float, double_roof: bool) -> void:
+	var stone: Color = Color("#b8aa91")
+	_box(canvas, area, 0.0, 20.0, stone.darkened(0.2), stone)
+	_box(canvas, area, 20.0, height, Color("#8d4940"), Color("#715346"))
+	var at: Vector2 = Grid.cell_to_world(Vector2i(area.position.x, area.end.y - 1))
+	var edge: Vector2 = Grid.cell_to_world(Vector2i(area.size.x - 1,0))
+	for col: int in range(0, area.size.x, 2):
+		var spot: Vector2 = edge * (float(col) / maxi(1, area.size.x - 1))
+		Art._stroke(canvas, at, spot - Vector2(0,20), spot - Vector2(0,height + 18), Color("#bf7553"), 8.0)
+	_roof(canvas, area, height + 28.0, roof, maxf(14.0, height * 0.37))
+	if double_roof and area.size.x >= 4 and area.size.y >= 3:
+		_roof(canvas, area.grow(-1), height * 1.26 + 34.0, roof.lightened(0.08), maxf(12.0,height * 0.23))
+
+
+# 屋面模块：两端挑檐和四坡面相接，斜线表示瓦垄。
+static func _roof(canvas: Control, area: Rect2i, elevation: float, roof: Color, ridge_height: float) -> void:
+	if not area.has_area():
+		return
+	var shape: PackedVector2Array = canvas._footprint_outline(area.position, area.size, true)
+	var shift := Vector2(0, -elevation)
+	var n: Vector2 = shape[0] + shift
+	var e: Vector2 = shape[1] + shift + Vector2(8,-1)
+	var s: Vector2 = shape[2] + shift
+	var w: Vector2 = shape[3] + shift - Vector2(8,1)
+	var r0: Vector2 = n.lerp(w, 0.45) + (e - n) * 0.18 - Vector2(0,ridge_height)
+	var r1: Vector2 = n.lerp(w, 0.45) + (e - n) * 0.82 - Vector2(0,ridge_height)
+	Art._poly(canvas, Vector2.ZERO, [n,e,r1,r0], roof.darkened(0.24))
+	Art._poly(canvas, Vector2.ZERO, [e,s,r1], roof.darkened(0.32))
+	Art._poly(canvas, Vector2.ZERO, [s,w,r0,r1], roof)
+	Art._poly(canvas, Vector2.ZERO, [w,n,r0], roof.lightened(0.12))
+	Art._stroke(canvas, Vector2.ZERO, w, s, roof.darkened(0.34), 8.0)
+	Art._stroke(canvas, Vector2.ZERO, r0, r1, roof.lightened(0.28), 8.0)
+	for index: int in range(1,10):
+		var ratio: float = index / 10.0
+		Art._stroke(canvas, Vector2.ZERO, r0.lerp(r1,ratio), w.lerp(s,ratio), roof.darkened(0.16), 2.0)
+
+
+# 地面与高台模块：复用地图同一套格网投影。
+static func _tile(canvas: Control, area: Rect2i, color: Color) -> void:
+	if area.has_area():
+		canvas.art_canvas.draw_colored_polygon(canvas._footprint_outline(area.position, area.size, true), color)
+
+
+# 台基模块：仅画朝向镜头的两面和顶面。
+static func _box(canvas: Control, area: Rect2i, elevation: float, height: float, wall: Color, surface: Color) -> void:
+	if not area.has_area():
+		return
+	var shape: PackedVector2Array = canvas._footprint_outline(area.position, area.size, true)
+	var shift := Vector2(0, -elevation)
+	var up := Vector2(0, -height)
+	var front: Vector2 = shape[2] + shift
+	var east: Vector2 = shape[1] + shift
+	var west: Vector2 = shape[3] + shift
+	Art._poly(canvas, Vector2.ZERO, [east,front,front+up,east+up], wall.darkened(0.21))
+	Art._poly(canvas, Vector2.ZERO, [front,west,west+up,front+up], wall)
+	Art._poly(canvas, Vector2.ZERO, [shape[0]+shift+up,east+up,front+up,west+up], surface)
+
+
+# 香炉模块：台边点缀可近看。
+static func _incense(canvas: Control, at: Vector2i) -> void:
+	_box(canvas, Rect2i(at, Vector2i.ONE), 0.0, 20.0, Color("#6a6854"), Color("#7e8a65"))
+
+
+# 可见性模块：使用等距包围盒裁剪长城墙。
+static func _visible(canvas: Control, area: Rect2i, view: Rect2) -> bool:
+	var poly: PackedVector2Array = canvas._footprint_outline(area.position, area.size, true)
+	return view.intersects(Rect2(Vector2(poly[3].x, poly[0].y - 170), Vector2(poly[1].x - poly[3].x, poly[2].y - poly[0].y + 170)))

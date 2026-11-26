@@ -105,5 +105,8 @@ static func found(world: RefCounted, point: Vector2i, definition: Resource) -> S
 	world.buildings.append({"id": id, "def_id": definition.id, "cell": cell, "level": 1, "state": "ready",
 		"work_done": 0, "work_required": 0, "workers": 0, "food_credit": 0, "material_credit": 0, "paid_cost": Costs.normalize({})})
 	world.applied_commands["resident-" + id] = {"def_id": definition.id, "cell": cell.duplicate(), "building_id": id}
+	if definition.get_meta("large", false):
+		world.buildings.back()["large"] = true
+		world.applied_commands["resident-" + id]["large"] = true
 	world.next_building_id += 1
 	return id
