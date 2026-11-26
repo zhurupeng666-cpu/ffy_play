@@ -47,7 +47,12 @@ static func _prepare() -> void:
 # 河岸查询：端点落在水中，两岸之间的格无法建造。
 static func river_span(column: int) -> Vector2i:
 	_prepare()
-	return spans[column]
+	if column >= 0 and column < Grid.SIZE.x:
+		return spans[column]
+	var west: bool = column < 0
+	var distance: int = -column if west else column - (Grid.SIZE.x - 1)
+	var bend: int = (48 - absi(posmod(distance, 96) - 48)) >> 1
+	return (spans[0] if west else spans[-1]) + Vector2i(bend, bend)
 
 
 # 地形查询：旧档的原地图只在校验历史坐标时启用。
@@ -109,7 +114,23 @@ static func deposit_at(cell: Vector2i, legacy: bool = false) -> String:
 	if legacy:
 		return LEGACY_DEPOSITS.get(cell, "")
 	_prepare()
-	return deposits.get(cell, "")
+	if Grid.in_authored_map(cell):
+		return deposits.get(cell, "")
+	var span: Vector2i = river_span(cell.x)
+	if cell.y >= span.x - 2 and cell.y <= span.y + 2:
+		return ""
+	# 外围图块的种子和轮廓与地表着色器一致。
+	var local := Vector2(posmod(cell.x, 80), posmod(cell.y, 80))
+	var block := Vector2i(floori(cell.x / 80.0), floori(cell.y / 80.0))
+	var seed: int = posmod(posmod(block.x, 23) * 13 + posmod(block.y, 31) * 19, 29)
+	var edge: float = 0.87 + posmod(cell.x * 17 + cell.y * 23, 7) * 0.05
+	var forest: Vector2 = (local - Vector2(22 + seed % 9, 22 + seed % 7)) / Vector2(17, 19)
+	var stone: Vector2 = (local - Vector2(59 - seed % 5, 60 - seed % 9)) / Vector2(17, 14)
+	if seed % 7 != 0 and forest.length_squared() <= edge:
+		return "forest"
+	if seed % 5 != 0 and stone.length_squared() <= edge:
+		return "stone"
+	return ""
 
 
 # 码头查询：在占地外缘寻找最靠近中央的临水正交面。

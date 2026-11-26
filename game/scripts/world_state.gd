@@ -114,7 +114,7 @@ func settle_days() -> void:
 
 # 快照模块：只导出基础数据，不保存节点、数据库连接或脚本引用。
 func snapshot() -> Dictionary:
-	return {"version": 25, "households": households.duplicate(true), "population_report": population_report.duplicate(), "estate": {"workers": estate_workers, "builders": estate_builders, "posts": estate_posts.duplicate(), "food_remainder": estate_food_remainder, "food_report": estate_food_report.duplicate()}, "fort_siege": fort_siege.duplicate(), "woods_battle": woods_battle.duplicate(), "legion_trips": legion_trips.duplicate(true), "woods_scout": woods_scout.duplicate(), "tick": tick, "subsecond": subsecond, "last_settled_day": last_settled_day, "population": population, "dependents": dependents, "builders": builders, "labor_credit": labor_credit, "resources": resources.duplicate(), "speed": speed, "paused": paused, "tax_policy": tax_policy, "satisfaction": satisfaction, "last_civic_ledger": last_civic_ledger.duplicate(true), "troops": troops.duplicate(true), "legions": legions.duplicate(true), "legion_create_commands": legion_create_commands.duplicate(), "next_legion_id": next_legion_id, "retired_troops": retired_troops.duplicate(true), "disband_commands": disband_commands.duplicate(true), "retired_army_cost": retired_army_cost.duplicate(), "recruit_commands": recruit_commands.duplicate(true), "next_troop_id": next_troop_id, "last_army_ledger": last_army_ledger.duplicate(true), "army_morale": army_morale, "last_morale_before": last_morale_before, "last_bill": last_bill, "last_food_ledger": last_food_ledger.duplicate(true), "last_material_ledger": last_material_ledger.duplicate(true), "buildings": buildings.duplicate(true), "next_building_id": next_building_id, "applied_commands": applied_commands.duplicate(true), "retired_buildings": retired_buildings.duplicate(true), "removal_commands": removal_commands.duplicate(true)}
+	return {"version": 26, "households": households.duplicate(true), "population_report": population_report.duplicate(), "estate": {"workers": estate_workers, "builders": estate_builders, "posts": estate_posts.duplicate(), "food_remainder": estate_food_remainder, "food_report": estate_food_report.duplicate()}, "fort_siege": fort_siege.duplicate(), "woods_battle": woods_battle.duplicate(), "legion_trips": legion_trips.duplicate(true), "woods_scout": woods_scout.duplicate(), "tick": tick, "subsecond": subsecond, "last_settled_day": last_settled_day, "population": population, "dependents": dependents, "builders": builders, "labor_credit": labor_credit, "resources": resources.duplicate(), "speed": speed, "paused": paused, "tax_policy": tax_policy, "satisfaction": satisfaction, "last_civic_ledger": last_civic_ledger.duplicate(true), "troops": troops.duplicate(true), "legions": legions.duplicate(true), "legion_create_commands": legion_create_commands.duplicate(), "next_legion_id": next_legion_id, "retired_troops": retired_troops.duplicate(true), "disband_commands": disband_commands.duplicate(true), "retired_army_cost": retired_army_cost.duplicate(), "recruit_commands": recruit_commands.duplicate(true), "next_troop_id": next_troop_id, "last_army_ledger": last_army_ledger.duplicate(true), "army_morale": army_morale, "last_morale_before": last_morale_before, "last_bill": last_bill, "last_food_ledger": last_food_ledger.duplicate(true), "last_material_ledger": last_material_ledger.duplicate(true), "buildings": buildings.duplicate(true), "next_building_id": next_building_id, "applied_commands": applied_commands.duplicate(true), "retired_buildings": retired_buildings.duplicate(true), "removal_commands": removal_commands.duplicate(true)}
 
 
 # 载入模块：在临时对象中完整校验，失败返回空值，不改变当前世界。
@@ -124,7 +124,7 @@ static func from_snapshot(data: Variant) -> RefCounted:
 	for key: String in ["version", "tick", "last_settled_day", "population", "speed"]:
 		if not _valid_integer(data.get(key), 0, 120000000):
 			return null
-	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25] or int(data["speed"]) not in [1, 2, 4]:
+	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26] or int(data["speed"]) not in [1, 2, 4]:
 		return null
 	var version: int = int(data["version"])
 	if not _valid_integer(data["population"], Population.START_POPULATION, Population.MAX_POPULATION) or (version < 25 and data["population"] != Population.START_POPULATION):
@@ -291,7 +291,7 @@ func _restore_buildings(data: Dictionary) -> bool:
 		var definition: Resource = Catalog.find(raw["def_id"])
 		if definition == null or not raw.get("cell") is Array or raw["cell"].size() != 2:
 			return false
-		if not _valid_integer(raw["cell"][0], 0, Grid.SIZE.x - 1) or not _valid_integer(raw["cell"][1], 0, Grid.SIZE.y - 1) or not _valid_integer(raw.get("level"), 1, 1) or raw.get("state") not in ["ready", "constructing"]:
+		if not _valid_cell(raw["cell"], int(data["version"])) or not _valid_integer(raw.get("level"), 1, 1) or raw.get("state") not in ["ready", "constructing"]:
 			return false
 		var anchor: Vector2i = Vector2i(int(raw["cell"][0]), int(raw["cell"][1]))
 		if raw.has("large") and (not raw["large"] is bool or (raw["large"] and not Catalog.LARGE_SIZES.has(raw["def_id"]))):
@@ -382,7 +382,7 @@ func _restore_buildings(data: Dictionary) -> bool:
 		var record: Dictionary = by_id[raw["building_id"]]
 		if record["def_id"] == "b_hall" or raw.get("def_id") != record["def_id"] or receipted.has(record["id"]):
 			return false
-		if not raw.get("cell") is Array or raw["cell"].size() != 2 or not _valid_integer(raw["cell"][0], 0, Grid.SIZE.x - 1) or not _valid_integer(raw["cell"][1], 0, Grid.SIZE.y - 1):
+		if not raw.get("cell") is Array or raw["cell"].size() != 2 or not _valid_cell(raw["cell"], int(data["version"])):
 			return false
 		if [int(raw["cell"][0]), int(raw["cell"][1])] != record["cell"]:
 			return false
@@ -649,3 +649,11 @@ func set_tax_policy(policy: String) -> bool:
 		return false
 	tax_policy = policy
 	return true
+
+
+# 坐标校验：旧档保持原范围，新档允许在已知区域之外建设。
+static func _valid_cell(cell: Array, version: int) -> bool:
+	var lower: int = -Grid.WORLD_LIMIT if version >= 26 else 0
+	var east: int = Grid.WORLD_LIMIT if version >= 26 else Grid.SIZE.x - 1
+	var south: int = Grid.WORLD_LIMIT if version >= 26 else Grid.SIZE.y - 1
+	return _valid_integer(cell[0], lower, east) and _valid_integer(cell[1], lower, south)

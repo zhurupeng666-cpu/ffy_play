@@ -28,7 +28,7 @@ func _run() -> void:
 			var point: Vector2 = Grid.cell_to_world(cell)
 			_check(Grid.world_to_cell(point) == cell, "格中心投影不一致")
 			_check(Grid.world_to_cell(point + Vector2(0, 15)) == cell, "菱形内点反选错误")
-	_check(not Grid.contains(Vector2i(-1, 0)) and not Grid.contains(Vector2i(Grid.SIZE.x, 8)), "接受地图外坐标")
+	_check(Grid.contains(Vector2i(-1, -1)) and Grid.contains(Vector2i(Grid.SIZE.x, 8)) and not Grid.contains(Grid.INVALID), "外围格与无效坐标未正确区分")
 	var map: Control = Map.new()
 	map.size = Vector2(600, 400)
 	root.add_child(map)
@@ -100,6 +100,16 @@ func _run() -> void:
 	map.show_entire_map()
 	map.visit_site(Vector2i(22, 90))
 	_check(map.terrain_texture == texture and map.cell_at(map.size * 0.5) == Vector2i(22, 90), "切换视角未复用地形或远景不能定位")
+	# 外围验收：镜头跨过旧边界，地表缓存保持不变，河道两端连续。
+	map.visit_site(Vector2i(0, 0))
+	map._pan_camera(Vector2(0, -36))
+	var outer: Vector2i = map.cell_at(map.size * 0.5)
+	_check(outer.x < 0 and outer.y < 0 and map.terrain_texture == texture, "镜头仍被原边界拦截或重建地表")
+	map.visit_site(Vector2i(310, 310))
+	_check(map.cell_at(map.size * 0.5) == Vector2i(310, 310), "不能定位旧东南边界外的地块")
+	_check(Terrain.river_span(-1) == Terrain.river_span(0) and Terrain.river_span(300) == Terrain.river_span(299), "河流在原边界中断")
+	_check(Terrain.is_water(Vector2i(-1, 99)) and Terrain.is_water(Vector2i(300, 132)), "河道没有向外围延伸")
+	_check(Terrain.deposit_at(Vector2i(-56, -56)) == "forest" and Terrain.deposit_at(Vector2i(380, 380)) == "stone", "外围未生成可采集的林矿")
 	for district: Dictionary in Terrain.DISTRICTS:
 		var bounds: Rect2i = district["bounds"]
 		var area: int = 0

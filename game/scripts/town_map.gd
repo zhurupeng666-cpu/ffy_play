@@ -16,6 +16,10 @@ const Catalog = preload("res://scripts/building_catalog.gd")
 const Construction = preload("res://scripts/construction_service.gd")
 const Placement = preload("res://scripts/placement_validator.gd")
 const Grid = preload("res://scripts/isometric_grid.gd")
+const Sites = preload("res://scripts/region_sites.gd")
+const Scout = preload("res://scripts/region_scout.gd")
+const Field = preload("res://scripts/woods_battle.gd")
+const Siege = preload("res://scripts/fort_siege.gd")
 const GROUND_SHADER = preload("res://scripts/town_ground.gdshader")
 const PAN_KEYS: Dictionary = {KEY_LEFT: Vector2.LEFT, KEY_RIGHT: Vector2.RIGHT, KEY_UP: Vector2.UP, KEY_DOWN: Vector2.DOWN}
 const PAN_SPEED: float = 420.0
@@ -34,6 +38,8 @@ var inspected_building_id: String = ""
 var held_directions: Dictionary = {}
 var ground: ColorRect
 var ground_material: ShaderMaterial
+var region_sites: Dictionary = {}
+var overview_only: bool = false
 
 # 建筑视图模块：占用来自世界实例，视图只读并将确认请求交回控制器。
 var occupied_cells: Dictionary = {}
@@ -72,7 +78,7 @@ var preview_result: Dictionary = {}
 # 初始化模块：只捕获地图内部鼠标输入，不影响旁侧管理按钮。
 func _ready() -> void:
 
-	mouse_filter = Control.MOUSE_FILTER_STOP
+	mouse_filter = Control.MOUSE_FILTER_IGNORE if overview_only else Control.MOUSE_FILTER_STOP
 	clip_contents = true
 	mouse_default_cursor_shape = Control.CURSOR_CROSS
 	_make_ground()
@@ -82,6 +88,10 @@ func _ready() -> void:
 	motion_layer = _make_map_layer(_draw_motion)
 	_fit_camera()
 	_redraw_scene()
+	if overview_only:
+		set_process(false)
+		set_process_input(false)
+		set_process_unhandled_key_input(false)
 	resized.connect(_on_resized)
 	mouse_exited.connect(_on_mouse_exited)
 
@@ -114,6 +124,8 @@ func _make_ground() -> void:
 	ground_material.set_shader_parameter("depth_mask", terrain_texture)
 	ground_material.set_shader_parameter("map_extent", Vector2(Grid.SIZE))
 	ground_material.set_shader_parameter("half_cell", Grid.HALF)
+	ground_material.set_shader_parameter("west_river_span", Vector2(Terrain.river_span(0)))
+	ground_material.set_shader_parameter("east_river_span", Vector2(Terrain.river_span(Grid.SIZE.x - 1)))
 	ground.material = ground_material
 
 
@@ -267,7 +279,10 @@ func _draw_static_map(patch: Dictionary) -> void:
 
 # 交互层：标牌、选区和放置提示无需重新绘制静态建筑。
 func _draw() -> void:
+	if overview_only:
+		return
 	_draw_building_feedback()
+	_draw_region_site_labels()
 	if active_definition != null and Grid.contains(hovered):
 		var valid: bool = preview_result.get("ok", false)
 		var tint: Color = Color("#51d88580") if valid else Color("#f454508a")
@@ -365,11 +380,11 @@ func _input(event: InputEvent) -> void:
 		held_directions.erase(event.keycode)
 
 
-# 镜头平移：取景中心限制在地图，短距离平移复用已经绘制的模型。
+# 镜头平移：越过已知区域后继续移动，只在引擎坐标精度范围内做保护。
 func _pan_camera(delta: Vector2) -> void:
 	var center: Vector2 = screen_to_world(size * 0.5) + delta / zoom_level
 	var logical := Vector2((center.x / Grid.HALF.x + center.y / Grid.HALF.y) * 0.5, (center.y / Grid.HALF.y - center.x / Grid.HALF.x) * 0.5)
-	logical = logical.clamp(Vector2.ZERO, Vector2(Grid.SIZE - Vector2i.ONE))
+	logical = logical.clamp(-Vector2.ONE * Grid.WORLD_LIMIT, Vector2.ONE * Grid.WORLD_LIMIT)
 	center = Vector2((logical.x - logical.y) * Grid.HALF.x, (logical.x + logical.y) * Grid.HALF.y)
 	var next_pan: Vector2 = (Grid.center() - center) * zoom_level
 	if next_pan.is_equal_approx(pan_offset):
@@ -386,6 +401,17 @@ func _pan_camera(delta: Vector2) -> void:
 func visit_site(cell: Vector2i) -> void:
 	held_directions.clear()
 	_focus_cell(cell)
+
+
+# 据点导航：按可视范围留出岗楼和名称的空间，定位后仍可自行缩放。
+func visit_region_site(cell: Vector2i) -> void:
+	held_directions.clear()
+	fitting_overview = false
+	var bounds: Vector2 = (size - Vector2(30, 24)) / Vector2(800, 588)
+	zoom_level = clampf(minf(bounds.x, bounds.y), 0.18, 0.6)
+	pan_offset = (Grid.center() - Grid.cell_to_world(cell)) * zoom_level
+	view_changed.emit()
+	_redraw_scene()
 
 
 # 林矿导航：优先对准附近已建采集场在资源格内的设备，未建时定位资源区。
@@ -536,6 +562,36 @@ func _update_preview() -> void:
 	placement_changed.emit(preview_result)
 
 
+# 据点同步：侦察揭示营地和旧堡，战果决定是否仍有敌方守军。
+func sync_region_sites(world: RefCounted) -> void:
+	var known: Dictionary = {}
+	if Scout.complete(world):
+		known[Scout.WOODS] = 0 if Field.report(world)["status"] == "victory" else Scout.LAYOUT.woods_guards
+		known[Scout.FORT] = 0 if Siege.report(world)["status"] == "victory" else Scout.LAYOUT.fort_guards
+	if known != region_sites:
+		region_sites = known
+		static_dirty = true
+		_redraw_scene()
+
+
+# 据点标牌：只在局部视角显示驻军，与区域总览的名称标记互不叠加。
+func _draw_region_site_labels() -> void:
+	if zoom_level < 0.12:
+		return
+	var font: Font = ThemeDB.fallback_font
+	for id: String in region_sites:
+		var cell: Vector2i = Scout.LAYOUT.regions[id]["position"]
+		var baseline: Vector2 = world_to_screen(Grid.cell_to_world(cell) + Vector2(0, 195)).round()
+		if not Rect2(Vector2.ZERO, size).has_point(baseline):
+			continue
+		var guards: int = region_sites[id]
+		var label: String = "%s · %s" % [Scout.LAYOUT.regions[id]["title"], "己方控制" if guards == 0 else "守军 %d" % guards]
+		var width: float = font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x
+		var origin: Vector2 = baseline - Vector2(width * 0.5, 0)
+		draw_rect(Rect2(origin - Vector2(7, 15), Vector2(width + 14, 21)), Color("#202720ed"))
+		draw_string(font, origin, label, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("#fff0cc"))
+
+
 # 实例同步模块：从世界传入只读副本，重新推导格表以避免视图与存档各存一份占用。
 func sync_buildings(records: Array) -> void:
 	var before: Array = placed_buildings
@@ -628,6 +684,12 @@ func _draw_map_objects(visible_objects: Rect2, decorate: bool) -> void:
 		for item: Dictionary in deposit_models:
 			if deposit_view.has_point(item["center"]) and not equipment_cells.has(Grid.world_to_cell(item["center"])):
 				objects.append(item)
+		_append_outer_deposits(objects, deposit_view)
+	for id: String in region_sites:
+		var cell: Vector2i = Scout.LAYOUT.regions[id]["position"]
+		var center: Vector2 = Grid.cell_to_world(cell)
+		if visible_objects.grow(430.0).has_point(center):
+			objects.append({"center": center, "site": id})
 	for area: Dictionary in work_areas.values():
 		var sites: Array = area["sites"]
 		for role: int in range(sites.size()):
@@ -643,7 +705,9 @@ func _draw_map_objects(visible_objects: Rect2, decorate: bool) -> void:
 	animated_objects.clear()
 	for item: Dictionary in objects:
 		var center: Vector2 = item["center"]
-		if item.has("equipment"):
+		if item.has("site"):
+			Sites.draw_site(self, item["site"], center, region_sites[item["site"]])
+		elif item.has("equipment"):
 			WorksiteArt.draw_resource_equipment(self, item["equipment"], center, item["role"])
 		elif item.has("deposit"):
 			Art.deposit(self, center, item["deposit"])
@@ -673,6 +737,26 @@ func _draw_map_objects(visible_objects: Rect2, decorate: bool) -> void:
 					"center": center, "type": record["def_id"], "id": record["id"], "spread": spread,
 					"worksite": worksite, "compound": compound, "bounds": _building_bounds(record), "dock": dock,
 				})
+
+
+# 外围景物：只抽样当前静景缓存覆盖的地块，远处资源由地表纹理表示。
+func _append_outer_deposits(objects: Array[Dictionary], view: Rect2) -> void:
+	var nw: Vector2i = Grid.world_to_cell(view.position)
+	var ne: Vector2i = Grid.world_to_cell(Vector2(view.end.x, view.position.y))
+	var sw: Vector2i = Grid.world_to_cell(Vector2(view.position.x, view.end.y))
+	var se: Vector2i = Grid.world_to_cell(view.end)
+	var step: int = 8
+	for x: int in range(nw.x - posmod(nw.x, step), se.x + step, step):
+		for y: int in range(ne.y - posmod(ne.y, step), sw.y + step, step):
+			var cell := Vector2i(x + posmod(y * 2459 ^ x * 7927, step), y + posmod(x * 601 ^ y * 1789, step))
+			if not Grid.contains(cell) or Grid.in_authored_map(cell) or equipment_cells.has(cell) or occupied_cells.has(cell):
+				continue
+			var center: Vector2 = Grid.cell_to_world(cell)
+			if not view.has_point(center):
+				continue
+			var kind: String = Terrain.deposit_at(cell)
+			if not kind.is_empty():
+				objects.append({"center": center, "deposit": kind})
 
 
 # 场地样式：大型场地拥有专用布局，小型旧建筑继续使用匹配尺寸的模型。

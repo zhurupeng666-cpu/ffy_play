@@ -44,7 +44,9 @@ func _run() -> void:
 	overview.enter_button.pressed.emit()
 	var region_safe: bool = scout_entry_visible and overview.visible and not main.town_view.visible \
 		and main.town_map.active_definition == null and overview.enter_button.disabled \
-		and not overview.markers.has("r_fort") and before_map == main.world.snapshot()
+		and not overview.markers.has("r_fort") and not overview.site_button.visible and before_map == main.world.snapshot()
+	region_safe = region_safe and overview.map_overlay.terrain_texture == main.town_map.terrain_texture
+	region_safe = region_safe and overview.map_overlay.placed_buildings == main.world.buildings
 	overview.markers["r_home"].pressed.emit()
 	overview.enter_button.pressed.emit()
 	region_safe = region_safe and main.town_view.visible and not overview.visible \
@@ -172,6 +174,23 @@ func _check_scout(main: Control) -> bool:
 	overview.sync(main.world)
 	if not Scout.complete(main.world) or not overview.markers.has(Scout.FORT) or overview.scout_button.text != "侦察已完成" or not Disband.quote(main.world, troop)["ok"]:
 		return false
+	# 据点入口：俯瞰图和局部地图共用坐标与驻军，查看不消耗战略资源。
+	var site_before: Dictionary = main.world.snapshot()
+	var site: Vector2i = Scout.LAYOUT.regions[Scout.WOODS]["position"]
+	if not overview.site_button.visible or overview.map_overlay.region_sites.get(Scout.WOODS) != Scout.LAYOUT.woods_guards:
+		return false
+	if overview._point(Scout.WOODS) != overview.map_overlay.world_to_screen(overview.map_overlay.Grid.cell_to_world(site)):
+		return false
+	overview.site_button.pressed.emit()
+	if overview.visible or main.town_map.cell_at(main.town_map.size * 0.5) != site or main.world.snapshot() != site_before:
+		return false
+	main.region_toggle.pressed.emit()
+	overview.select_region(Scout.LAYOUT.home_id)
+	overview.enter_button.pressed.emit()
+	if overview.visible or not main.town_map.screen_to_world(main.town_map.size * 0.5).is_equal_approx(Vector2(0, 240)):
+		return false
+	main.region_toggle.pressed.emit()
+	overview.select_region(Scout.WOODS)
 	if not _check_march(main, id, troop):
 		return false
 	var legacy: Dictionary = main.world.snapshot()
@@ -417,9 +436,9 @@ func _check_siege(main: Control, legion_id: String) -> bool:
 		main.clock.advance(1)
 	main.world.paused = true
 	overview.sync(main.world)
-	if Siege.report(main.world)["status"] != "victory" or not overview.markers[Scout.FORT].text.contains("己方控制"):
+	if Siege.report(main.world)["status"] != "victory" or not overview.markers[Scout.FORT].tooltip_text.contains("己方控制"):
 		return false
-	return _check_fort_gold(main) and not overview.march_button.disabled
+	return overview.map_overlay.region_sites.get(Scout.FORT) == 0 and _check_fort_gold(main) and not overview.march_button.disabled
 
 
 # 收益验收：核对首日延迟、与军饷衔接、溢出及读档后不重复计费。

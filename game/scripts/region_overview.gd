@@ -1,7 +1,9 @@
-## 文件用途：绘制区域道路与侦察进度，提供军团派遣和城镇入口。
+## 文件用途：以同一张世界地图为底图，标注区域名称、道路和据点入口。
 extends VBoxContainer
 
 signal town_requested
+signal site_requested(cell: Vector2i)
+const TownMap = preload("res://scripts/town_map.gd")
 const Battle = preload("res://scripts/woods_battle.gd")
 const Siege = preload("res://scripts/fort_siege.gd")
 const March = preload("res://scripts/region_march.gd")
@@ -12,6 +14,8 @@ const LAYOUT = Scout.LAYOUT
 var selected_id: String = ""
 var markers: Dictionary = {}
 var board: Control
+var map_overlay: Control
+var site_button: Button
 var detail: Label
 var enter_button: Button
 # 侦察控件模块：世界状态由主界面绑定，选择项和布局留在视图。
@@ -41,6 +45,14 @@ func _ready() -> void:
 	board.custom_minimum_size = Vector2(320, 220)
 	board.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	add_child(board)
+	board.clip_contents = true
+	map_overlay = TownMap.new()
+	map_overlay.overview_only = true
+	map_overlay.show_behind_parent = true
+	board.add_child(map_overlay)
+	map_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	map_overlay.show_entire_map()
+	map_overlay.view_changed.connect(_place_markers)
 	board.draw.connect(_draw_board)
 	board.resized.connect(_place_markers)
 	for id: String in LAYOUT.regions:
@@ -50,13 +62,18 @@ func _ready() -> void:
 		_add_marker(id)
 	detail = Label.new()
 	detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	detail.custom_minimum_size.y = 64
+	detail.custom_minimum_size.y = 44
 	add_child(detail)
 	enter_button = Button.new()
 	enter_button.focus_mode = Control.FOCUS_NONE
 	enter_button.text = "进入边境镇"
 	enter_button.pressed.connect(_enter_region)
 	add_child(enter_button)
+	site_button = Button.new()
+	site_button.focus_mode = Control.FOCUS_NONE
+	site_button.text = "查看据点"
+	site_button.pressed.connect(_view_site)
+	add_child(site_button)
 	scout_row = HBoxContainer.new()
 	add_child(scout_row)
 	scout_picker = OptionButton.new()
@@ -82,7 +99,8 @@ func _ready() -> void:
 	# 操作区放在地图上方，方便直接查看和派遣。
 	move_child(detail, 1)
 	move_child(enter_button, 2)
-	move_child(scout_row, 3)
+	move_child(site_button, 3)
+	move_child(scout_row, 4)
 	scout_row.hide()
 	select_region(LAYOUT.home_id)
 	_place_markers()
@@ -90,7 +108,7 @@ func _ready() -> void:
 # 标记模块：只为已知区域创建可点击的地图节点。
 func _add_marker(id: String) -> void:
 	var marker: Button = Button.new()
-	marker.custom_minimum_size = Vector2(110, 54)
+	marker.custom_minimum_size = Vector2(98, 36)
 	marker.toggle_mode = true
 	marker.focus_mode = Control.FOCUS_NONE
 	marker.pressed.connect(select_region.bind(id))
@@ -100,7 +118,8 @@ func _add_marker(id: String) -> void:
 
 # 标注模块：选择和完成状态改变时更新对应区域名称。
 func _update_marker(id: String) -> void:
-	markers[id].text = "%s\n%s" % [LAYOUT.regions[id]["title"], _status(id)]
+	markers[id].text = LAYOUT.regions[id]["title"]
+	markers[id].tooltip_text = _status(id)
 
 # 状态模块：合并静态地图状态和侦察结果。
 func _status(id: String) -> String:
@@ -131,6 +150,7 @@ func select_region(id: String) -> void:
 	if not markers.has(id):
 		return
 	selected_id = id
+	board.queue_redraw()
 	var region: Dictionary = LAYOUT.regions[id]
 	for marker_id: String in markers:
 		markers[marker_id].set_pressed_no_signal(marker_id == id)
@@ -138,6 +158,7 @@ func select_region(id: String) -> void:
 	enter_button.visible = id == LAYOUT.home_id
 	enter_button.disabled = id != LAYOUT.home_id or region["access"] != "open"
 	enter_button.text = "未开放" if enter_button.disabled else "进入边境镇"
+	site_button.visible = id != LAYOUT.home_id and world != null and Scout.complete(world)
 	if id == Scout.FORT:
 		_refresh_fort()
 	else:
@@ -146,6 +167,8 @@ func select_region(id: String) -> void:
 # 世界同步模块：发现旧堡时显示标记与道路，读入较早进度时恢复对应地图。
 func sync(state: RefCounted) -> void:
 	world = state
+	map_overlay.sync_buildings(world.buildings)
+	map_overlay.sync_region_sites(world)
 	var discovered: bool = Scout.complete(world)
 	if discovered != markers.has(Scout.FORT):
 		if discovered:
@@ -353,22 +376,40 @@ func _place_markers() -> void:
 	for id: String in markers:
 		var marker: Button = markers[id]
 		marker.size = marker.get_combined_minimum_size()
-		marker.position = _point(id) - marker.size * 0.5
+		var point: Vector2 = _point(id)
+		var offset := Vector2(-72, -28)
+		if id == Scout.WOODS:
+			offset = Vector2(60, -22)
+		elif id == Scout.FORT:
+			offset = Vector2(-64, -2)
+		var limit: Vector2 = (board.size - marker.size - Vector2(5, 5)).max(Vector2(5, 5))
+		marker.position = (point + offset - marker.size * 0.5).clamp(Vector2(5, 5), limit)
 	board.queue_redraw()
 
-# 坐标模块：留出标记宽度与边缘空间。
-func _point(id: String) -> Vector2:
-	var inset: Vector2 = Vector2(66, 33)
-	return inset + (board.size - inset * 2.0) * Vector2(LAYOUT.regions[id]["position"])
+# 据点入口：只开放已侦察位置的局部视角。
+func _view_site() -> void:
+	if world != null and selected_id != LAYOUT.home_id and Scout.complete(world):
+		site_requested.emit(LAYOUT.regions[selected_id]["position"])
 
-# 绘制模块：仅显示两端都已发现的道路，背景格线帮助辨认相对位置。
+
+# 位置投影：区域名称使用真实格网锚点，并与底图同步缩放。
+func _point(id: String) -> Vector2:
+	var cell: Vector2i = LAYOUT.regions[id]["position"]
+	return map_overlay.world_to_screen(TownMap.Grid.cell_to_world(cell))
+
+
+# 路线与地标：在地形上方描出已发现路径和每个区域的地面位置。
 func _draw_board() -> void:
-	board.draw_rect(Rect2(Vector2.ZERO, board.size), Color("#252d27"))
-	for x: int in range(24, int(board.size.x), 24):
-		board.draw_line(Vector2(x, 0), Vector2(x, board.size.y), Color("#303b33"))
-	for y: int in range(24, int(board.size.y), 24):
-		board.draw_line(Vector2(0, y), Vector2(board.size.x, y), Color("#303b33"))
 	for road: PackedStringArray in LAYOUT.roads:
 		if markers.has(road[0]) and markers.has(road[1]):
-			board.draw_line(_point(road[0]), _point(road[1]), Color("#b09c66"), 4.0)
+			board.draw_dashed_line(_point(road[0]), _point(road[1]), Color("#292b22df"), 5.0, 9.0)
+			board.draw_dashed_line(_point(road[0]), _point(road[1]), Color("#e3c88b"), 2.0, 9.0)
+	for id: String in markers:
+		var marker: Button = markers[id]
+		var anchor: Vector2 = _point(id)
+		var pin: Color = Color("#fff1b7") if id == selected_id else Color("#e3c88b")
+		var label_edge: Vector2 = anchor.clamp(marker.position, marker.position + marker.size)
+		board.draw_line(anchor, label_edge, pin, 1.0, true)
+		board.draw_circle(anchor, 5.0, Color("#263126"))
+		board.draw_circle(anchor, 3.0, pin)
 	board.draw_rect(Rect2(Vector2.ZERO, board.size), Color("#52604d"), false, 1.0)

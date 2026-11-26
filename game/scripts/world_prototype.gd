@@ -314,7 +314,8 @@ func _build_map(columns: HBoxContainer) -> void:
 	region_overview = RegionOverview.new()
 	region_overview.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	region_overview.hide()
-	region_overview.town_requested.connect(_show_region_view.bind(false))
+	region_overview.town_requested.connect(_enter_home_region)
+	region_overview.site_requested.connect(_view_region_site)
 	map_column.add_child(region_overview)
 	town_map = TownMap.new()
 	town_map.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -324,7 +325,7 @@ func _build_map(columns: HBoxContainer) -> void:
 	map_actions.add_theme_constant_override("separation", 6)
 	town_view.add_child(map_actions)
 	_button(map_actions, "回城镇", town_map.reset_view).tooltip_text = "Home 回城镇 · 方向键移动"
-	_button(map_actions, "全图", town_map.show_entire_map)
+	_button(map_actions, "已知全图", town_map.show_entire_map)
 	_button(map_actions, "林场", town_map.visit_work_area.bind(Vector2i(50, 46), "forest"))
 	_button(map_actions, "石矿", town_map.visit_work_area.bind(Vector2i(106, 39), "stone"))
 	_button(map_actions, "河港", town_map.visit_site.bind(Vector2i(22, 90)))
@@ -577,7 +578,7 @@ func _refresh_map_info() -> void:
 
 # 坐标文本模块：地图外或未选择时显示短横线。
 func _cell_text(cell: Vector2i) -> String:
-	return "(%d,%d)" % [cell.x, cell.y] if cell.x >= 0 and cell.y >= 0 else "—"
+	return "(%d,%d)" % [cell.x, cell.y] if TownMap.Grid.contains(cell) else "—"
 
 
 # 标签模块：统一设置左对齐与换行，便于浏览较长账单。
@@ -626,6 +627,18 @@ func _show_region_view(show_overview: bool) -> void:
 	region_toggle.text = "返回城镇" if show_overview else "区域地图"
 
 
+# 首府入口：从区域图选择进入边境镇时，镜头落回主城。
+func _enter_home_region() -> void:
+	_show_region_view(false)
+	town_map.reset_view()
+
+
+# 据点导航：从区域标注返回同一张地图，镜头移到对应营地。
+func _view_region_site(cell: Vector2i) -> void:
+	_show_region_view(false)
+	town_map.visit_region_site(cell)
+
+
 # 帧模块：推进固定步时钟并显示结果，界面自身不执行日结。
 func _process(delta: float) -> void:
 	if progress == null:
@@ -640,6 +653,7 @@ func _process(delta: float) -> void:
 
 # 刷新模块：日期、库存与账单全部来自同一份世界数据。
 func _refresh() -> void:
+	town_map.sync_region_sites(world)
 	if region_overview.visible:
 		region_overview.sync(world)
 	_refresh_legions()
@@ -1578,7 +1592,7 @@ func _refresh_inspection() -> void:
 # 清理模块：读档或进入建造模式时清除临时选择，不让相同ID误指向新世界建筑。
 func _clear_inspection() -> void:
 	inspected_building_id = ""
-	town_map.selected = Vector2i(-1, -1)
+	town_map.selected = TownMap.Grid.INVALID
 	town_map.highlight_building("")
 	_refresh_map_info()
 	_refresh_inspection()

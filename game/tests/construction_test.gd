@@ -33,7 +33,7 @@ func _run() -> void:
 	_check(result.get("code") == "COMMAND_CONFLICT" and world.snapshot() == after, "重复ID更换位置没有拒绝")
 	result = Build.execute(world, "b_house", Vector2i(2, 2), "cmd-overlap")
 	_check(not result["ok"] and world.snapshot() == after, "重叠建造修改了世界")
-	result = Build.execute(world, "b_farm", Grid.SIZE - Vector2i.ONE, "cmd-outside")
+	result = Build.execute(world, "b_farm", Vector2i.ONE * Grid.WORLD_LIMIT, "cmd-outside")
 	_check(not result["ok"] and world.snapshot() == after, "越界建造修改了世界")
 	result = Build.execute(world, "b_hall", Vector2i(12, 12), "cmd-hall")
 	_check(not result["ok"] and world.snapshot() == after, "允许重复建领主厅")
@@ -95,6 +95,13 @@ func _run() -> void:
 	bad = loaded.snapshot()
 	bad["applied_commands"]["saved-cmd"]["building_id"] = "building_999999"
 	_check(State.from_snapshot(bad) == null, "接受悬空命令回执")
+	# 外围存档：在两侧建设，拒绝覆盖据点，重开数据库后恢复原坐标。
+	_check(Build.execute(loaded, "b_house", Vector2i(-1, -1), "outer-west")["ok"], "外围负坐标建造失败")
+	_check(Build.execute(loaded, "b_house", Vector2i(320, 320), "outer-east")["ok"], "旧东南边界外建造失败")
+	_check(Build.execute(loaded, "b_house", Vector2i(94, 60), "region-site")["code"] == "REGION_SITE", "允许在预设据点覆盖建造")
+	_check(store.save_world(loaded), "外围新档保存失败")
+	var outer_restored: RefCounted = store.load_world()
+	_check(outer_restored != null and outer_restored.snapshot() == loaded.snapshot(), "外围建筑、占地或操作回执未恢复")
 	# 七档验收：连续保存淘汰最早条目，失败事务保留原列表。
 	for index: int in range(8):
 		loaded.resources["gold"] = 400 + index

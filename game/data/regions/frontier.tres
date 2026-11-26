@@ -6,8 +6,8 @@
 script = ExtResource("1")
 home_id = "r_home"
 regions = {
-"r_home": {"title": "边境镇", "position": Vector2(0.23, 0.78), "visibility": "scouted", "owner": "player", "access": "open", "description": "领地首府，可进入城镇建造、生产和管理部队。"},
-"r_woods": {"title": "北部林地", "position": Vector2(0.83, 0.48), "visibility": "known", "owner": "", "access": "blocked", "description": "与边境镇相邻。可派现役军团前往侦察。"},
-"r_fort": {"title": "旧堡", "position": Vector2(0.18, 0.14), "visibility": "hidden", "owner": "", "access": "blocked", "description": "从北部林地发现的旧要塞。通行条件为取得林地控制权。"}
+"r_home": {"title": "边境镇", "position": Vector2i(7, 7), "visibility": "scouted", "owner": "player", "access": "open", "description": "领地首府，可进入城镇建造、生产和管理部队。"},
+"r_woods": {"title": "北部林地", "position": Vector2i(94, 60), "visibility": "known", "owner": "", "access": "blocked", "description": "与边境镇相邻。可派现役军团前往侦察。"},
+"r_fort": {"title": "旧堡", "position": Vector2i(71, 205), "visibility": "hidden", "owner": "", "access": "blocked", "description": "从北部林地发现的旧要塞。通行条件为取得林地控制权。"}
 }
 roads = Array[PackedStringArray]([PackedStringArray("r_home", "r_woods"), PackedStringArray("r_woods", "r_fort")])
