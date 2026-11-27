@@ -22,6 +22,7 @@ const Population = preload("res://scripts/population_service.gd")
 const DistrictMarket = preload("res://scripts/district_market.gd")
 const Capital = preload("res://scripts/capital_layout.gd")
 const Courts = preload("res://scripts/palace_courtyards.gd")
+const Rural = preload("res://scripts/rural_belt.gd")
 const Works = preload("res://scripts/royal_works.gd")
 const Register = preload("res://scripts/resident_register.gd")
 const HouseEconomy = preload("res://scripts/household_economy.gd")
@@ -99,7 +100,7 @@ func effective_battle_morale(legion: String) -> int:
 	return mini(Army.Morale.MAXIMUM, army_morale + HouseEconomy.commander_bonus(self, legion))
 
 
-# 日期模块：第0至119秒属于第1日，完成120秒才进入第2日。
+# 日期模块：第0至119逻辑步属于第1日，完成120步才进入第2日。
 func current_day() -> int:
 	return int(tick / float(DAY_TICKS)) + 1
 
@@ -139,6 +140,8 @@ func settle_days() -> void:
 			HouseEconomy.enroll(self)
 		DistrictMarket.settle(self)
 		if capital_layout:
+			Rural.survey(self)
+		if capital_layout:
 			Register.sync_people(self)
 			Register.assign_homes(self)
 		last_bill = "第%d日日结：产粮 +%d（入库%d，溢出%d），消耗 -%d，净变%+d，税收 +%d" % [last_settled_day, last_food_ledger["produced"], last_food_ledger["stored"], last_food_ledger["overflow"], last_food_ledger["consumed"], last_food_ledger["net"], tax]
@@ -158,7 +161,7 @@ func snapshot() -> Dictionary:
 	if capital_layout:
 		Register.sync_people(self)
 		Register.assign_homes(self)
-		data["version"] = 31
+		data["version"] = 32
 		data["capital_layout"] = true
 		data["palace_decor"] = palace_decor.duplicate(true)
 		data["royal_works"] = royal_works.duplicate(true)
@@ -173,7 +176,7 @@ static func from_snapshot(data: Variant) -> RefCounted:
 	for key: String in ["version", "tick", "last_settled_day", "population", "speed"]:
 		if not _valid_integer(data.get(key), 0, 120000000):
 			return null
-	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31] or int(data["speed"]) not in [1, 2, 4]:
+	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32] or int(data["speed"]) not in [1, 2, 4]:
 		return null
 	var version: int = int(data["version"])
 	if not _valid_integer(data["population"], Population.START_POPULATION, Population.MAX_POPULATION) or (version < 25 and data["population"] != Population.START_POPULATION):
@@ -300,7 +303,7 @@ static func from_snapshot(data: Variant) -> RefCounted:
 			return null
 	if version >= 27 and not HouseEconomy.restore(state, data.get("household_economy")):
 		return null
-	if version >= 30 and not Works.restore(state,data.get("royal_works")):
+	if version >= 30 and not Works.restore(state,data.get("royal_works"),version>=32):
 		return null
 	if state.capital_layout:
 		if version >= 31:
@@ -310,6 +313,10 @@ static func from_snapshot(data: Variant) -> RefCounted:
 			Register.spread_manors(state)
 			Register.sync_people(state)
 		Register.assign_homes(state)
+		if not Rural.relocate(state,version<32):
+			return null
+		if version<32:
+			Rural.survey(state)
 	if state.idle_workers() < 0 or state.population > state.housing_capacity():
 		return null
 	return state

@@ -21,6 +21,16 @@ func _check(condition: bool, reason: String) -> void:
 
 # 规则验收模块：边界和日结必须独立于渲染帧率与倍速。
 func _run() -> void:
+	var real: RefCounted = State.new()
+	var real_clock: RefCounted = Clock.new(real)
+	real.paused = false
+	real_clock.advance_real(1799.0)
+	_check(real.current_day()==1 and real.tick==119,"一倍速未满半小时提前结算")
+	real_clock.advance_real(1.0)
+	_check(real.current_day()==2 and real.last_settled_day==1,"一倍速半小时未进入下一天")
+	real.speed=4
+	real_clock.advance_real(450.0)
+	_check(real.current_day()==3,"四倍速未按七分半钟结算")
 	var state: RefCounted = State.new()
 	var clock: RefCounted = Clock.new(state)
 	clock.advance(120.0)

@@ -82,7 +82,7 @@ static func worth(world: RefCounted, index: int) -> int:
 	var fixed: int = 0
 	for id: String in state["property"]:
 		if state["property"][id] == index:
-			fixed += 80
+			fixed += floori(80 * (100-world.royal_works["shares"].get(id,0))/100.0)
 	return family["cash"] + family["land"] * 14 + family["boats"] * 95 + fixed
 
 
@@ -157,11 +157,11 @@ static func settle(world: RefCounted) -> Dictionary:
 			register["commerce"]=shop_due
 		result["hires"] += int(family["hired"])
 		var net: int = maxi(0,gross-supplies-shop_due)
-		if net > 0 and world.capital_layout and not world.royal_works["shares"].is_empty():
+		if world.capital_layout and shops.get(index,"") in Works.ELIGIBLE_SHOPS:
 			for building: Dictionary in world.buildings:
 				var id: String = building["id"]
-				if world.royal_works["shares"].has(id) and state["property"].get(id,-1)==index and building["def_id"]==shops.get(index):
-					net -= Works.distribute(world,id,net)
+				if state["property"].get(id,-1)==index and building["state"]=="ready" and building["def_id"]==shops.get(index):
+					net -= Works.distribute(world,id,gross-supplies-shop_due)
 					break
 		var earnings: int = wage + (int(job["assigned"]) * 2) + net + int(job["workers"])
 		_earn(family, earnings)
@@ -358,7 +358,7 @@ static func _invest_in_buildings(world: RefCounted, day: int, trades: Dictionary
 		elif not manors.has(owner) and family["cash"] >= 225 and worth(world, owner) >= MANOR_WEALTH:
 			kind = "b_manor"
 			price = 160
-		elif family["land"] >= 6 and not field_owners.has(owner) and field_owners.size() * 5 < ways.size():
+		elif not world.capital_layout and family["land"] >= 6 and not field_owners.has(owner) and field_owners.size() * 5 < ways.size():
 			kind = "b_farm"
 			price = 0
 		if kind.is_empty():

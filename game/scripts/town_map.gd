@@ -22,6 +22,7 @@ const Capital = preload("res://scripts/capital_layout.gd")
 const CapitalArt = preload("res://scripts/capital_art.gd")
 const Courts = preload("res://scripts/palace_courtyards.gd")
 signal court_clicked(cell: Vector2i, remove: bool)
+const Rural = preload("res://scripts/rural_belt.gd")
 const Walkers = preload("res://scripts/capital_walkers.gd")
 const Scout = preload("res://scripts/region_scout.gd")
 const Field = preload("res://scripts/woods_battle.gd")
@@ -55,6 +56,12 @@ var court_edit: int = -1
 var court_tool: int = 0
 var resident_routes: Array[PackedVector2Array] = []
 var town_population: int = 0
+var commute_lots: Array[Dictionary] = []
+var commute_paths: Dictionary = {}
+var commute_layout: int = 0
+var map_hour: float = 12.0
+var night_level: float = 0.0
+var light_texture: GradientTexture2D
 
 # 建筑视图模块：占用来自世界实例，视图只读并将确认请求交回控制器。
 var occupied_cells: Dictionary = {}
@@ -245,13 +252,13 @@ func _process(delta: float) -> void:
 			direction += PAN_KEYS[arrow]
 		if direction != Vector2.ZERO:
 			_pan_camera(direction.normalized() * PAN_SPEED * minf(delta, 0.05))
-	if zoom_level < 0.12 or (resident_routes.is_empty() and not has_ranch and not has_fishery and yard_counts_by_barracks.is_empty() and staff_by_site.is_empty()):
+	if zoom_level < 0.12 or (resident_routes.is_empty() and commute_paths.is_empty() and not has_ranch and not has_fishery and yard_counts_by_barracks.is_empty() and staff_by_site.is_empty()):
 		return
 	scenery_time += delta
 	var frame: int = floori(scenery_time * 12.0)
 	if frame != scenery_frame:
 		scenery_frame = frame
-		if not animated_objects.is_empty() or not resident_routes.is_empty():
+		if not animated_objects.is_empty() or not resident_routes.is_empty() or not commute_paths.is_empty():
 			motion_layer.queue_redraw()
 
 
@@ -313,6 +320,7 @@ func _draw_static_map(patch: Dictionary) -> void:
 func _draw() -> void:
 	if overview_only:
 		return
+	_draw_night()
 	_draw_building_feedback()
 	_draw_region_site_labels()
 	for order: Dictionary in tender_orders:
@@ -711,12 +719,95 @@ func _draw_region_site_labels() -> void:
 		draw_string(font, origin, label, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("#fff0cc"))
 
 
+# 通勤同步：只有住址、农田或城市路网改变时才重建路线。
+func sync_commutes(world: RefCounted) -> void:
+	var current: Array[Dictionary] = Rural.lots(world)
+	var geometry: Array = []
+	for record: Dictionary in world.buildings:
+		geometry.append([record["id"],record["cell"],record["state"]])
+	var signature: int = hash(geometry)
+	if current==commute_lots and signature==commute_layout:
+		return
+	commute_lots=current
+	commute_layout=signature
+	commute_paths=Rural.routes(world,current) if not current.is_empty() else {}
+	motion_layer.queue_redraw()
+
+
+# 昼夜同步：每小时按晨昏时段渐变，地图色调独立于界面和静景缓存。
+func sync_hour(hour: float) -> void:
+	var previous: float = map_hour
+	map_hour=hour
+	var strength: float = maxf(1.0-smoothstep(4.75,7.0,hour),smoothstep(17.0,19.5,hour))
+	if (previous<6.0)!=(hour<6.0) or (previous<19.0)!=(hour<19.0):
+		motion_layer.queue_redraw()
+	if absf(strength-night_level)>=0.005 or (strength==0.0 and night_level>0.0):
+		night_level=strength
+		queue_redraw()
+
+
+# 夜景模块：城内窗灯、街灯和城门灯笼照亮附近，界面标注在暗色层上方。
+func _draw_night() -> void:
+	if night_level<=0.0:
+		return
+	draw_rect(Rect2(Vector2.ZERO,size),Color(0.025,0.055,0.17,night_level*0.60))
+	if zoom_level<0.065:
+		return
+	if light_texture==null:
+		var falloff := Gradient.new()
+		falloff.offsets=PackedFloat32Array([0.0,0.21,0.58,1.0])
+		falloff.colors=PackedColorArray([Color("#ffdf95c0"),Color("#ffc0647a"),Color("#e18b3428"),Color("#bb652000")])
+		light_texture=GradientTexture2D.new()
+		light_texture.gradient=falloff
+		light_texture.fill=GradientTexture2D.FILL_RADIAL
+		light_texture.fill_from=Vector2(0.5,0.5)
+		light_texture.fill_to=Vector2(1.0,0.5)
+	var visible: Rect2 = _world_viewport().grow(140.0)
+	for building: Dictionary in placed_buildings:
+		var kind: String = building["def_id"]
+		if building["state"]!="ready" or kind in ["b_road","b_wall","b_farm","b_ranch","b_lumber","b_quarry"]:
+			continue
+		var foot: Vector2 = _building_center(building)
+		if visible.has_point(foot):
+			var radius: float = 160.0 if kind in ["b_manor","b_hall","b_inn"] else 100.0
+			_lantern(foot-Vector2(0,13),radius)
+	for landmark: Dictionary in capital_buildings.values():
+		var center: Vector2 = _building_center(landmark)
+		if visible.has_point(center):
+			_lantern(center-Vector2(45,24),220.0)
+			_lantern(center+Vector2(45,-24),220.0)
+	if not capital_buildings.is_empty():
+		for index: int in range(4):
+			var road: Rect2i = Capital.BOULEVARDS[index]
+			var axis := Vector2i.DOWN if road.size.y>road.size.x else Vector2i.RIGHT
+			var edge: Vector2i = road.position + (Vector2i(2,0) if axis.y==1 else Vector2i(0,2))
+			for step: int in range(8,maxi(road.size.x,road.size.y),15):
+				var point: Vector2 = Grid.cell_to_world(edge+axis*step)
+				if visible.has_point(point):
+					var base: Vector2 = world_to_screen(point)
+					var tip: Vector2 = world_to_screen(point-Vector2(0,27))
+					draw_line(base,tip,Color("#211b19"),maxf(1.0,zoom_level*3.0))
+					_lantern(point-Vector2(0,27),135.0)
+
+
+# 灯晕复用一张渐变纹理，只提交镜头内的灯点。
+func _lantern(point: Vector2, radius: float) -> void:
+	var at: Vector2 = world_to_screen(point)
+	var span: Vector2 = Vector2.ONE*maxf(10.0,radius*zoom_level)
+	draw_texture_rect(light_texture,Rect2(at-span*0.5,span),false,Color(1.0,1.0,1.0,night_level))
+	draw_circle(at,maxf(1.0,zoom_level*4.0),Color(1.0,0.82,0.45,night_level),false)
+
+
 # 首都同步：场景重建只在布局切换时触发；人口变化只改变行人密度。
 func sync_capital(enabled: bool, population: int) -> void:
 	town_population = population
 	if enabled == not capital_buildings.is_empty():
 		return
 	capital_buildings = Capital.buildings() if enabled else {}
+	if not enabled:
+		commute_lots.clear()
+		commute_paths.clear()
+		commute_layout=0
 	var area: Rect2i = Capital.OUTER if enabled else Rect2i()
 	ground_material.set_shader_parameter("capital_cleared",Vector4(area.position.x,area.position.y,area.end.x,area.end.y))
 	street_cells = Streets.network(placed_buildings, enabled)
@@ -1061,7 +1152,9 @@ func _draw_motion() -> void:
 	if zoom_level < 0.12:
 		return
 	var view: Rect2 = _world_viewport().grow(65.0)
-	Walkers.draw(self, resident_routes, scenery_time, view, town_population)
+	if map_hour>=6.0 and map_hour<19.0:
+		Walkers.draw(self, resident_routes, scenery_time, view, town_population)
+	Rural.draw_workers(self,commute_paths,map_hour,scenery_time,view)
 	for item: Dictionary in animated_objects:
 		if not view.intersects(item["bounds"]):
 			continue

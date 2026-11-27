@@ -10,15 +10,15 @@ const Grid = Capital.Grid
 const WOOD_PRICE: int = 2
 const STONE_PRICE: int = 3
 const ROAD_BUDGET: int = 42
-const INVESTMENT: int = 60
-const MAX_SHARE: int = 50
+const MAX_SHARE: int = 100
+const PROFIT_DAYS: int = 7
 const ROAD_STOCK := Vector2i(3,6)
 const ELIGIBLE_SHOPS: Array[String] = ["b_restaurant","b_inn"]
 
 
 # 初始账本：订单、产权与累计交易分开保存。
 static func initial() -> Dictionary:
-	return {"roads":[],"homes":{},"shares":{},"wood":0,"stone":0,"sales":0,"dividends":0,"paid":0}
+	return {"roads":[],"homes":{},"shares":{},"profits":{},"wood":0,"stone":0,"sales":0,"dividends":0,"paid":0}
 
 
 # 标准售价：所有私人项目用同一价目。
@@ -173,38 +173,66 @@ static func _build_home(world: RefCounted,day: int) -> void:
 			return
 
 
-# 股权入口：皇室以十个百分点为一份认购，最多占股一半。
-static func invest(world: RefCounted, id: String) -> bool:
-	var shares: Dictionary = world.royal_works["shares"]
-	if shares.get(id,0) >= MAX_SHARE or world.resources["gold"] < INVESTMENT:
-		return false
-	var owner: int = world.household_economy["property"].get(id,-1)
+# 估值模块：重置价加二十天的近期平均净利，最近七次结算用于平滑波动。
+static func quote(world: RefCounted, id: String) -> Dictionary:
+	var owner: int = world.household_economy.get("property", {}).get(id,-1)
 	if owner < 0:
-		return false
+		return {}
 	for record: Dictionary in world.buildings:
-		if record["id"] == id and record["state"] == "ready" and record["def_id"] in ELIGIBLE_SHOPS:
-			var family: Dictionary = world.household_economy["families"][owner]
-			if family["cash"] > 1000000-INVESTMENT:
-				return false
-			world.resources["gold"] -= INVESTMENT
-			family["cash"] += INVESTMENT
-			shares[id] = int(shares.get(id,0))+10
-			return true
-	return false
+		if record["id"] != id or record["state"] != "ready" or record["def_id"] not in ELIGIBLE_SHOPS:
+			continue
+		var history: Array = world.royal_works["profits"].get(id,[])
+		var average: float = 0.0
+		for profit: int in history:
+			average += profit
+		if not history.is_empty():
+			average /= history.size()
+		var underlying: int = 95 + price(12,6)
+		var value: int = maxi(underlying,roundi(underlying+average*20.0))
+		return {"value":value,"latest":0 if history.is_empty() else history.back(),"average":average,
+			"days":history.size(),"share":world.royal_works["shares"].get(id,0),"owner":owner}
+	return {}
 
 
-# 分红按店铺当日净利计算，款从商户收益中划拨。
+# 转让模块：按当期市值购买整数百分点，收购补足至百分之百，个别取整使用累计价差。
+static func share_price(value: int, held: int, points: int) -> int:
+	return ceili(value*(held+points)/100.0)-ceili(value*held/100.0)
+
+
+# 交易模块：用确认前的股比和市值防止过期报价，购款付给出售方。
+static func invest(world: RefCounted, id: String, points: int, expected: Dictionary) -> bool:
+	var offer: Dictionary = quote(world,id)
+	if offer.is_empty() or offer != expected or points < 1 or offer["share"]+points > MAX_SHARE:
+		return false
+	var due: int = share_price(offer["value"],offer["share"],points)
+	var family: Dictionary = world.household_economy["families"][offer["owner"]]
+	if world.resources["gold"] < due or family["cash"] > 1000000-due:
+		return false
+	world.resources["gold"] -= due
+	family["cash"] += due
+	world.royal_works["shares"][id] = offer["share"]+points
+	return true
+
+
+# 营业模块：记录全店税后净利，再按持股划拨分红，原经营者继续经营。
 static func distribute(world: RefCounted, shop_id: String, net_profit: int) -> int:
+	var books: Dictionary = world.royal_works["profits"]
+	if not books.has(shop_id):
+		books[shop_id] = []
+	var history: Array = books[shop_id]
+	history.append(net_profit)
+	if history.size() > PROFIT_DAYS:
+		history.pop_front()
 	var share: int = world.royal_works["shares"].get(shop_id,0)
-	var paid: int = mini(1000000000-world.resources["gold"],floori(net_profit*share/100.0))
+	var paid: int = mini(1000000000-world.resources["gold"],floori(maxi(0,net_profit)*share/100.0))
 	world.resources["gold"] += paid
 	world.royal_works["dividends"] += paid
 	return paid
 
 
 # 恢复模块：核验产权、工程时间与地块，保证旧档和坏档都可安全判断。
-static func restore(world: RefCounted, raw: Variant) -> bool:
-	if not raw is Dictionary or raw.size()!=8:
+static func restore(world: RefCounted, raw: Variant, modern: bool) -> bool:
+	if not raw is Dictionary or raw.size()!=(9 if modern else 8):
 		return false
 	var loaded: Dictionary = initial()
 	for label: String in ["wood","stone","sales","dividends","paid"]:
@@ -224,9 +252,22 @@ static func restore(world: RefCounted, raw: Variant) -> bool:
 			var value: Variant = raw[key][id]
 			if key == "homes" and (kind!="b_house" or not _integer(value,0,world.households.size()-1)):
 				return false
-			if key == "shares" and (kind not in ELIGIBLE_SHOPS or not world.household_economy["property"].has(id) or not _integer(value,10,MAX_SHARE) or int(value)%10!=0):
+			if key == "shares" and (kind not in ELIGIBLE_SHOPS or not world.household_economy["property"].has(id) or not _integer(value,1 if modern else 10,MAX_SHARE if modern else 50) or (not modern and int(value)%10!=0)):
 				return false
 			loaded[key][id]=int(value)
+	if modern:
+		if not raw.get("profits") is Dictionary:
+			return false
+		for id: Variant in raw["profits"]:
+			var history: Variant = raw["profits"][id]
+			if not records.has(id) or records[id]["def_id"] not in ELIGIBLE_SHOPS or not world.household_economy["property"].has(id) or not history is Array or history.is_empty() or history.size()>PROFIT_DAYS:
+				return false
+			var entries: Array[int] = []
+			for amount: Variant in history:
+				if not _integer(amount,-1000,1000):
+					return false
+				entries.append(int(amount))
+			loaded["profits"][id]=entries
 	if not raw.get("roads") is Array or raw["roads"].size()>64 or world.buildings.size()+raw["roads"].size()>256:
 		return false
 	var occupied: Dictionary = world.occupied_cells()

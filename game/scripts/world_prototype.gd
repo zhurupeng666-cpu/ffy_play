@@ -49,6 +49,12 @@ var auto_lifecycle_for_test: bool = false
 var automatic_lifecycle: bool = false
 var works_totals: Label
 var invest_button: Button
+var asset_card: VBoxContainer
+var asset_label: Label
+var equity_points: SpinBox
+var buyout_button: Button
+var equity_dialog: ConfirmationDialog
+var equity_order: Dictionary = {}
 var resident_window: Window
 var resident_list: ItemList
 var resident_filter: LineEdit
@@ -234,6 +240,7 @@ func _ready() -> void:
 	if not legacy_economy_fixture:
 		HouseEconomy.activate(world, randi_range(1, 999999))
 		world.capital_layout = true
+		State.Rural.survey(world)
 	_build_ui()
 	if not store.open_store(store_path_override):
 		status_label.text = "存档不可用：" + store.error_message
@@ -396,12 +403,12 @@ func _build_map(columns: HBoxContainer) -> void:
 # 导览模块：外城、皇城、普通集市、府邸与四座城门均可一键定位。
 func _build_city_navigation(row: HBoxContainer) -> void:
 	city_navigation = MenuButton.new()
-	city_navigation.text = "城内导览 ▾"
+	city_navigation.text = "城镇导览 ▾"
 	city_navigation.flat = false
 	city_navigation.focus_mode = Control.FOCUS_NONE
 	row.add_child(city_navigation)
 	var popup: PopupMenu = city_navigation.get_popup()
-	for title: String in ["外城 · 300×300", "皇城全景", "太和殿", "御花园", "居民集市", "府邸", "北城门", "南城门", "西城门", "东城门"]:
+	for title: String in ["外城 · 300×300", "皇城全景", "太和殿", "御花园", "居民集市", "府邸", "北城门", "南城门", "西城门", "东城门", "城外民田", "城外牧场"]:
 		popup.add_item(title)
 	popup.id_pressed.connect(_visit_city)
 
@@ -413,13 +420,14 @@ func _visit_city(index: int) -> void:
 	if index < 2:
 		town_map.visit_capital_area(Capital.OUTER if index == 0 else Capital.INNER)
 		return
-	if index in [4, 5]:
+	if index in [4, 5, 10, 11]:
+		var kind: String = {4:"b_market",5:"b_manor",10:"b_farm",11:"b_ranch"}[index]
 		var candidates: Array = []
 		for building: Dictionary in world.buildings:
-			if building["def_id"] == ("b_market" if index == 4 else "b_manor"):
+			if building["def_id"] == kind:
 				candidates.append(building)
 		if candidates.is_empty():
-			status_label.text = "暂未形成集市" if index == 4 else "居民尚未营建府邸"
+			status_label.text = "暂无%s" % {4:"居民集市",5:"府邸",10:"城外民田",11:"城外牧场"}[index]
 			return
 		var record: Dictionary = candidates[0]
 		if index == 5:
@@ -897,8 +905,10 @@ func _show_resident_row(row: int) -> void:
 		"","[b]上日实征[/b]","田赋 %d粮　渔税 %d粮　商税 %d金" % [entry["grain"],entry["fish"],entry["commerce"]]])
 	for record: Dictionary in world.buildings:
 		var owner: int = world.household_economy["property"].get(record["id"],world.royal_works["homes"].get(record["id"],-1))
-		if owner==i:
-			details.append("地籍 · "+town_map.building_title(record["id"]) + " (%d,%d)" % [record["cell"][0],record["cell"][1]])
+		var stake: int = 100-world.royal_works["shares"].get(record["id"],0)
+		if owner==i and stake>0:
+			var share_text: String = " · 持股 %d%%" % stake if stake<100 else ""
+			details.append("地籍 · "+town_map.building_title(record["id"]) + " (%d,%d)" % [record["cell"][0],record["cell"][1]]+share_text)
 	resident_details.text = "\n".join(details)
 	resident_details.scroll_to_line(0)
 	resident_home.disabled = entry["address"].is_empty()
@@ -1034,11 +1044,17 @@ func _process(delta: float) -> void:
 	if progress == null:
 		return
 	var before: int = world.tick
-	clock.advance(delta)
+	clock.advance_real(delta)
+	town_map.sync_hour(_hour())
 	if world.tick != before:
 		_refresh()
 	elif not world.paused:
 		progress.value = (world.tick % State.DAY_TICKS) + world.subsecond
+
+
+# 时辰换算：沿用存档里的当日进度，与通勤和灯火使用同一个时间。
+func _hour() -> float:
+	return ((world.tick % State.DAY_TICKS)+world.subsecond)*24.0/State.DAY_TICKS
 
 
 # 刷新模块：日期、库存与账单全部来自同一份世界数据。
@@ -1053,10 +1069,11 @@ func _refresh() -> void:
 	_refresh_population()
 	_refresh_works()
 	town_map.sync_capital(world.capital_layout, world.population)
+	town_map.sync_hour(_hour())
 	_refresh_estate()
 	_refresh_inspection()
 	_set_numbers({
-		"date": "第%d日 %02d时" % [world.current_day(), int((world.tick % State.DAY_TICKS) * 24.0 / State.DAY_TICKS)],
+		"date": "第%d日 %02d时 · %s" % [world.current_day(), int(_hour()), "白昼" if _hour()>=6.0 and _hour()<18.0 else "夜间"],
 		"population": world.population, "hud_workforce": world.workforce_capacity(), "hud_idle": world.idle_workers(),
 		"food": world.resources["food"], "gold": world.resources["gold"],
 		"wood": world.resources["wood"], "stone": world.resources["stone"],
@@ -1100,6 +1117,10 @@ func _refresh() -> void:
 		displayed_building_tick = world.tick
 		town_map.sync_property(world.household_economy.get("property", {}), [world.household_economy.get("civil",-1),world.household_economy.get("general",-1)])
 		town_map.sync_buildings(world.buildings)
+	if world.capital_layout:
+		Register.sync_people(world)
+		Register.assign_homes(world)
+		town_map.sync_commutes(world)
 
 
 # 暂停模块：冻结战略时钟但保持界面与保存操作可用。
@@ -1411,9 +1432,14 @@ func _sync_building_view() -> void:
 	town_map.sync_palace(world.palace_decor)
 	palace_menu.visible = world.capital_layout
 	town_map.sync_capital(world.capital_layout, world.population)
+	town_map.sync_hour(_hour())
 	city_navigation.visible = world.capital_layout
 	town_map.sync_property(world.household_economy.get("property", {}), [world.household_economy.get("civil",-1),world.household_economy.get("general",-1)])
 	town_map.sync_buildings(world.buildings)
+	if world.capital_layout:
+		Register.sync_people(world)
+		Register.assign_homes(world)
+		town_map.sync_commutes(world)
 	town_map.sync_resources(world.resources)
 
 
@@ -1526,8 +1552,10 @@ func _update_appointment(_option: int) -> void:
 	var wealth: int = HouseEconomy.worth(world, selected_household)
 	var standing: String = "富裕" if wealth >= HouseEconomy.OFFICE_WEALTH else ("贫困" if wealth < 75 else "殷实")
 	for building: Dictionary in world.buildings:
-		if state["property"].get(building["id"], -1) == selected_household:
-			buildings.append(HouseEconomy.TITLES[building["def_id"]])
+		var stake: int = 100-world.royal_works["shares"].get(building["id"],0)
+		if state["property"].get(building["id"], -1) == selected_household and stake>0:
+			var share_text: String = "（%d%%）" % stake if stake<100 else ""
+			buildings.append(HouseEconomy.TITLES[building["def_id"]]+share_text)
 	household_detail.text = "第%d户 · %s · 成人%d · 儿童%d\n现金%d金 · 田地%d亩 · 渔船%d艘\n%s · 上日净入%+d金 · 雇工%d · 商税%d金\n私产：%s\n文才%d · 武略%d；候选家资至少%d金，能力至少60。" % [
 		selected_household + 1, standing, family["adults"], family["children"].size(), asset["cash"], asset["land"], asset["boats"],
 		asset["occupation"], asset["income"], asset["hired"], asset["tax"], "、".join(buildings) if not buildings.is_empty() else "无",
@@ -2018,9 +2046,29 @@ func _build_inspection_card() -> void:
 	inspection_remove.focus_mode = Control.FOCUS_NONE
 	inspection_remove.pressed.connect(_request_removal)
 	contents.add_child(inspection_remove)
+	asset_card = VBoxContainer.new()
+	contents.add_child(asset_card)
+	asset_label = Label.new()
+	asset_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	asset_card.add_child(asset_label)
 	var finance := HBoxContainer.new()
-	contents.add_child(finance)
-	invest_button = _button(finance,"认购10%股份",_invest_selected)
+	asset_card.add_child(finance)
+	equity_points = SpinBox.new()
+	equity_points.min_value = 1
+	equity_points.max_value = 100
+	equity_points.value = 10
+	equity_points.suffix = "%"
+	equity_points.value_changed.connect(func(_points: float) -> void: _refresh_asset())
+	finance.add_child(equity_points)
+	invest_button = _button(finance,"购买股份",_request_equity.bind(false))
+	var acquisition := HBoxContainer.new()
+	asset_card.add_child(acquisition)
+	buyout_button = _button(acquisition,"收购商铺",_request_equity.bind(true))
+	equity_dialog = ConfirmationDialog.new()
+	equity_dialog.exclusive = true
+	equity_dialog.get_ok_button().text = "确认支付"
+	equity_dialog.confirmed.connect(_confirm_equity)
+	add_child(equity_dialog)
 	removal_dialog = ConfirmationDialog.new()
 	removal_dialog.exclusive = true
 	removal_dialog.get_ok_button().text = "确认执行"
@@ -2084,13 +2132,54 @@ func _refresh_residence_card(record: Dictionary) -> void:
 	resident_card.text = "\n".join(lines)
 
 
-# 股权入口：向居民酒楼或客栈业主支付认购款。
-func _invest_selected() -> void:
-	if world.capital_layout and Works.invest(world,inspected_building_id):
-		status_label.text = "认购成功，营业净利将按占股分红"
-		_refresh()
-	else:
-		status_label.text = "认购失败：请检查库款、商户与持股上限"
+# 商铺卡片：并排展示市值、最新净利、估值依据和余下股权价格。
+func _refresh_asset() -> void:
+	var offer: Dictionary = Works.quote(world,inspected_building_id) if world.capital_layout else {}
+	asset_card.visible = not offer.is_empty()
+	if offer.is_empty():
+		return
+	var held: int = offer["share"]
+	var available: int = 100-held
+	var stats: String = "暂无完整营业日" if offer["days"]==0 else "上日净利 %+d 金 · 近%d日均 %+0.1f 金" % [offer["latest"],offer["days"],offer["average"]]
+	var ownership: String = "皇家全资 · 原商户受托经营" if held==100 else "皇家持有 %d%% · 商户持有 %d%%" % [held,available]
+	asset_label.text = "商铺市值 %d 金\n%s\n%s" % [offer["value"],stats,ownership]
+	equity_points.get_parent().visible = available>0
+	buyout_button.visible = available>0
+	if available==0:
+		return
+	equity_points.set_block_signals(true)
+	equity_points.max_value = available
+	equity_points.set_value_no_signal(clampi(int(equity_points.value),1,available))
+	equity_points.set_block_signals(false)
+	var due: int = Works.share_price(offer["value"],held,int(equity_points.value))
+	var total: int = Works.share_price(offer["value"],held,available)
+	invest_button.text = "入股 · %d金" % due
+	buyout_button.text = "收购剩余 %d%% · %d金" % [available,total]
+	var capacity: int = 1000000-world.household_economy["families"][offer["owner"]]["cash"]
+	var budget: int = mini(world.resources["gold"],capacity)
+	invest_button.disabled = due>budget
+	buyout_button.disabled = total>budget
+
+
+# 付款确认：只使用玩家确认的商铺及当时的报价，日结后报价过期需重开窗口。
+func _request_equity(buy_all: bool) -> void:
+	var offer: Dictionary = Works.quote(world,inspected_building_id)
+	if offer.is_empty() or offer["share"]>=100:
+		return
+	var points: int = 100-offer["share"] if buy_all else int(equity_points.value)
+	var due: int = Works.share_price(offer["value"],offer["share"],points)
+	equity_order = {"id":inspected_building_id,"points":points,"offer":offer}
+	equity_dialog.title = "确认收购商铺" if offer["share"]+points==100 else "确认购买股份"
+	equity_dialog.dialog_text = "%s\n本次支付 %d 金，获得 %d%% 股份。\n成交后持股 %d%%，营业净利按占比划拨。" % [town_map.building_title(inspected_building_id),due,points,offer["share"]+points]
+	equity_dialog.popup_centered(Vector2i(430,200))
+
+
+# 成交模块：先校验再划款，交易结束立即更新库款和详情。
+func _confirm_equity() -> void:
+	var filled: bool = Works.invest(world,equity_order["id"],equity_order["points"],equity_order["offer"])
+	equity_order.clear()
+	status_label.text = "交易成功，日结按新持股比例划拨净利" if filled else "交易未完成：报价或资金已变更，请重新确认"
+	_refresh()
 
 
 # 详情刷新模块：施工、暂停、岗位和读档后始终从当前世界重算显示及按钮状态。
@@ -2108,7 +2197,11 @@ func _refresh_inspection() -> void:
 	if owner >= 0:
 		var property: Dictionary = Inspector.find(world, inspected_building_id)
 		var extent: Vector2i = Construction.Catalog.footprint(property)
-		detail = {"text": "%s ｜ 第%d户私产%s" % [town_map.building_title(inspected_building_id), owner + 1,
+		var held: int = world.royal_works["shares"].get(inspected_building_id,0)
+		var title: String = "第%d户私产" % (owner+1)
+		if held>0:
+			title = "皇家全资" if held==100 else "皇家与第%d户共同持有" % (owner+1)
+		detail = {"text": "%s ｜ %s%s" % [town_map.building_title(inspected_building_id), title,
 			" · 施工中" if property["state"] == "constructing" else ""],
 			"numbers": {"size": "%d × %d" % [extent.x, extent.y]}, "increase": false, "decrease": false}
 	if not site.is_empty():
@@ -2136,11 +2229,9 @@ func _refresh_inspection() -> void:
 		estate_producer_add.disabled = world.estate_idle() == 0 or int(record["workers"]) >= int(definition.get("worker_slots"))
 		estate_producer_remove.disabled = int(world.estate_posts.get(inspected_building_id, 0)) == 0
 	site_builder_actions.visible = owner < 0 and record.get("state") == "constructing"
-	invest_button.visible = world.capital_layout and owner >= 0 and record.get("def_id") in Works.ELIGIBLE_SHOPS
-	if invest_button.visible:
-		var share: int = world.royal_works["shares"].get(inspected_building_id,0)
-		invest_button.text = "认购10%% · %d金 ｜ 已持有%d%%" % [Works.INVESTMENT,share]
-		invest_button.disabled = share >= Works.MAX_SHARE or world.resources["gold"] < Works.INVESTMENT
+	_refresh_asset()
+	if asset_card.visible:
+		numbers["building_size"].get_parent().get_parent().get_parent().hide()
 	inspection_remove.visible = owner < 0 and not record.is_empty() and record["def_id"] not in ["b_hall", "b_market"]
 	inspection_remove.text = "取消施工" if record.get("state") == "constructing" else "拆除建筑"
 	var military: bool = record.get("def_id") == "b_barracks"

@@ -79,6 +79,7 @@ func _run() -> void:
 	_check_investment()
 	_check_player_view()
 	_check_royal_works()
+	_check_rural_migration()
 	_check_register()
 	if not failed:
 		print("HOUSEHOLD_PASS: migration, property, farming, fishing, paid labor, shop tax, appointment, deterministic save and UI")
@@ -158,9 +159,19 @@ func _check_royal_works() -> void:
 	family["cash"] = 500
 	var inn: String = Market.found(world,Vector2i(16,12),Catalog.INN)
 	world.household_economy["property"][inn] = 2
+	var initial: Dictionary = works.quote(world,inn)
+	_check(initial["days"]==0 and works.distribute(world,inn,34)==0,"没有持股时也应记录净利")
+	var offer: Dictionary = works.quote(world,inn)
 	var balance: int = world.resources["gold"]
-	_check(works.invest(world,inn) and world.resources["gold"] == balance-60 and family["cash"] == 560,"认购未从皇家付款给业主")
-	_check(works.distribute(world,inn,34)==3 and world.royal_works["dividends"]==3,"分红未按净利和比例计算")
+	var due: int = works.share_price(offer["value"],0,13)
+	_check(offer["value"]>initial["value"] and not works.invest(world,inn,13,initial),"营业利润未影响估值或过时报价被接受")
+	_check(works.invest(world,inn,13,offer) and world.resources["gold"]==balance-due and family["cash"]==500+due,"认购未按实际股比收费")
+	_check(works.distribute(world,inn,34)==4 and world.royal_works["dividends"]==4,"分红未按净利和比例计算")
+	var partial: Dictionary = works.quote(world,inn)
+	_check(not works.invest(world,inn,87,partial),"资金不足仍可收购")
+	world.resources["gold"] = 2000
+	_check(works.invest(world,inn,87,partial) and works.quote(world,inn)["share"]==100,"收购未取得全部股份")
+	_check(works.distribute(world,inn,34)==34 and works.distribute(world,inn,-8)==0,"全资分红或亏损记录错误")
 	var road := Vector2i(13,12)
 	_check(works.publish(world,road)["ok"] and not works.publish(world,road)["ok"],"重复投标覆盖地块")
 	_check(State.from_snapshot(JSON.parse_string(JSON.stringify(world.snapshot()))) != null,"待投标订单无法读档")
@@ -210,3 +221,32 @@ func _check_register() -> void:
 	var state: RefCounted = State.from_snapshot(JSON.parse_string(JSON.stringify(world.snapshot())))
 	_check(state!=null and state.resident_register==world.resident_register,"住址、成员及实征记录未成功恢复")
 	_check(world.resident_register[0]["address"]!="","人口基础地址未分配")
+
+# 郊地验收：旧档整块迁出并保留资产ID、人员、收据和户口，迁后可再次读档。
+func _check_rural_migration() -> void:
+	var world: RefCounted = State.new()
+	Economy.activate(world,71342)
+	world.capital_layout = true
+	var farm: String = Market.found(world,Vector2i(29,14),Catalog.FARM)
+	var ranch: String = Market.found(world,Vector2i(39,14),Catalog.for_construction("b_ranch",true))
+	world.household_economy["property"][farm]=1
+	var before: Dictionary = world.snapshot()
+	before["version"]=31
+	before["royal_works"].erase("profits")
+	_check(State.from_snapshot(world.snapshot())==null,"新档允许农牧地与城市边界相交")
+	var migrated: RefCounted = State.from_snapshot(JSON.parse_string(JSON.stringify(before)))
+	_check(migrated!=null,"旧档城市农牧地无法迁移")
+	if migrated==null:
+		return
+	var ranch_present: bool = false
+	for record: Dictionary in migrated.buildings:
+		if record["def_id"] in State.Rural.FARM_KINDS:
+			var at := Vector2i(record["cell"][0],record["cell"][1])
+			_check(not State.Capital.OUTER.intersects(Rect2i(at,Catalog.footprint(record))),"农牧地未完全迁出城")
+			ranch_present=ranch_present or record["id"]==ranch
+	_check(ranch_present and migrated.household_economy["property"][farm]==1,"迁址丢失牧场或农田地契")
+	_check(migrated.resources==world.resources and State.from_snapshot(JSON.parse_string(JSON.stringify(migrated.snapshot())))!=null,"迁址扣费或新档无法读取")
+	_check(not State.Rural.Place.check_building(Vector2i(39,14),Catalog.RANCH,{},true)["ok"],"城内仍可新增牧场")
+	var lots: Array[Dictionary] = State.Rural.lots(migrated)
+	var routes: Dictionary = State.Rural.routes(migrated,lots)
+	_check(not routes.is_empty() and routes.size()==lots.size(),"迁后农户没有通勤路线")
