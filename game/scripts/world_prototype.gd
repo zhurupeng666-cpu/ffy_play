@@ -36,6 +36,7 @@ const HouseEconomy = preload("res://scripts/household_economy.gd")
 const Capital = preload("res://scripts/capital_layout.gd")
 const Courts = preload("res://scripts/palace_courtyards.gd")
 const Works = preload("res://scripts/royal_works.gd")
+const Register = preload("res://scripts/resident_register.gd")
 const Estate = preload("res://scripts/estate_labor.gd")
 const Clock = preload("res://scripts/strategic_clock.gd")
 const Store = preload("res://scripts/world_save_repository.gd")
@@ -48,6 +49,13 @@ var auto_lifecycle_for_test: bool = false
 var automatic_lifecycle: bool = false
 var works_totals: Label
 var invest_button: Button
+var resident_window: Window
+var resident_list: ItemList
+var resident_filter: LineEdit
+var resident_details: RichTextLabel
+var resident_scope: String = ""
+var resident_home: Button
+var resident_card: Label
 var household_detail: Label
 var household_report: Label
 var civil_button: Button
@@ -285,6 +293,8 @@ func _build_ui() -> void:
 	_build_management_drawer(columns)
 	_build_command_bar(layout)
 	_build_save_picker()
+	if not legacy_economy_fixture:
+		_build_resident_window()
 	_sync_building_view()
 	_refresh_map_info()
 
@@ -742,6 +752,8 @@ func _build_command_bar(layout: VBoxContainer) -> void:
 	_button(toolbar, "城镇", _open_management.bind(1, true)).icon = HudIcons.texture("people")
 	_button(toolbar, "军团", _open_management.bind(2, true)).icon = HudIcons.texture("shield")
 	_button(toolbar, "账本", _open_management.bind(3, true)).icon = HudIcons.texture("book")
+	if not legacy_economy_fixture:
+		_button(toolbar,"居民册",_open_resident_register).icon = HudIcons.texture("people")
 
 	placement_label = Label.new()
 	placement_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
@@ -757,6 +769,155 @@ func _build_command_bar(layout: VBoxContainer) -> void:
 	save_stamp = Label.new()
 	save_stamp.add_theme_color_override("font_color", Color("#c8b88b"))
 	notices.add_child(save_stamp)
+
+
+# 居民册界面：左侧检索住户，右侧阅读地址、成员、征收和产业。
+func _build_resident_window() -> void:
+	resident_window = Window.new()
+	resident_window.title = "边境镇居民册"
+	resident_window.visible = false
+	resident_window.transient = true
+	resident_window.exclusive = true
+	resident_window.min_size = Vector2i(690,400)
+	add_child(resident_window)
+	resident_window.close_requested.connect(resident_window.hide)
+	var margin := MarginContainer.new()
+	resident_window.add_child(margin)
+	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	for edge: String in ["left","right","top","bottom"]:
+		margin.add_theme_constant_override("margin_"+edge,14)
+	var body := VBoxContainer.new()
+	body.theme = theme
+	margin.add_child(body)
+	var search := HBoxContainer.new()
+	body.add_child(search)
+	resident_filter = LineEdit.new()
+	resident_filter.placeholder_text = "按姓名、户号或坐标查找"
+	resident_filter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	search.add_child(resident_filter)
+	resident_filter.text_changed.connect(_populate_resident_list.unbind(1))
+	_button(search,"全部住户",_show_all_residents)
+	var split := HSplitContainer.new()
+	split.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	split.split_offset = 235
+	body.add_child(split)
+	resident_list = ItemList.new()
+	resident_list.custom_minimum_size.x = 205
+	resident_list.item_selected.connect(_show_resident_row)
+	split.add_child(resident_list)
+	resident_details = RichTextLabel.new()
+	resident_details.bbcode_enabled = true
+	resident_details.selection_enabled = true
+	resident_details.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	split.add_child(resident_details)
+	var footer := HBoxContainer.new()
+	body.add_child(footer)
+	resident_home = _button(footer,"定位住址",_jump_to_household)
+	_button(footer,"返回地图",resident_window.hide)
+
+
+# 居民册入口：可看全城，也可先按所选住宅筛选。
+func _open_resident_register() -> void:
+	_show_register("")
+
+
+# 房屋联动：从建筑详情进入本宅住户清单。
+func _open_home_register() -> void:
+	_show_register(inspected_building_id)
+
+
+# 弹窗模块：刷新住址后填充居民册，保持地图操作焦点明确。
+func _show_register(address: String) -> void:
+	Register.sync_people(world)
+	Register.assign_homes(world)
+	resident_scope = address
+	resident_filter.clear()
+	_populate_resident_list()
+	resident_window.popup_centered(Vector2i(760,470))
+
+
+# 清除筛选：从某宅回到全城户籍。
+func _show_all_residents() -> void:
+	resident_scope = ""
+	resident_filter.clear()
+	_populate_resident_list()
+
+
+# 地址显示：将房号折合为地点、建筑和有符号地图坐标。
+func _address_text(address: String) -> String:
+	if address.is_empty():
+		return "居所待分配"
+	if address=="building_000001":
+		return "边境镇 · 领主厅附属住区 (6,6)"
+	var record: Dictionary = Inspector.find(world,address)
+	if record.is_empty():
+		return "居所待分配"
+	return "边境镇 · %s · %s (%d,%d)" % [town_map.building_title(address),address.trim_prefix("building_"),record["cell"][0],record["cell"][1]]
+
+
+# 检索模块：跨成员姓名、户号、户主和地址搜索。
+func _populate_resident_list() -> void:
+	resident_list.clear()
+	var key: String = resident_filter.text.strip_edges()
+	for i: int in range(world.resident_register.size()):
+		var entry: Dictionary = world.resident_register[i]
+		if not resident_scope.is_empty() and entry["address"] != resident_scope:
+			continue
+		var title: String = "%03d户 · %s · %d人" % [i+1,entry["people"][0]["name"],entry["people"].size()]
+		var haystack: String = title + _address_text(entry["address"])
+		for person: Dictionary in entry["people"]:
+			haystack += person["name"]
+		if not key.is_empty() and not haystack.contains(key):
+			continue
+		resident_list.add_item(title)
+		resident_list.set_item_metadata(resident_list.item_count-1,i)
+	if resident_list.item_count>0:
+		resident_list.select(0)
+		_show_resident_row(0)
+	else:
+		resident_details.text = "没有符合条件的住户"
+		resident_home.disabled = true
+
+
+# 户帖模块：使用实际收成税额和产业估值，迁入记录保留登记日期。
+func _show_resident_row(row: int) -> void:
+	var i: int = resident_list.get_item_metadata(row)
+	var entry: Dictionary = world.resident_register[i]
+	var asset: Dictionary = world.household_economy["families"][i]
+	var worth: int = HouseEconomy.worth(world,i)
+	var rank: String = "富裕户" if worth >= HouseEconomy.OFFICE_WEALTH else ("贫困户" if worth<75 else "殷实户")
+	var occupation: String = "税务官户" if world.household_economy["civil"]==i else ("武将户" if world.household_economy["general"]==i else rank)
+	var details: PackedStringArray = ["[font_size=25][b]第%03d户 · %s[/b][/font_size]" % [i+1,entry["people"][0]["name"]],
+		_address_text(entry["address"]),"登记于第%d日　%s　%s" % [entry["registered"],occupation,asset["occupation"]],
+		"", "[b]家庭成员 · %d人[/b]" % entry["people"].size()]
+	for p: int in range(entry["people"].size()):
+		details.append(Register.member_line(world,i,p))
+	details.append_array(["","[b]田宅与资产[/b]","田产 %d亩　渔船 %d艘　现金 %d金" % [asset["land"],asset["boats"],asset["cash"]],
+		"资产估值 %d金　上日净收入 %+d金　雇工 %d人" % [worth,asset["income"],asset["hired"]],
+		"","[b]上日实征[/b]","田赋 %d粮　渔税 %d粮　商税 %d金" % [entry["grain"],entry["fish"],entry["commerce"]]])
+	for record: Dictionary in world.buildings:
+		var owner: int = world.household_economy["property"].get(record["id"],world.royal_works["homes"].get(record["id"],-1))
+		if owner==i:
+			details.append("地籍 · "+town_map.building_title(record["id"]) + " (%d,%d)" % [record["cell"][0],record["cell"][1]])
+	resident_details.text = "\n".join(details)
+	resident_details.scroll_to_line(0)
+	resident_home.disabled = entry["address"].is_empty()
+
+
+# 定位模块：看完户帖即可回到地图选中同一栋房屋。
+func _jump_to_household() -> void:
+	var rows: PackedInt32Array = resident_list.get_selected_items()
+	if rows.is_empty():
+		return
+	var i: int = resident_list.get_item_metadata(rows[0])
+	var id: String = world.resident_register[i]["address"]
+	var record: Dictionary = Inspector.find(world,id)
+	if record.is_empty():
+		return
+	resident_window.hide()
+	_show_region_view(false)
+	town_map.visit_site(Vector2i(record["cell"][0],record["cell"][1]))
+	_inspect_building(id,true)
 
 
 # 建造分类：展示真实占地，从选项自动进入对应地块预览。
@@ -1781,6 +1942,14 @@ func _build_inspection_card() -> void:
 	inspection_label = Label.new()
 	inspection_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	contents.add_child(inspection_label)
+	if not legacy_economy_fixture:
+		resident_card = Label.new()
+		resident_card.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		contents.add_child(resident_card)
+		var quick := HBoxContainer.new()
+		contents.add_child(quick)
+		_button(quick,"查看本宅居民册",_open_home_register)
+		resident_card.set_meta("actions",quick)
 	site_builder_actions = VBoxContainer.new()
 	contents.add_child(site_builder_actions)
 	var crew_buttons := HBoxContainer.new()
@@ -1892,6 +2061,29 @@ func _inspect_building(id: String, reveal: bool) -> void:
 		management_scroll.set_deferred("scroll_vertical", 0)
 
 
+# 住宅摘要：区分宅主与住户，合住时显示每户全部个人资料。
+func _refresh_residence_card(record: Dictionary) -> void:
+	var housing: bool = record.get("def_id") in ["b_house","b_manor"] and record.get("state")=="ready"
+	resident_card.visible = housing
+	resident_card.get_meta("actions").visible = housing
+	if not housing:
+		return
+	Register.sync_people(world)
+	Register.assign_homes(world)
+	var id: String = record["id"]
+	var households: Array[int] = Register.residents(world,id)
+	var owner: int = world.household_economy["property"].get(id,world.royal_works["homes"].get(id,-1))
+	var lines: PackedStringArray = ["宅主：第%d户 · %s" % [owner+1,world.resident_register[owner]["people"][0]["name"]] if owner>=0 else "宅主：公有分配住宅"]
+	for i: int in households:
+		var people: Array = world.resident_register[i]["people"]
+		lines.append("第%d户 ｜ %d口" % [i+1,people.size()])
+		for p: int in range(people.size()):
+			lines.append(Register.member_line(world,i,p))
+	if households.is_empty():
+		lines.append("目前空置")
+	resident_card.text = "\n".join(lines)
+
+
 # 股权入口：向居民酒楼或客栈业主支付认购款。
 func _invest_selected() -> void:
 	if world.capital_layout and Works.invest(world,inspected_building_id):
@@ -1935,6 +2127,8 @@ func _refresh_inspection() -> void:
 	inspection_decrease.disabled = not detail["decrease"]
 	inspection_increase.get_parent().visible = bool(detail.get("producer", false))
 	var record: Dictionary = Inspector.find(world, inspected_building_id)
+	if resident_card != null:
+		_refresh_residence_card(record)
 	var estate_producer: bool = world.estate_workers > 0 and bool(detail.get("producer", false))
 	estate_producer_add.get_parent().visible = estate_producer
 	if estate_producer:

@@ -150,6 +150,11 @@ static func settle(world: RefCounted) -> Dictionary:
 		var supplies: int = job["shop"] * 3
 		var shop_due: int = roundi(gross * (SHOP_RATES[world.tax_policy] + tax_bonus(world)) / 100.0)
 		result["shop_tax"] += shop_due
+		if world.capital_layout and index < world.resident_register.size():
+			var register: Dictionary = world.resident_register[index]
+			register["grain"]=grain_due
+			register["fish"]=fish_due
+			register["commerce"]=shop_due
 		result["hires"] += int(family["hired"])
 		var net: int = maxi(0,gross-supplies-shop_due)
 		if net > 0 and world.capital_layout and not world.royal_works["shares"].is_empty():
@@ -359,7 +364,8 @@ static func _invest_in_buildings(world: RefCounted, day: int, trades: Dictionary
 		if kind.is_empty():
 			continue
 		var definition: Resource = Catalog.for_construction(kind, world.capital_layout and kind == "b_manor")
-		var slot: Vector2i = _shop_site(ways, markets, definition, occupied, world.capital_layout)
+		var blocked: Dictionary = _estate_buffer(world,occupied) if kind=="b_manor" and world.capital_layout else occupied
+		var slot: Vector2i = _shop_site(ways, markets, definition, blocked, world.capital_layout)
 		if slot != Grid.INVALID:
 			if world.capital_layout:
 				var wood: int = 28 if kind=="b_manor" else (4 if kind=="b_farm" else 12)
@@ -375,6 +381,17 @@ static func _invest_in_buildings(world: RefCounted, day: int, trades: Dictionary
 					world.buildings.back()["front"] = front
 			state["property"][id] = owner
 			return
+
+
+# 府邸缓冲：新宅院和其他府邸之间保留六格通道和街坊用地。
+static func _estate_buffer(world: RefCounted, occupied: Dictionary) -> Dictionary:
+	var result: Dictionary = occupied.duplicate()
+	for record: Dictionary in world.buildings:
+		if record["def_id"]=="b_manor":
+			var point := Vector2i(record["cell"][0],record["cell"][1])-Vector2i(6,6)
+			for cell: Vector2i in Placement.footprint_cells(point,Catalog.footprint(record)+Vector2i(12,12)):
+				result[cell]="estate-spacing"
+	return result
 
 
 # 临街选址：商铺距集市有限；府邸也需道路，且不能挤占既有建筑。

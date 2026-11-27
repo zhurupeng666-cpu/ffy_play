@@ -23,6 +23,7 @@ const DistrictMarket = preload("res://scripts/district_market.gd")
 const Capital = preload("res://scripts/capital_layout.gd")
 const Courts = preload("res://scripts/palace_courtyards.gd")
 const Works = preload("res://scripts/royal_works.gd")
+const Register = preload("res://scripts/resident_register.gd")
 const HouseEconomy = preload("res://scripts/household_economy.gd")
 const Estate = preload("res://scripts/estate_labor.gd")
 var tick: int = 0
@@ -33,6 +34,7 @@ var household_economy: Dictionary = {}
 var capital_layout: bool = false
 var palace_decor: Dictionary = Courts.initial()
 var royal_works: Dictionary = Works.initial()
+var resident_register: Array = []
 var households: Array = Population.initial(Population.START_POPULATION, Population.START_CHILDREN, 1)
 var population_report: Dictionary = {}
 # 领主劳役：建筑工人数包含双方，单独记录领主人手以保留原生产公式。
@@ -105,6 +107,8 @@ func current_day() -> int:
 # 日结模块：固定先收获再消费，记录可重算的账单，同一天不重复结算。
 func settle_days() -> void:
 	while last_settled_day < current_day() - 1:
+		if capital_layout:
+			Register.sync_people(self)
 		var private_bill: Dictionary = HouseEconomy.settle(self) if not household_economy.is_empty() else {}
 		var sources: Dictionary = collect_food()
 		if not private_bill.is_empty():
@@ -134,6 +138,9 @@ func settle_days() -> void:
 		if not household_economy.is_empty():
 			HouseEconomy.enroll(self)
 		DistrictMarket.settle(self)
+		if capital_layout:
+			Register.sync_people(self)
+			Register.assign_homes(self)
 		last_bill = "第%d日日结：产粮 +%d（入库%d，溢出%d），消耗 -%d，净变%+d，税收 +%d" % [last_settled_day, last_food_ledger["produced"], last_food_ledger["stored"], last_food_ledger["overflow"], last_food_ledger["consumed"], last_food_ledger["net"], tax]
 		if not troops.is_empty() or int(last_army_ledger["food_needed"]) > 0 or int(last_army_ledger["wage_needed"]) > 0:
 			last_bill += "；军粮-%d，军饷-%d" % [last_army_ledger["food_used"], last_army_ledger["wage_paid"]]
@@ -149,10 +156,13 @@ func snapshot() -> Dictionary:
 		data["version"] = 27
 		data["household_economy"] = household_economy.duplicate(true)
 	if capital_layout:
-		data["version"] = 30
+		Register.sync_people(self)
+		Register.assign_homes(self)
+		data["version"] = 31
 		data["capital_layout"] = true
 		data["palace_decor"] = palace_decor.duplicate(true)
 		data["royal_works"] = royal_works.duplicate(true)
+		data["resident_register"] = resident_register.duplicate(true)
 	return data
 
 
@@ -163,7 +173,7 @@ static func from_snapshot(data: Variant) -> RefCounted:
 	for key: String in ["version", "tick", "last_settled_day", "population", "speed"]:
 		if not _valid_integer(data.get(key), 0, 120000000):
 			return null
-	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30] or int(data["speed"]) not in [1, 2, 4]:
+	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31] or int(data["speed"]) not in [1, 2, 4]:
 		return null
 	var version: int = int(data["version"])
 	if not _valid_integer(data["population"], Population.START_POPULATION, Population.MAX_POPULATION) or (version < 25 and data["population"] != Population.START_POPULATION):
@@ -292,6 +302,14 @@ static func from_snapshot(data: Variant) -> RefCounted:
 		return null
 	if version >= 30 and not Works.restore(state,data.get("royal_works")):
 		return null
+	if state.capital_layout:
+		if version >= 31:
+			if not Register.restore(state,data.get("resident_register")):
+				return null
+		else:
+			Register.spread_manors(state)
+			Register.sync_people(state)
+		Register.assign_homes(state)
 	if state.idle_workers() < 0 or state.population > state.housing_capacity():
 		return null
 	return state

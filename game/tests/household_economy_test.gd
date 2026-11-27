@@ -79,6 +79,7 @@ func _run() -> void:
 	_check_investment()
 	_check_player_view()
 	_check_royal_works()
+	_check_register()
 	if not failed:
 		print("HOUSEHOLD_PASS: migration, property, farming, fishing, paid labor, shop tax, appointment, deterministic save and UI")
 	quit(1 if failed else 0)
@@ -190,3 +191,22 @@ func _check_royal_works() -> void:
 	second.free()
 	auto_accept_quit = true
 	DirAccess.remove_absolute(path)
+
+
+# 户籍验收：成年保留姓名，实征有据，住所和搜索可从读档恢复。
+func _check_register() -> void:
+	var world: RefCounted = State.new()
+	Economy.activate(world,71342)
+	world.capital_layout=true
+	world.resources["food"]=500
+	var entry: Dictionary = world.snapshot()["resident_register"][0]
+	var child: Dictionary = entry["people"].back()
+	var date: int = child["majority"]
+	world.paused=false
+	Clock.new(world).advance(State.DAY_TICKS*(date-1))
+	world.paused=true
+	var ready: Dictionary = world.resident_register[0]["people"][2]
+	_check(ready["name"]==child["name"] and State.Register.age(ready,date)==18,"成年使登记姓名变化")
+	var state: RefCounted = State.from_snapshot(JSON.parse_string(JSON.stringify(world.snapshot())))
+	_check(state!=null and state.resident_register==world.resident_register,"住址、成员及实征记录未成功恢复")
+	_check(world.resident_register[0]["address"]!="","人口基础地址未分配")
