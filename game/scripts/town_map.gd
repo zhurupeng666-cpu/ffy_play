@@ -67,6 +67,9 @@ var light_texture: GradientTexture2D
 var occupied_cells: Dictionary = {}
 var placed_buildings: Array = []
 var property: Dictionary = {}
+var farm_names: Dictionary = {}
+var farm_crops: Dictionary = {}
+var cultivated_districts: Array[Rect2i] = []
 var court_houses: Array = []
 # 点击几何：可见楼体与占地格共同用于选择，楼体以世界坐标缓存。
 var drawing_building: String = ""
@@ -294,6 +297,9 @@ func _draw_static_map(patch: Dictionary) -> void:
 			CapitalArt.courts(self,coverage,palace_decor)
 		CapitalArt.walls(self, coverage, false)
 		CapitalArt.walls(self, coverage, true)
+		for district: Rect2i in cultivated_districts:
+			if CapitalArt._visible(self,district.grow(1),coverage):
+				CapitalArt.field_district(self,district)
 	for record: Dictionary in placed_buildings:
 		if coverage.intersects(_building_bounds(record)):
 			_draw_foundation(record)
@@ -943,6 +949,9 @@ func _draw_foundation(record: Dictionary) -> void:
 			_draw_road(anchor)
 		return
 	var tint: Color = Color("#826340") if constructing else Color("#73664a")
+	if not constructing and farm_crops.has(record["id"]):
+		CapitalArt.field_plot(self,Rect2i(anchor,footprint),farm_crops[record["id"]])
+		return
 	if not constructing and record["def_id"] in ["b_farm", "b_ranch"]:
 		tint = Color("#786747") if record["def_id"] == "b_farm" else Color("#687343")
 	if not constructing and record["def_id"] == "b_fishery":
@@ -1095,6 +1104,10 @@ func _draw_map_objects(visible_objects: Rect2, decorate: bool) -> void:
 				pass
 			elif record["def_id"] in ["b_wall", "b_gate"]:
 				_draw_fortification(building_faces[drawing_building]["anchor"], center, record["def_id"] == "b_gate")
+			elif record["def_id"]=="b_farm" and farm_crops.has(record["id"]):
+				compound=false
+			elif record["def_id"] in ["b_restaurant","b_inn","b_tavern"] and record.get("large",false):
+				CapitalArt.hostelry(self,Rect2i(building_faces[drawing_building]["anchor"],Catalog.footprint(record)),record["def_id"],Streets.for_record(record,street_cells))
 			elif record["def_id"] == "b_manor" and record.get("large", false):
 				CapitalArt.manor(self, building_faces[drawing_building]["anchor"], Catalog.footprint(record), property.get(record["id"], -2) in court_houses, Streets.for_record(record, street_cells))
 			elif compound:
@@ -1199,6 +1212,30 @@ func sync_property(titles: Dictionary, officers: Array = []) -> void:
 			queue_redraw()
 
 
+# 农区同步：田色及地块名变化才重建静景，收成日结只刷新详情文字。
+func sync_farms(records: Array, crops: Dictionary, names: Dictionary) -> void:
+	farm_names=names
+	var grouped: Dictionary = {}
+	for record: Dictionary in records:
+		if not crops.has(record["id"]):
+			continue
+		var plot := Rect2i(Vector2i(record["cell"][0],record["cell"][1]),Catalog.footprint(record))
+		for district: Rect2i in Capital.FIELD_DISTRICTS:
+			if district.encloses(plot):
+				grouped[district]=grouped[district].merge(plot) if grouped.has(district) else plot
+				break
+	var current: Array[Rect2i] = []
+	for district: Rect2i in Capital.FIELD_DISTRICTS:
+		if grouped.has(district):
+			current.append(grouped[district])
+	if farm_crops==crops and cultivated_districts==current:
+		return
+	farm_crops=crops
+	cultivated_districts=current
+	static_dirty=true
+	_redraw_scene()
+
+
 # 名称模块：稳定建筑标识映射到现场标牌与详情标题。
 func building_title(id: String) -> String:
 	if capital_buildings.has(id):
@@ -1213,7 +1250,7 @@ func building_title(id: String) -> String:
 				if record["def_id"] == "b_manor" and record.get("large", false):
 					return "官员府邸" if property[id] in court_houses else "富商府邸"
 				if record["def_id"] == "b_farm":
-					return "民田"
+					return farm_names.get(id,"民田")
 				if record["def_id"] == "b_fishery":
 					return "民用码头"
 			return Catalog.find(record["def_id"]).get("display_name")

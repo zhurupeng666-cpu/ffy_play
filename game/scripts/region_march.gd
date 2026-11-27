@@ -78,6 +78,12 @@ static func dispatch(world: RefCounted, legion_id: String, target: String) -> bo
 # 归队模块：回城即释放行程记录，驻外军团的位置继续保存。
 static func advance(world: RefCounted) -> void:
 	for id: String in world.legion_trips.keys():
+		var trip: Dictionary = world.legion_trips[id]
+		if world.capital_layout and trip["arrives"]==world.tick:
+			var group: String = "出征军团"
+			if world.household_economy.get("legion","")==id:
+				group=world.household_name(world.household_economy["general"])+"统领的军团"
+			world.post_report("军务","军团抵达","%s已抵达%s。" % [group,LAYOUT.regions[trip["target"]]["title"]])
 		if destination(world, id) == LAYOUT.home_id and remaining(world, id) == 0:
 			world.legion_trips.erase(id)
 

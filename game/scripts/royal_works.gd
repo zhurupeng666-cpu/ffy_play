@@ -55,6 +55,7 @@ static func publish(world: RefCounted, cell: Vector2i) -> Dictionary:
 		return {"ok":false,"reason":"工程名额或皇家招标预算不足"}
 	world.resources["gold"] -= ROAD_BUDGET
 	roads.append({"cell":[cell.x,cell.y],"posted":world.last_settled_day,"owner":-1,"due":0,"bid":0})
+	world.post_report("工程","道路招标发布","路段 (%d,%d)，预留预算 %d 金。" % [cell.x,cell.y,ROAD_BUDGET])
 	return {"ok":true}
 
 
@@ -99,6 +100,7 @@ static func settle(world: RefCounted) -> void:
 			var cell := Vector2i(order["cell"][0],order["cell"][1])
 			Market.found(world,cell,Catalog.for_construction("b_road",true))
 			finished.append(order)
+			world.post_report("工程","道路完工验收","%s完成 (%d,%d) 路段，已支付工程款 %d 金。" % [world.household_name(worker),cell.x,cell.y,amount])
 	for order: Dictionary in finished:
 		world.royal_works["roads"].erase(order)
 	_build_home(world,day)
@@ -133,6 +135,7 @@ static func _award(world: RefCounted, order: Dictionary, active: Dictionary, day
 		order["bid"] = best
 		order["due"] = day+1
 		active[owner] = true
+		world.post_report("工程","道路工程中标","%s以 %d 金中标 (%d,%d)，第 %d 日交工。" % [world.household_name(owner),best,order["cell"][0],order["cell"][1],day+1])
 
 
 # 民居自建：住房压力触发，按日轮换家庭并靠近现有住区找临街地。
@@ -170,6 +173,7 @@ static func _build_home(world: RefCounted,day: int) -> void:
 			var id: String = Market.found(world,cell,Catalog.HOUSE)
 			world.buildings.back()["front"] = front
 			world.royal_works["homes"][id] = chosen
+			world.post_report("民生","居民自建完工","%s在 (%d,%d) 建成住宅。" % [world.household_name(chosen),cell.x,cell.y])
 			return
 
 
@@ -187,7 +191,8 @@ static func quote(world: RefCounted, id: String) -> Dictionary:
 			average += profit
 		if not history.is_empty():
 			average /= history.size()
-		var underlying: int = 95 + price(12,6)
+		var span: Vector2i = Catalog.footprint(record)
+		var underlying: int = 95 + price(12,6) + (span.x*span.y-9)*4
 		var value: int = maxi(underlying,roundi(underlying+average*20.0))
 		return {"value":value,"latest":0 if history.is_empty() else history.back(),"average":average,
 			"days":history.size(),"share":world.royal_works["shares"].get(id,0),"owner":owner}
@@ -211,6 +216,7 @@ static func invest(world: RefCounted, id: String, points: int, expected: Diction
 	world.resources["gold"] -= due
 	family["cash"] += due
 	world.royal_works["shares"][id] = offer["share"]+points
+	world.post_report("财务","商铺股权成交","向%s支付 %d 金，取得 %d%% 股份，现持股 %d%%。" % [world.household_name(offer["owner"]),due,points,offer["share"]+points])
 	return true
 
 
@@ -283,7 +289,7 @@ static func restore(world: RefCounted, raw: Variant, modern: bool) -> bool:
 		if (order["owner"]<0 and (order["bid"]!=0 or order["due"]!=0)) or (order["owner"]>=0 and (order["bid"]<30 or order["due"]<=order["posted"])):
 			return false
 		var cell := Vector2i(int(order["cell"][0]),int(order["cell"][1]))
-		if not Place.check_building(cell,Catalog.for_construction("b_road",true),occupied,true)["ok"]:
+		if not Place.check_building(cell,Catalog.for_construction("b_road",true),occupied,true,false)["ok"]:
 			return false
 		var normalized: Dictionary = {"cell":[cell.x,cell.y],"posted":int(order["posted"]),"owner":int(order["owner"]),"due":int(order["due"]),"bid":int(order["bid"])}
 		loaded["roads"].append(normalized)

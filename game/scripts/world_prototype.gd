@@ -48,6 +48,17 @@ var legacy_economy_fixture: bool = false
 var auto_lifecycle_for_test: bool = false
 var automatic_lifecycle: bool = false
 var works_totals: Label
+var resource_summary: Control
+var compact_resources: Dictionary = {}
+var notice_strip: HBoxContainer
+var court_button: Button
+var memorial_window: Window
+var memorial_filter: OptionButton
+var memorial_list: ItemList
+var memorial_detail: RichTextLabel
+var memorial_actions: HBoxContainer
+var memorial_signature: int = -1
+var field_card: Label
 var invest_button: Button
 var asset_card: VBoxContainer
 var asset_label: Label
@@ -238,9 +249,10 @@ func _ready() -> void:
 		removal_probe, civic_probe, army_probe, disband_probe, legion_probe]
 	legacy_economy_fixture = legacy_economy_fixture or probes.any(func(probe: String) -> bool: return not probe.is_empty())
 	if not legacy_economy_fixture:
-		HouseEconomy.activate(world, randi_range(1, 999999))
 		world.capital_layout = true
-		State.Rural.survey(world)
+		HouseEconomy.activate(world, randi_range(1, 999999))
+		for index: int in range(world.households.size()):
+			State.Rural.petition(world,index,world.current_day(),world.households[index]["adults"])
 	_build_ui()
 	if not store.open_store(store_path_override):
 		status_label.text = "存档不可用：" + store.error_message
@@ -302,6 +314,7 @@ func _build_ui() -> void:
 	_build_save_picker()
 	if not legacy_economy_fixture:
 		_build_resident_window()
+		_build_memorial_window()
 	_sync_building_view()
 	_refresh_map_info()
 
@@ -315,8 +328,10 @@ func _build_header(layout: VBoxContainer) -> void:
 	var summary := HBoxContainer.new()
 	summary.add_theme_constant_override("separation", 14)
 	strips.add_child(summary)
+	resource_summary=summary
+	resource_summary.hide()
 	_number_grid(summary, "", [
-		["population", "人口", "people"], ["hud_workforce", "劳动力", "work"], ["hud_idle", "可用劳动力", "people"],
+		["population", "人口", "people"], ["hud_workforce", "劳动力", "work"], ["hud_idle", "可用劳动力", "idle"],
 		["food", "粮食", "food"], ["gold", "金币", "gold"],
 		["wood", "木材", "wood"], ["stone", "石材", "stone"], ["date", "城镇时间", "clock"],
 	], 8)
@@ -325,26 +340,59 @@ func _build_header(layout: VBoxContainer) -> void:
 	navigation.add_theme_constant_override("separation", 6)
 	strips.add_child(navigation)
 	region_toggle = _button(navigation, "区域地图", _toggle_region_view)
-	var identity := Label.new()
-	identity.text = "边境镇"
-	identity.add_theme_color_override("font_color", Color("#b5bda9"))
-	navigation.add_child(identity)
+	for entry: Array in [["population","人口","people"],["hud_workforce","劳动力","work"],["hud_idle","可用劳力","idle"],["food","粮食","food"],["gold","金币","gold"],["wood","木材","wood"],["stone","石材","stone"],["date","城镇时间","clock"]]:
+		_compact_metric(navigation,entry)
+	_button(navigation,"数值 ▾",_toggle_resource_summary).tooltip_text="展开或收起全部资源标签"
 	var divider := Control.new()
 	divider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	navigation.add_child(divider)
-	pause_button = _button(navigation, "继续（空格）", _toggle_pause)
+	pause_button = _button(navigation, "继续", _toggle_pause)
+	pause_button.tooltip_text="空格切换暂停"
 	for multiplier: int in [1, 2, 4]:
 		var speed_button := _button(navigation, "%d×" % multiplier, _set_speed.bind(multiplier))
-		speed_button.icon = HudIcons.texture("clock")
+		speed_button.tooltip_text = "%d 倍速" % multiplier
 		speed_button.toggle_mode = true
 		speed_buttons[multiplier] = speed_button
-	_button(navigation, "保存进度", _save)
-	_button(navigation, "读取进度", _choose_save)
+	_button(navigation, "保存", _save)
+	_button(navigation, "读档", _choose_save)
 	progress = ProgressBar.new()
 	progress.max_value = State.DAY_TICKS
 	progress.show_percentage = false
 	progress.custom_minimum_size.y = 3
 	strips.add_child(progress)
+
+
+# 紧凑数值：图标和数字单行常驻，标签由提示和展开状态提供。
+func _compact_metric(parent: HBoxContainer, entry: Array) -> void:
+	var cell := HBoxContainer.new()
+	cell.add_theme_constant_override("separation",3)
+	cell.mouse_filter=Control.MOUSE_FILTER_PASS
+	cell.tooltip_text=entry[1]
+	parent.add_child(cell)
+	var icon := TextureRect.new()
+	icon.texture=HudIcons.texture(entry[2])
+	icon.custom_minimum_size=Vector2(17,17)
+	icon.expand_mode=TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode=TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.mouse_filter=Control.MOUSE_FILTER_IGNORE
+	cell.add_child(icon)
+	var value := Label.new()
+	value.add_theme_font_size_override("font_size",14)
+	value.mouse_filter=Control.MOUSE_FILTER_IGNORE
+	cell.add_child(value)
+	compact_resources[entry[0]]=value
+
+
+# 展开入口：仅调整界面空间，数值本身始终由同一世界状态驱动。
+func _toggle_resource_summary() -> void:
+	resource_summary.visible=not resource_summary.visible
+	for metric: Label in compact_resources.values():
+		metric.get_parent().visible=not resource_summary.visible
+
+
+# 消息入口：玩家可以恢复操作反馈与存档时间，建造提示仍独立显示。
+func _toggle_notices() -> void:
+	notice_strip.visible=not notice_strip.visible
 
 
 # 地图模块：地图填满剩余空间，视角工具放在地图自身下边缘。
@@ -408,7 +456,7 @@ func _build_city_navigation(row: HBoxContainer) -> void:
 	city_navigation.focus_mode = Control.FOCUS_NONE
 	row.add_child(city_navigation)
 	var popup: PopupMenu = city_navigation.get_popup()
-	for title: String in ["外城 · 300×300", "皇城全景", "太和殿", "御花园", "居民集市", "府邸", "北城门", "南城门", "西城门", "东城门", "城外民田", "城外牧场"]:
+	for title: String in ["外城 · 300×300", "皇城全景", "太和殿", "御花园", "居民集市", "府邸", "北城门", "南城门", "西城门", "东城门", "城外民田", "城外牧场", "城外军营"]:
 		popup.add_item(title)
 	popup.id_pressed.connect(_visit_city)
 
@@ -420,14 +468,14 @@ func _visit_city(index: int) -> void:
 	if index < 2:
 		town_map.visit_capital_area(Capital.OUTER if index == 0 else Capital.INNER)
 		return
-	if index in [4, 5, 10, 11]:
-		var kind: String = {4:"b_market",5:"b_manor",10:"b_farm",11:"b_ranch"}[index]
+	if index in [4, 5, 10, 11, 12]:
+		var kind: String = {4:"b_market",5:"b_manor",10:"b_farm",11:"b_ranch",12:"b_barracks"}[index]
 		var candidates: Array = []
 		for building: Dictionary in world.buildings:
 			if building["def_id"] == kind:
 				candidates.append(building)
 		if candidates.is_empty():
-			status_label.text = "暂无%s" % {4:"居民集市",5:"府邸",10:"城外民田",11:"城外牧场"}[index]
+			status_label.text = "暂无%s" % {4:"居民集市",5:"府邸",10:"城外民田",11:"城外牧场",12:"城外军营"}[index]
 			return
 		var record: Dictionary = candidates[0]
 		if index == 5:
@@ -437,6 +485,11 @@ func _visit_city(index: int) -> void:
 					break
 		var point := Vector2i(record["cell"][0], record["cell"][1])
 		var area := Rect2i(point, Construction.Catalog.footprint(record))
+		if kind=="b_farm":
+			for district: Rect2i in town_map.cultivated_districts:
+				if district.has_point(point):
+					area=district
+					break
 		town_map.visit_capital_area(area.grow(4))
 		_inspect_building(record["id"], false)
 		return
@@ -643,7 +696,7 @@ func _refresh_works() -> void:
 		"累计售木 %d · 售石 %d · 收入 %d金" % [data["wood"],data["stone"],data["sales"]],
 		"工程款 %d金 · 商铺分红 %d金" % [data["paid"],data["dividends"]]]
 	for order: Dictionary in data["roads"]:
-		var text: String = "等投标" if order["owner"] < 0 else "第%d户承建，报价%d金，第%d日交工" % [order["owner"]+1,order["bid"],order["due"]]
+		var text: String = "等投标" if order["owner"] < 0 else "%s承建，报价%d金，第%d日交工" % [world.household_name(order["owner"]),order["bid"],order["due"]]
 		lines.append("(%d,%d) · %s" % [order["cell"][0],order["cell"][1],text])
 	works_totals.text = "\n".join(lines)
 
@@ -654,7 +707,8 @@ func _cancel_tender() -> void:
 	for i: int in range(roads.size()):
 		if roads[i]["owner"] < 0 and world.resources["gold"] <= 1000000000-Works.ROAD_BUDGET:
 			world.resources["gold"] += Works.ROAD_BUDGET
-			roads.remove_at(i)
+			var order: Dictionary = roads.pop_at(i)
+			world.post_report("工程","道路招标撤回","路段 (%d,%d) 撤标，预算退回。" % [order["cell"][0],order["cell"][1]])
 			status_label.text = "已撤标，预算退回"
 			_refresh_works()
 			town_map._update_preview()
@@ -762,13 +816,18 @@ func _build_command_bar(layout: VBoxContainer) -> void:
 	_button(toolbar, "账本", _open_management.bind(3, true)).icon = HudIcons.texture("book")
 	if not legacy_economy_fixture:
 		_button(toolbar,"居民册",_open_resident_register).icon = HudIcons.texture("people")
+		court_button = _button(toolbar,"奏章",_open_memorial_window)
+		court_button.icon=HudIcons.texture("book")
+	_button(toolbar,"消息 ▾",_toggle_notices)
 
 	placement_label = Label.new()
 	placement_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	placement_label.hide()
 	rows.add_child(placement_label)
 	var notices := HBoxContainer.new()
+	notice_strip=notices
 	rows.add_child(notices)
+	notice_strip.visible=legacy_economy_fixture
 	status_label = Label.new()
 	status_label.text = "选择建筑查看详情"
 	status_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -777,6 +836,133 @@ func _build_command_bar(layout: VBoxContainer) -> void:
 	save_stamp = Label.new()
 	save_stamp.add_theme_color_override("font_color", Color("#c8b88b"))
 	notices.add_child(save_stamp)
+
+
+# 田地图层：地契名和作物同步到地图，数值日结留在建筑详情。
+func _sync_farm_view() -> void:
+	var crops: Dictionary = {}
+	var names: Dictionary = {}
+	for id: String in world.chancery["fields"]:
+		crops[id]=world.chancery["fields"][id]["crop"]
+		names[id]=world.household_name(world.household_economy["property"].get(id,-1))+"的田"
+	town_map.sync_farms(world.buildings,crops,names)
+
+
+# 奏章窗口：待办和历史分组，左侧定位、右侧审阅，审批按钮只出现在待办。
+func _build_memorial_window() -> void:
+	memorial_window=Window.new()
+	memorial_window.title="奏章"
+	memorial_window.theme=theme
+	memorial_window.min_size=Vector2i(570,360)
+	memorial_window.hide()
+	memorial_window.close_requested.connect(memorial_window.hide)
+	add_child(memorial_window)
+	var frame := PanelContainer.new()
+	frame.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	memorial_window.add_child(frame)
+	var layout := VBoxContainer.new()
+	frame.add_child(layout)
+	memorial_filter=OptionButton.new()
+	layout.add_child(memorial_filter)
+	for section: String in ["待批","全部奏报"]+State.Book.SECTIONS:
+		memorial_filter.add_item(section)
+	memorial_filter.item_selected.connect(func(_index: int)->void: _populate_memorial())
+	var split := HSplitContainer.new()
+	split.size_flags_vertical=Control.SIZE_EXPAND_FILL
+	layout.add_child(split)
+	memorial_list=ItemList.new()
+	memorial_list.custom_minimum_size.x=250
+	memorial_list.size_flags_horizontal=Control.SIZE_EXPAND_FILL
+	split.add_child(memorial_list)
+	memorial_list.item_selected.connect(_read_memorial)
+	var reading := VBoxContainer.new()
+	reading.custom_minimum_size.x=290
+	reading.size_flags_horizontal=Control.SIZE_EXPAND_FILL
+	split.add_child(reading)
+	memorial_detail=RichTextLabel.new()
+	memorial_detail.size_flags_vertical=Control.SIZE_EXPAND_FILL
+	memorial_detail.bbcode_enabled=true
+	memorial_detail.add_theme_color_override("default_color",Color("#e8dfc9"))
+	memorial_detail.add_theme_font_size_override("normal_font_size",15)
+	memorial_detail.add_theme_font_size_override("bold_font_size",16)
+	reading.add_child(memorial_detail)
+	memorial_actions=HBoxContainer.new()
+	reading.add_child(memorial_actions)
+	_button(memorial_actions,"准予开垦",_rule_memorial.bind(true))
+	_button(memorial_actions,"驳回",_rule_memorial.bind(false))
+
+
+# 打开奏章：优先定位有待批的队列，否则打开最近奏报。
+func _open_memorial_window() -> void:
+	memorial_filter.select(0 if not world.chancery["claims"].is_empty() else 1)
+	_populate_memorial()
+	memorial_window.popup_centered(Vector2i(780,470))
+
+
+# 未决计数与动态刷新：世界变化后才重建，选中的待批奏章保持原对象。
+func _refresh_memorial() -> void:
+	if court_button==null:
+		return
+	var count: int = world.chancery["claims"].size()
+	court_button.text="奏章 · %d待批" % count if count>0 else "奏章"
+	if not memorial_window.visible:
+		return
+	var signature: int = hash(world.chancery["claims"])+hash(world.chancery["items"])
+	if signature!=memorial_signature:
+		memorial_signature=signature
+		_populate_memorial()
+
+
+# 列表构造：分类可筛选军务、民生及臣属处理过的事务。
+func _populate_memorial() -> void:
+	var items: Array = world.chancery["claims"] if memorial_filter.selected==0 else world.chancery["items"]
+	var previous: Variant = null
+	var selected: PackedInt32Array = memorial_list.get_selected_items()
+	if not selected.is_empty():
+		previous=memorial_list.get_item_metadata(selected[0])
+	memorial_list.clear()
+	var choice: int = 0
+	for i: int in range(items.size()-1,-1,-1):
+		var item: Dictionary = items[i]
+		if memorial_filter.selected>=2 and item["group"]!=memorial_filter.get_item_text(memorial_filter.selected):
+			continue
+		var label: String = world.household_name(item["owner"])+"呈请垦荒" if memorial_filter.selected==0 else item["title"]
+		var row: int = memorial_list.add_item("第%d日 · %s" % [item["day"],label])
+		memorial_list.set_item_metadata(row,item)
+		if item==previous:
+			choice=row
+	if memorial_list.item_count==0:
+		memorial_actions.hide()
+		memorial_detail.text="暂无待批奏请" if memorial_filter.selected==0 else "本类尚无奏报"
+	else:
+		memorial_list.select(choice)
+		_read_memorial(choice)
+
+
+# 奏章正文：申请列出请垦亩数、拟种作物和费用承担方，已办列出结果。
+func _read_memorial(index: int) -> void:
+	var item: Dictionary = memorial_list.get_item_metadata(index)
+	var pending: bool = memorial_filter.selected==0
+	memorial_actions.visible=pending
+	if pending:
+		memorial_detail.text="[b]%s呈请开垦[/b]\n第%d日呈报\n\n申请开垦 %d 亩，拟种%s。\n准许后由该户承担 40 金，其中 8 金用于向皇家采购 4 份木材。随后在城外农区登记新田。" % [world.household_name(item["owner"]),item["day"],item["acres"],State.Book.CROPS[item["crop"]]]
+	else:
+		memorial_detail.text="[b]%s[/b]\n第%d日 · %s\n\n%s" % [item["title"],item["day"],item["group"],item["detail"]]
+
+
+# 朱批按钮：确认结果后立即同步地图，错误显示在当前奏章内。
+func _rule_memorial(approve: bool) -> void:
+	var selected: PackedInt32Array = memorial_list.get_selected_items()
+	if selected.is_empty() or memorial_filter.selected!=0:
+		return
+	var result: String = State.Rural.rule(world,memorial_list.get_item_metadata(selected[0]),approve)
+	if not result.is_empty():
+		_read_memorial(selected[0])
+		memorial_detail.append_text("\n\n[color=#ffd59a]"+result+"[/color]")
+		return
+	_sync_building_view()
+	_refresh()
+	_populate_memorial()
 
 
 # 居民册界面：左侧检索住户，右侧阅读地址、成员、征收和产业。
@@ -863,7 +1049,7 @@ func _address_text(address: String) -> String:
 	return "边境镇 · %s · %s (%d,%d)" % [town_map.building_title(address),address.trim_prefix("building_"),record["cell"][0],record["cell"][1]]
 
 
-# 检索模块：跨成员姓名、户号、户主和地址搜索。
+# 检索模块：跨成员姓名、户主和地址搜索。
 func _populate_resident_list() -> void:
 	resident_list.clear()
 	var key: String = resident_filter.text.strip_edges()
@@ -871,7 +1057,7 @@ func _populate_resident_list() -> void:
 		var entry: Dictionary = world.resident_register[i]
 		if not resident_scope.is_empty() and entry["address"] != resident_scope:
 			continue
-		var title: String = "%03d户 · %s · %d人" % [i+1,entry["people"][0]["name"],entry["people"].size()]
+		var title: String = "%s · %d人" % [world.household_name(i),entry["people"].size()]
 		var haystack: String = title + _address_text(entry["address"])
 		for person: Dictionary in entry["people"]:
 			haystack += person["name"]
@@ -895,7 +1081,7 @@ func _show_resident_row(row: int) -> void:
 	var worth: int = HouseEconomy.worth(world,i)
 	var rank: String = "富裕户" if worth >= HouseEconomy.OFFICE_WEALTH else ("贫困户" if worth<75 else "殷实户")
 	var occupation: String = "税务官户" if world.household_economy["civil"]==i else ("武将户" if world.household_economy["general"]==i else rank)
-	var details: PackedStringArray = ["[font_size=25][b]第%03d户 · %s[/b][/font_size]" % [i+1,entry["people"][0]["name"]],
+	var details: PackedStringArray = ["[font_size=25][b]%s[/b][/font_size]" % world.household_name(i),
 		_address_text(entry["address"]),"登记于第%d日　%s　%s" % [entry["registered"],occupation,asset["occupation"]],
 		"", "[b]家庭成员 · %d人[/b]" % entry["people"].size()]
 	for p: int in range(entry["people"].size()):
@@ -1072,6 +1258,7 @@ func _refresh() -> void:
 	town_map.sync_hour(_hour())
 	_refresh_estate()
 	_refresh_inspection()
+	_refresh_memorial()
 	_set_numbers({
 		"date": "第%d日 %02d时 · %s" % [world.current_day(), int(_hour()), "白昼" if _hour()>=6.0 and _hour()<18.0 else "夜间"],
 		"population": world.population, "hud_workforce": world.workforce_capacity(), "hud_idle": world.idle_workers(),
@@ -1084,7 +1271,7 @@ func _refresh() -> void:
 	progress.value = (world.tick % State.DAY_TICKS) + world.subsecond
 	_refresh_storage()
 	_refresh_ledger()
-	pause_button.text = "继续（空格）" if world.paused else "暂停（空格）"
+	pause_button.text = "继续" if world.paused else "暂停"
 	town_map.sync_resources(world.resources)
 	var ready_count: int = 0
 	var queued_count: int = 0
@@ -1121,6 +1308,7 @@ func _refresh() -> void:
 		Register.sync_people(world)
 		Register.assign_homes(world)
 		town_map.sync_commutes(world)
+	_sync_farm_view()
 
 
 # 暂停模块：冻结战略时钟但保持界面与保存操作可用。
@@ -1265,6 +1453,7 @@ func _load(save_id: int = 0) -> void:
 		return
 	_clear_inspection()
 	_end_court_edit()
+	memorial_signature=-1
 	world = candidate
 	if not legacy_economy_fixture:
 		HouseEconomy.activate(world)
@@ -1440,6 +1629,7 @@ func _sync_building_view() -> void:
 		Register.sync_people(world)
 		Register.assign_homes(world)
 		town_map.sync_commutes(world)
+	_sync_farm_view()
 	town_map.sync_resources(world.resources)
 
 
@@ -1503,7 +1693,7 @@ func _refresh_population() -> void:
 		for day: int in family["children"]:
 			dates.append("第%d日" % day)
 		var note: String = " · 成年 " + "、".join(dates) if not dates.is_empty() else ""
-		household_list.add_item("第%d户 · 成人%d 儿童%d%s" % [i + 1, family["adults"], dates.size(), note], HudIcons.texture("people"), false)
+		household_list.add_item("%s · 成人%d 儿童%d%s" % [world.household_name(i), family["adults"], dates.size(), note], HudIcons.texture("people"), false)
 
 
 # 户籍界面：按户显示资产、田亩、人口与职业，详情可用于选任。
@@ -1513,7 +1703,7 @@ func _refresh_register() -> void:
 		var family: Dictionary = world.households[i]
 		var members: int = int(family["adults"]) + family["children"].size()
 		var asset: Dictionary = state["families"][i]
-		household_list.add_item("第%d户 · %d人 · %d金资产 · %d亩" % [i + 1, members, HouseEconomy.worth(world, i), asset["land"]])
+		household_list.add_item("%s · %d人 · %d金资产 · %d亩" % [world.household_name(i), members, HouseEconomy.worth(world, i), asset["land"]])
 	selected_household = clampi(selected_household, 0, world.households.size() - 1)
 	household_list.select(selected_household)
 	var selected_legion: String = _appointment_legion_id()
@@ -1556,16 +1746,16 @@ func _update_appointment(_option: int) -> void:
 		if state["property"].get(building["id"], -1) == selected_household and stake>0:
 			var share_text: String = "（%d%%）" % stake if stake<100 else ""
 			buildings.append(HouseEconomy.TITLES[building["def_id"]]+share_text)
-	household_detail.text = "第%d户 · %s · 成人%d · 儿童%d\n现金%d金 · 田地%d亩 · 渔船%d艘\n%s · 上日净入%+d金 · 雇工%d · 商税%d金\n私产：%s\n文才%d · 武略%d；候选家资至少%d金，能力至少60。" % [
-		selected_household + 1, standing, family["adults"], family["children"].size(), asset["cash"], asset["land"], asset["boats"],
+	household_detail.text = "%s · %s · 成人%d · 儿童%d\n现金%d金 · 田地%d亩 · 渔船%d艘\n%s · 上日净入%+d金 · 雇工%d · 商税%d金\n私产：%s\n文才%d · 武略%d；候选家资至少%d金，能力至少60。" % [
+		world.household_name(selected_household), standing, family["adults"], family["children"].size(), asset["cash"], asset["land"], asset["boats"],
 		asset["occupation"], asset["income"], asset["hired"], asset["tax"], "、".join(buildings) if not buildings.is_empty() else "无",
 		asset["civil"], asset["marshal"], HouseEconomy.OFFICE_WEALTH]
 	civil_button.disabled = not HouseEconomy.eligible(world, selected_household, false) or selected_household in [state["civil"], state["general"]]
 	marshal_button.disabled = not HouseEconomy.eligible(world, selected_household, true) or selected_household == state["civil"] or _appointment_legion_id().is_empty()
 	var report: Dictionary = state["report"]
 	household_report.text = "税务官：%s　武将：%s\n最近结算 · 税粮%d · 渔税%d · 商税%d金 · 雇工%d\n标准税：田亩税粮18%% · 店铺营业税22%%" % [
-		"第%d户" % (state["civil"] + 1) if state["civil"] >= 0 else "空缺",
-		"第%d户" % (state["general"] + 1) if state["general"] >= 0 else "空缺",
+		world.household_name(state["civil"]) if state["civil"] >= 0 else "空缺",
+		world.household_name(state["general"]) if state["general"] >= 0 else "空缺",
 		report.get("tax_grain", 0), report.get("fish_levy", 0), report.get("shop_tax", 0), report.get("hires", 0)]
 
 
@@ -1776,6 +1966,8 @@ func _set_numbers(values: Dictionary) -> void:
 	for key: String in values:
 		var label: Label = numbers[key]
 		var value: String = str(values[key])
+		if compact_resources.has(key):
+			compact_resources[key].text=value
 		if label.text != value:
 			label.text = value
 			var card: PanelContainer = label.get_parent().get_parent().get_parent()
@@ -2046,6 +2238,9 @@ func _build_inspection_card() -> void:
 	inspection_remove.focus_mode = Control.FOCUS_NONE
 	inspection_remove.pressed.connect(_request_removal)
 	contents.add_child(inspection_remove)
+	field_card=Label.new()
+	field_card.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
+	contents.add_child(field_card)
 	asset_card = VBoxContainer.new()
 	contents.add_child(asset_card)
 	asset_label = Label.new()
@@ -2121,10 +2316,10 @@ func _refresh_residence_card(record: Dictionary) -> void:
 	var id: String = record["id"]
 	var households: Array[int] = Register.residents(world,id)
 	var owner: int = world.household_economy["property"].get(id,world.royal_works["homes"].get(id,-1))
-	var lines: PackedStringArray = ["宅主：第%d户 · %s" % [owner+1,world.resident_register[owner]["people"][0]["name"]] if owner>=0 else "宅主：公有分配住宅"]
+	var lines: PackedStringArray = ["宅主：%s" % world.household_name(owner) if owner>=0 else "宅主：公有分配住宅"]
 	for i: int in households:
 		var people: Array = world.resident_register[i]["people"]
-		lines.append("第%d户 ｜ %d口" % [i+1,people.size()])
+		lines.append("%s ｜ %d口" % [world.household_name(i),people.size()])
 		for p: int in range(people.size()):
 			lines.append(Register.member_line(world,i,p))
 	if households.is_empty():
@@ -2198,9 +2393,9 @@ func _refresh_inspection() -> void:
 		var property: Dictionary = Inspector.find(world, inspected_building_id)
 		var extent: Vector2i = Construction.Catalog.footprint(property)
 		var held: int = world.royal_works["shares"].get(inspected_building_id,0)
-		var title: String = "第%d户私产" % (owner+1)
+		var title: String = "%s私产" % world.household_name(owner)
 		if held>0:
-			title = "皇家全资" if held==100 else "皇家与第%d户共同持有" % (owner+1)
+			title = "皇家全资" if held==100 else "皇家与%s共同持有" % world.household_name(owner)
 		detail = {"text": "%s ｜ %s%s" % [town_map.building_title(inspected_building_id), title,
 			" · 施工中" if property["state"] == "constructing" else ""],
 			"numbers": {"size": "%d × %d" % [extent.x, extent.y]}, "increase": false, "decrease": false}
@@ -2229,6 +2424,13 @@ func _refresh_inspection() -> void:
 		estate_producer_add.disabled = world.estate_idle() == 0 or int(record["workers"]) >= int(definition.get("worker_slots"))
 		estate_producer_remove.disabled = int(world.estate_posts.get(inspected_building_id, 0)) == 0
 	site_builder_actions.visible = owner < 0 and record.get("state") == "constructing"
+	var plot: Dictionary = world.chancery["fields"].get(inspected_building_id,{})
+	field_card.visible=not plot.is_empty()
+	if field_card.visible:
+		inspection_label.text=town_map.building_title(inspected_building_id)
+		var harvest: int = plot["yield"]
+		var nominal: int = floori(plot["acres"]*State.Rural.CROP_FACTORS[plot["crop"]])
+		field_card.text="作物  %s   ·   地籍  %d亩\n上次日结产量  %s\n满耕参考  %d粮／日" % [State.Book.CROPS[plot["crop"]],plot["acres"],"%d粮" % harvest if harvest>=0 else "待首次收成",nominal]
 	_refresh_asset()
 	if asset_card.visible:
 		numbers["building_size"].get_parent().get_parent().get_parent().hide()

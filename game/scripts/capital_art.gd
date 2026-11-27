@@ -310,3 +310,92 @@ static func _incense(canvas: Control, at: Vector2i) -> void:
 static func _visible(canvas: Control, area: Rect2i, view: Rect2) -> bool:
 	var poly: PackedVector2Array = canvas._footprint_outline(area.position, area.size, true)
 	return view.intersects(Rect2(Vector2(poly[3].x, poly[0].y - 170), Vector2(poly[1].x - poly[3].x, poly[2].y - poly[0].y + 170)))
+
+
+# 商旅院落：正楼采用重檐，酒楼带二层宴厅，客栈内布置厢房、门廊和车马院。
+static func hostelry(canvas: Control, area: Rect2i, kind: String, front: int) -> void:
+	var center: Vector2i = area.get_center()
+	var inn: bool = kind=="b_inn"
+	var tavern: bool = kind=="b_tavern"
+	var roof: Color = Color("#50746c") if inn else (Color("#9b603e") if tavern else Color("#a15248"))
+	var yard: Color = Color("#b2a48b") if inn else Color("#aa9072")
+	_tile(canvas,area,yard.darkened(0.18))
+	_tile(canvas,area.grow(-1),yard)
+	for x: int in range(area.position.x+1,area.end.x-1):
+		for y: int in range(area.position.y+1,area.end.y-1):
+			if (x+y)%2==0:
+				_tile(canvas,Rect2i(x,y,1,1),yard.lightened(0.08))
+	var span := Vector2i(3,2) if tavern else Vector2i(4,3)
+	var outward: Vector2i = [Vector2i.DOWN,Vector2i.RIGHT,Vector2i.UP,Vector2i.LEFT][front]
+	var main: Vector2i = center-span/2-outward
+	var pavilion := Rect2i(main,span)
+	var height: float = 58.0 if tavern else (69.0 if inn else 88.0)
+	_hall(canvas,pavilion,roof,height,true)
+	_hostelry_front(canvas,pavilion,height,inn)
+	var cross := Vector2i(-outward.y,outward.x)
+	for side: int in [-1,1]:
+		var wing_gap: int = 1 if tavern else 2
+		var wing: Vector2i = center+outward+cross*side*wing_gap-Vector2i.ONE
+		var annex := Rect2i(wing,Vector2i(2,2))
+		_hall(canvas,annex,roof.darkened(0.09),39.0,false)
+		_hostelry_front(canvas,annex,39.0,inn)
+		var lantern: Vector2 = Grid.cell_to_world(wing+outward+Vector2i.ONE)
+		Art._stroke(canvas,lantern,Vector2.ZERO,Vector2(0,-36),Color("#50372b"),4.0)
+		Art._pixel(canvas,lantern,Vector2(-5,-35),Vector2(10,13),Color("#d6813c"))
+		Art._pixel(canvas,lantern,Vector2(-2,-32),Vector2(4,7),Color("#f3ce75"))
+	var stoop: Vector2 = Grid.cell_to_world(center+outward*2)
+	Art._shop_sign(canvas,stoop-Vector2(0,28),Color("#e9c583" if inn else "#d39249"))
+	Art._crate(canvas,stoop+Vector2(19,8))
+	if inn:
+		Art._crate(canvas,stoop+Vector2(-23,6),Color("#89654a"))
+
+
+# 门面细节：窗格、木栏、层间线脚与石阶在近景可辨。
+static func _hostelry_front(canvas: Control, area: Rect2i, height: float, inn: bool) -> void:
+	var bevel: PackedVector2Array = canvas._footprint_outline(area.position,area.size,true)
+	var bronze := Color("#e1ac66") if inn else Color("#f4c783")
+	for face: int in range(1,3):
+		var left: Vector2 = bevel[face]
+		var right: Vector2 = bevel[face+1]
+		var low: float = 20.0
+		Art._stroke(canvas,Vector2.ZERO,left-Vector2(0,low),right-Vector2(0,low),Color("#907661"),5)
+		for window: int in range(3):
+			var slot: float = 0.1+window*0.29
+			var door: bool = face==2 and window==1
+			Art._wall_opening(canvas,Vector2.ZERO,left,right,slot,slot+0.19,low+2.0 if door else low+8.0,low+27.0,bronze.darkened(0.44) if door else bronze,door)
+			if height>=58.0:
+				Art._wall_opening(canvas,Vector2.ZERO,left,right,slot,slot+0.19,low+38.0,low+53.0,bronze.lightened(0.12),false)
+		if height>=58.0:
+			var rail: Vector2 = Vector2(0,-low-39.0)
+			Art._stroke(canvas,Vector2.ZERO,left+rail,right+rail,Color("#d0a172"),4)
+			for spindle: int in range(1,8):
+				var at: Vector2 = left.lerp(right,spindle/8.0)+rail
+				Art._stroke(canvas,at,Vector2.ZERO,Vector2(0,9),Color("#aa7452"),2)
+
+
+# 田畴底图：同一片耕地铺统一水渠田埂，细线区分每户的小块与作物。
+static func field_district(canvas: Control, area: Rect2i) -> void:
+	_tile(canvas,area.grow(1),Color("#59604b"))
+	_tile(canvas,area,Color("#8d7952"))
+	var edge := Rect2i(area.position-Vector2i(1,0),Vector2i(1,area.size.y))
+	_tile(canvas,edge,Color("#527f79"))
+	var bank := Rect2i(area.position-Vector2i(0,1),Vector2i(area.size.x,1))
+	_tile(canvas,bank,Color("#a58a59"))
+
+
+# 作物渲染：小麦、粟米、高粱使用不同色带，田埂保留独立点选边界。
+static func field_plot(canvas: Control, area: Rect2i, crop: int) -> void:
+	var colors: Array[Color] = [Color("#cfb86e"),Color("#b0bd67"),Color("#ae7450")]
+	var crop_color: Color = colors[crop]
+	_tile(canvas,area,Color("#8f7850"))
+	for row: int in range(area.size.y):
+		for column: int in range(area.size.x):
+			var at: Vector2 = Grid.cell_to_world(area.position+Vector2i(column,row))
+			var shade: Color = crop_color.lightened(0.13) if (column+row)%3==0 else crop_color
+			Art._poly(canvas,at,[Vector2(-26,1),Vector2(-8,-8),Vector2(26,8),Vector2(10,16)],Color("#685439"))
+			Art._stroke(canvas,at,Vector2(-25,0),Vector2(3,-14),shade,3.0)
+			Art._stroke(canvas,at,Vector2(-15,5),Vector2(14,-9),shade,3.0)
+			Art._stroke(canvas,at,Vector2(-5,10),Vector2(23,-4),shade.darkened(0.12),2.0)
+	var frame: PackedVector2Array = canvas._footprint_outline(area.position,area.size,true)
+	frame.append(frame[0])
+	canvas.art_canvas.draw_polyline(frame,Color("#ad935e"),3.0)

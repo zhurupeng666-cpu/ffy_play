@@ -22,6 +22,7 @@ const Population = preload("res://scripts/population_service.gd")
 const DistrictMarket = preload("res://scripts/district_market.gd")
 const Capital = preload("res://scripts/capital_layout.gd")
 const Courts = preload("res://scripts/palace_courtyards.gd")
+const Book = preload("res://scripts/memorial_book.gd")
 const Rural = preload("res://scripts/rural_belt.gd")
 const Works = preload("res://scripts/royal_works.gd")
 const Register = preload("res://scripts/resident_register.gd")
@@ -35,6 +36,7 @@ var household_economy: Dictionary = {}
 var capital_layout: bool = false
 var palace_decor: Dictionary = Courts.initial()
 var royal_works: Dictionary = Works.initial()
+var chancery: Dictionary = Book.initial()
 var resident_register: Array = []
 var households: Array = Population.initial(Population.START_POPULATION, Population.START_CHILDREN, 1)
 var population_report: Dictionary = {}
@@ -88,9 +90,72 @@ var retired_buildings: Array = []
 var removal_commands: Dictionary = {}
 
 
+# 户主姓名：对外标签显示人名，存档和权限仍使用稳定户口索引。
+func household_name(index: int) -> String:
+	if index<0 or index>=households.size():
+		return "待登记住户"
+	if capital_layout and index>=resident_register.size():
+		Register.sync_people(self)
+	if index<resident_register.size():
+		return resident_register[index]["people"][0]["name"]+"家"
+	return "住户%d" % (index+1)
+
+
+# 通报入口：各领域提交结果，由奏章统一留档。
+func post_report(category: String, title: String, detail: String) -> void:
+	Book.note(self,category,title,detail)
+
+
+# 商旅迁扩：优先找原址附近的临街空地，保留股权、经营人和门向。
+func _upgrade_hostelries() -> void:
+	var occupied: Dictionary = occupied_cells()
+	var streets = DistrictMarket.Streets
+	var ways: Dictionary = streets.network(buildings,true)
+	var receipts: Dictionary = {}
+	for receipt: Dictionary in applied_commands.values():
+		receipts[receipt["building_id"]]=receipt
+	for record: Dictionary in buildings:
+		var kind: String = record["def_id"]
+		if kind not in ["b_restaurant","b_inn","b_tavern"] or record.get("large",false):
+			continue
+		var definition: Resource = Catalog.for_construction(kind,true)
+		var span: Vector2i = definition.footprint
+		var origin := Vector2i(record["cell"][0],record["cell"][1])
+		var old: Vector2i = Catalog.footprint(record)
+		for tile: Vector2i in Placement.footprint_cells(origin,old):
+			occupied.erase(tile)
+		var best: int = 2500
+		var target: Vector2i = Grid.INVALID
+		var face: int = -1
+		for road: Vector2i in ways:
+			if road.distance_squared_to(origin)>2700:
+				continue
+			for side: Vector2i in streets.SIDES:
+				var size_on_axis: int = span.x if side.x!=0 else span.y
+				var middle: Vector2i = Vector2i(0,span.y/2) if side.x!=0 else Vector2i(span.x/2,0)
+				var at: Vector2i = road+side*(size_on_axis if side.x<0 or side.y<0 else 1)-middle
+				var distance: int = at.distance_squared_to(origin)
+				if distance>=best or not Capital.OUTER.encloses(Rect2i(at,span)) or not Placement.check_building(at,definition,occupied,true)["ok"]:
+					continue
+				var front: int = streets.direction(at,span,ways)
+				if front>=0:
+					target=at
+					face=front
+					best=distance
+		if target==Grid.INVALID:
+			for tile: Vector2i in Placement.footprint_cells(origin,old):
+				occupied[tile]=record["id"]
+			continue
+		Rural._move(record,receipts[record["id"]],target,span,occupied)
+		record["large"]=true
+		record["front"]=face
+		receipts[record["id"]]["large"]=true
+
+
 # 卸任模块：军团撤销后解除对应武将，保留户籍与家产。
 func release_commander(id: String) -> void:
 	if household_economy.get("legion", "") == id:
+		post_report("臣属","武将卸任","%s家主因所属军团撤编卸任。" % household_name(household_economy["general"]))
 		household_economy["general"] = -1
 		household_economy["legion"] = ""
 
@@ -110,6 +175,7 @@ func settle_days() -> void:
 	while last_settled_day < current_day() - 1:
 		if capital_layout:
 			Register.sync_people(self)
+			Rural.expire(self)
 		var private_bill: Dictionary = HouseEconomy.settle(self) if not household_economy.is_empty() else {}
 		var sources: Dictionary = collect_food()
 		if not private_bill.is_empty():
@@ -135,15 +201,25 @@ func settle_days() -> void:
 		Estate.settle(self)
 		if capital_layout and not household_economy.is_empty():
 			Works.settle(self)
+		var buildings_before_market: int = buildings.size()
 		Population.settle(self)
 		if not household_economy.is_empty():
 			HouseEconomy.enroll(self)
 		DistrictMarket.settle(self)
 		if capital_layout:
-			Rural.survey(self)
-		if capital_layout:
 			Register.sync_people(self)
 			Register.assign_homes(self)
+			if buildings.size()>buildings_before_market:
+				post_report("民生","居民自发开市","临街住区已形成新集市。")
+			var civil: int = household_economy.get("civil",-1)
+			if civil>=0:
+				post_report("臣属","税务官核验日账","%s核验第%d日税款，田赋 %d 粮，渔税 %d 粮，商税 %d 金。" % [household_name(civil),last_settled_day,private_bill["tax_grain"],private_bill["fish_levy"],private_bill["shop_tax"]])
+			if last_food_ledger["shortage"]>0:
+				post_report("民生","粮仓告急","居民缺粮 %d，已记入当日日账。" % last_food_ledger["shortage"])
+			if last_army_ledger["food_needed"]>last_army_ledger["food_used"] or last_army_ledger["wage_needed"]>last_army_ledger["wage_paid"]:
+				post_report("军务","军需欠拨","军粮或军饷未足额发放，请查看军需账。")
+			if population_report.get("joined",0)>0:
+				post_report("民生","居民迁入","今日有 %d 位新居民登记入户。" % population_report["joined"])
 		last_bill = "第%d日日结：产粮 +%d（入库%d，溢出%d），消耗 -%d，净变%+d，税收 +%d" % [last_settled_day, last_food_ledger["produced"], last_food_ledger["stored"], last_food_ledger["overflow"], last_food_ledger["consumed"], last_food_ledger["net"], tax]
 		if not troops.is_empty() or int(last_army_ledger["food_needed"]) > 0 or int(last_army_ledger["wage_needed"]) > 0:
 			last_bill += "；军粮-%d，军饷-%d" % [last_army_ledger["food_used"], last_army_ledger["wage_paid"]]
@@ -161,7 +237,9 @@ func snapshot() -> Dictionary:
 	if capital_layout:
 		Register.sync_people(self)
 		Register.assign_homes(self)
-		data["version"] = 32
+		data["version"] = 33
+		Rural.sync_titles(self)
+		data["chancery"] = chancery.duplicate(true)
 		data["capital_layout"] = true
 		data["palace_decor"] = palace_decor.duplicate(true)
 		data["royal_works"] = royal_works.duplicate(true)
@@ -176,7 +254,7 @@ static func from_snapshot(data: Variant) -> RefCounted:
 	for key: String in ["version", "tick", "last_settled_day", "population", "speed"]:
 		if not _valid_integer(data.get(key), 0, 120000000):
 			return null
-	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32] or int(data["speed"]) not in [1, 2, 4]:
+	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33] or int(data["speed"]) not in [1, 2, 4]:
 		return null
 	var version: int = int(data["version"])
 	if not _valid_integer(data["population"], Population.START_POPULATION, Population.MAX_POPULATION) or (version < 25 and data["population"] != Population.START_POPULATION):
@@ -313,10 +391,16 @@ static func from_snapshot(data: Variant) -> RefCounted:
 			Register.spread_manors(state)
 			Register.sync_people(state)
 		Register.assign_homes(state)
-		if not Rural.relocate(state,version<32):
+		if not Rural.relocate(state,version<33):
 			return null
-		if version<32:
+		if version<33:
 			Rural.survey(state)
+			state._upgrade_hostelries()
+			state.post_report("农政","郊区地籍整编","既有农田归并成片，城内军营迁至郊外；原有地契与驻军保留。")
+			for index: int in range(state.households.size()):
+				Rural.petition(state,index,state.current_day(),state.households[index]["adults"])
+		elif not Book.restore(state,data.get("chancery")):
+			return null
 	if state.idle_workers() < 0 or state.population > state.housing_capacity():
 		return null
 	return state

@@ -80,6 +80,7 @@ func _run() -> void:
 	_check_player_view()
 	_check_royal_works()
 	_check_rural_migration()
+	_check_reclamation()
 	_check_register()
 	if not failed:
 		print("HOUSEHOLD_PASS: migration, property, farming, fishing, paid labor, shop tax, appointment, deterministic save and UI")
@@ -183,6 +184,8 @@ func _check_royal_works() -> void:
 	_check(world.royal_works["roads"].is_empty() and world.royal_works["paid"]>=30,"发包工程未交工付款")
 	_check(world.royal_works["wood"]>=3 and world.royal_works["stone"]>=6 and world.royal_works["sales"]>0,"没有向皇家收取材料费")
 	_check(not world.royal_works["homes"].is_empty(),"人口住房压力未触发居民自建")
+	var reports: Array = world.chancery["items"]
+	_check(reports.any(func(row:Dictionary)->bool: return row["title"]=="道路工程中标") and reports.any(func(row:Dictionary)->bool: return row["title"]=="道路完工验收"),"工程中标或验收未归档")
 	_check(State.from_snapshot(JSON.parse_string(JSON.stringify(world.snapshot()))) != null,"施工、住宅产权或股权未恢复")
 
 	var scene: PackedScene = load("res://scenes/world_prototype.tscn")
@@ -230,6 +233,7 @@ func _check_rural_migration() -> void:
 	var farm: String = Market.found(world,Vector2i(29,14),Catalog.FARM)
 	var ranch: String = Market.found(world,Vector2i(39,14),Catalog.for_construction("b_ranch",true))
 	world.household_economy["property"][farm]=1
+	var barracks: String = Market.found(world,Vector2i(63,14),Catalog.for_construction("b_barracks",true))
 	var before: Dictionary = world.snapshot()
 	before["version"]=31
 	before["royal_works"].erase("profits")
@@ -244,9 +248,33 @@ func _check_rural_migration() -> void:
 			var at := Vector2i(record["cell"][0],record["cell"][1])
 			_check(not State.Capital.OUTER.intersects(Rect2i(at,Catalog.footprint(record))),"农牧地未完全迁出城")
 			ranch_present=ranch_present or record["id"]==ranch
-	_check(ranch_present and migrated.household_economy["property"][farm]==1,"迁址丢失牧场或农田地契")
+	var camps: Array = migrated.buildings.filter(func(record:Dictionary)->bool: return record["id"]==barracks)
+	_check(ranch_present and migrated.household_economy["property"][farm]==1 and not camps.is_empty(),"迁址丢失牧场、军营或农田地契")
+	_check(not State.Rural.Place.check_building(Vector2i(63,14),Catalog.BARRACKS,{},true)["ok"],"城内仍可新增军营")
 	_check(migrated.resources==world.resources and State.from_snapshot(JSON.parse_string(JSON.stringify(migrated.snapshot())))!=null,"迁址扣费或新档无法读取")
 	_check(not State.Rural.Place.check_building(Vector2i(39,14),Catalog.RANCH,{},true)["ok"],"城内仍可新增牧场")
 	var lots: Array[Dictionary] = State.Rural.lots(migrated)
 	var routes: Dictionary = State.Rural.routes(migrated,lots)
 	_check(not routes.is_empty() and routes.size()==lots.size(),"迁后农户没有通勤路线")
+
+# 审批验收：田权在批准前不入账，重复审批和驳回不扣款，结算与奏章跨存档可复核。
+func _check_reclamation() -> void:
+	var world: RefCounted = State.new()
+	world.capital_layout=true
+	Economy.activate(world,71342)
+	var owner: int = 1
+	var family: Dictionary = world.household_economy["families"][owner]
+	family["cash"]=140
+	var request: Dictionary = {"owner":owner,"day":1,"crop":1,"acres":4}
+	var rejected: Dictionary = {"owner":2,"day":1,"crop":0,"acres":3}
+	world.chancery["claims"].append_array([request,rejected])
+	var old_wood: int = world.resources["wood"]
+	_check(family["land"]==0 and world.chancery["fields"].is_empty(),"未审批就出现农田或地权")
+	_check(State.Rural.rule(world,rejected,false)=="" and world.chancery["fields"].is_empty(),"驳回误发地权")
+	_check(State.Rural.rule(world,request,true)=="" and family["land"]==4 and family["cash"]==100 and world.resources["wood"]==old_wood-4,"批准账目不一致")
+	_check(State.Rural.rule(world,request,true)!="" and world.chancery["fields"].size()==1,"重复审批产生新田")
+	var field: Dictionary = world.chancery["fields"].values()[0]
+	var result: int = State.Rural.harvest(world,owner,4,100)
+	_check(field["crop"]==1 and field["yield"]==result and result==6,"单田作物或收成公式不正确")
+	var restored: RefCounted = State.from_snapshot(JSON.parse_string(JSON.stringify(world.snapshot())))
+	_check(restored!=null and restored.chancery==world.chancery,"奏章、拒绝历史或产量未跨存档保持")

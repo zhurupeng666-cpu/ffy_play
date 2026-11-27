@@ -32,12 +32,16 @@ static func check(anchor: Vector2i, size: Vector2i, occupied: Dictionary) -> Dic
 
 
 # 建筑校验模块：几何、占用和地形共用同一入口，预览与确认不会出现规则分歧。
-static func check_building(anchor: Vector2i, definition: Resource, occupied: Dictionary, cleared_city: bool = false) -> Dictionary:
+static func check_building(anchor: Vector2i, definition: Resource, occupied: Dictionary, cleared_city: bool = false, protect_fields: bool = true) -> Dictionary:
 	var result: Dictionary = check(anchor, definition.get("footprint"), occupied)
-	if result["ok"] and cleared_city and definition.id in ["b_farm","b_ranch"] and Capital.OUTER.intersects(Rect2i(anchor,definition.footprint)):
+	if result["ok"] and cleared_city and definition.id in ["b_farm","b_ranch","b_barracks"] and Capital.OUTER.intersects(Rect2i(anchor,definition.footprint)):
 		result["ok"] = false
 		result["code"] = "OUTSIDE_CITY"
-		result["reason"] = "农田和牧场须整块位于外城墙之外"
+		result["reason"] = "农田、牧场和军营须整块位于外城墙之外"
+	if result["ok"] and cleared_city and protect_fields and definition.id!="b_farm":
+		for district: Rect2i in Capital.FIELD_DISTRICTS:
+			if district.intersects(Rect2i(anchor,definition.footprint)):
+				return {"ok":false,"code":"FARM_RESERVE","reason":"该片已划为农区，由农户申请开垦","cells":result["cells"]}
 	if result["ok"] and Sites.overlaps(Rect2i(anchor, definition.get("footprint"))):
 		result["ok"] = false
 		result["code"] = "REGION_SITE"

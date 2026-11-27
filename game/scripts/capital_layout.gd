@@ -3,6 +3,13 @@ extends RefCounted
 
 const Grid = preload("res://scripts/isometric_grid.gd")
 const OUTER := Rect2i(-15, -230, 300, 300)
+# 农区按完整田畴划片，最东和最西两条城外驿道接入田间。
+const FIELD_DISTRICTS: Array[Rect2i] = [
+	Rect2i(303,-91,40,40), Rect2i(-73,-91,40,40), Rect2i(303,-141,40,40),
+	Rect2i(-73,-141,40,40), Rect2i(303,-41,40,40), Rect2i(-73,-41,40,40),
+	Rect2i(353,-91,40,40), Rect2i(-123,-91,40,40), Rect2i(353,-141,40,40),
+	Rect2i(-123,-141,40,40), Rect2i(303,-191,40,40), Rect2i(-73,-191,40,40),
+]
 const INNER := Rect2i(90, -175, 120, 128)
 const BOULEVARDS: Array[Rect2i] = [
 	Rect2i(145, -237, 10, 68), Rect2i(145, -49, 10, 123),

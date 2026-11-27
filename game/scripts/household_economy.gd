@@ -6,6 +6,7 @@ const Grid = preload("res://scripts/isometric_grid.gd")
 const Catalog = preload("res://scripts/building_catalog.gd")
 const Market = preload("res://scripts/district_market.gd")
 const Streets = preload("res://scripts/street_frontage.gd")
+const Fields = preload("res://scripts/rural_belt.gd")
 const Works = preload("res://scripts/royal_works.gd")
 const Placement = preload("res://scripts/placement_validator.gd")
 const March = preload("res://scripts/region_march.gd")
@@ -64,7 +65,7 @@ static func enroll(world: RefCounted) -> void:
 	for index: int in range(families.size(), world.households.size()):
 		var seed_value: int = _roll(state["seed"], world.current_day(), index, 1, 100)
 		var wealth: int = 25 + floori(seed_value * seed_value * 0.028)
-		var acreage: int = (2 + seed_value % 8) if world.households[index]["adults"] > 0 and seed_value % 7 != 0 else 0
+		var acreage: int = (2 + seed_value % 8) if not world.capital_layout and world.households[index]["adults"] > 0 and seed_value % 7 != 0 else 0
 		families.append({"cash": wealth, "land": acreage, "boats": 0, "civil": 35 + _roll(state["seed"], 1, index, 2, 57),
 			"marshal": 35 + _roll(state["seed"], 1, index, 3, 57), "occupation": "待业", "income": 0, "hired": 0, "tax": 0})
 
@@ -136,7 +137,7 @@ static func settle(world: RefCounted) -> Dictionary:
 		var wage: int = job.get("wage", 0)
 		var cultivated: int = mini(family["land"], job["farm"] * 5)
 		var yield_percent: int = season + _roll(state["seed"], day, index, 12, 39)
-		job["grain"] = floori(cultivated * 1.4 * yield_percent / 100.0)
+		job["grain"] = Fields.harvest(world,index,cultivated,yield_percent) if world.capital_layout else floori(cultivated * 1.4 * yield_percent / 100.0)
 		job["catch"] = job["fish"] * (3 + _roll(state["seed"], day, index, 13, 5))
 		result["harvest"] += job["grain"]
 		result["fish"] += job["catch"]
@@ -191,6 +192,8 @@ static func _reinvest(world: RefCounted, seed: int, day: int, index: int, family
 			return
 		family["cash"] -= 85
 		family["boats"] += 1
+	elif world.capital_layout:
+		Fields.petition(world,index,day,workers)
 	elif family["cash"] >= 58 and family["land"] < mini(60, workers * 10 + 5) and chance < 49:
 		family["cash"] -= 32
 		family["land"] += 2
@@ -363,7 +366,7 @@ static func _invest_in_buildings(world: RefCounted, day: int, trades: Dictionary
 			price = 0
 		if kind.is_empty():
 			continue
-		var definition: Resource = Catalog.for_construction(kind, world.capital_layout and kind == "b_manor")
+		var definition: Resource = Catalog.for_construction(kind, world.capital_layout and kind in ["b_manor","b_restaurant","b_inn","b_tavern"])
 		var blocked: Dictionary = _estate_buffer(world,occupied) if kind=="b_manor" and world.capital_layout else occupied
 		var slot: Vector2i = _shop_site(ways, markets, definition, blocked, world.capital_layout)
 		if slot != Grid.INVALID:
@@ -380,6 +383,8 @@ static func _invest_in_buildings(world: RefCounted, day: int, trades: Dictionary
 				if front >= 0:
 					world.buildings.back()["front"] = front
 			state["property"][id] = owner
+			if world.capital_layout:
+				world.post_report("民生","居民新业",world.household_name(owner)+"新设"+TITLES[kind]+"。")
 			return
 
 
@@ -441,6 +446,7 @@ static func appoint(world: RefCounted, index: int, military: bool, legion: Strin
 		if state["general"] == index:
 			return false
 		state["civil"] = index
+	world.post_report("臣属","任命生效","%s家主受任%s。" % [world.household_name(index),"武将" if military else "税务官"])
 	return true
 
 

@@ -2,6 +2,7 @@
 extends RefCounted
 
 const PIXELS := {
+	"idle": ["...xx.....", "...xx.....", "..xxxx....", ".xxxxxx...", ".xxxxxx..x", "...xx...xx", "...xx..xx.", "..xx.xxxx.", "..xx..xx..", ".........."],
 	"people": ["..xx..xx..", "..xx..xx..", "..........", ".xxxx.xxxx", "xxxxxx.xxx", "xxxxxx.xxx", "..xx..xx..", "..xx..xx..", "..xx..xx..", ".........."],
 	"food": [".......xx.", ".....xx.x.", ".....x.x..", "...xx.xx..", "...x.xx...", "..x.xx....", "..xxx.....", ".xxx......", "xx........", "x........."],
 	"gold": ["..xxxxxx..", ".xxxxxxxx.", "xxx....xxx", "xx.xxxx.xx", "xx.xx...xx", "xx...xx.xx", "xx.xxxx.xx", "xxx....xxx", ".xxxxxxxx.", "..xxxxxx.."],
@@ -19,7 +20,7 @@ const PIXELS := {
 	"warn": ["....xx....", "....xx....", "...xxxx...", "...x.xx...", "..xx.xx..", "..xx.xx..", ".xxx.xxx.", "xxxx.xxxxx", "xxxxxxxxxx", ".........."],
 }
 const COLORS := {
-	"people": "#b3cfe8", "food": "#e9cb79", "gold": "#f4d274", "wood": "#a9ce87",
+	"people": "#b3cfe8", "idle": "#a9ce87", "food": "#e9cb79", "gold": "#f4d274", "wood": "#a9ce87",
 	"stone": "#c5cbd4", "clock": "#d0c6b4", "work": "#ddbb91", "house": "#c9bf96",
 	"happy": "#a6d9a0", "shield": "#e4a790", "book": "#a9c2d8", "fish": "#96d2d5",
 	"ranch": "#d1ac90", "warn": "#f2a780", "map": "#b8c4aa",
