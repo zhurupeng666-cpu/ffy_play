@@ -46,7 +46,7 @@ static func execute(world: RefCounted, definition_id: String, anchor: Vector2i, 
 	var affordability: Dictionary = check_cost(definition.get("cost"), world.resources)
 	if not affordability["ok"]:
 		return affordability
-	if world.buildings.size() >= 256 or world.next_building_id >= 1000000:
+	if world.buildings.size() + world.royal_works["roads"].size() >= 256 or world.next_building_id >= 1000000:
 		return {"ok": false, "code": "LIMIT", "reason": "达到当前原型建筑数量上限"}
 	if int(definition.get("build_work")) <= 0 or int(definition.get("build_work")) > 100000:
 		return {"ok": false, "code": "INVALID_WORK", "reason": "施工工作量配置无效"}

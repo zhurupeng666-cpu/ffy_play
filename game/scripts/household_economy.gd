@@ -6,12 +6,13 @@ const Grid = preload("res://scripts/isometric_grid.gd")
 const Catalog = preload("res://scripts/building_catalog.gd")
 const Market = preload("res://scripts/district_market.gd")
 const Streets = preload("res://scripts/street_frontage.gd")
+const Works = preload("res://scripts/royal_works.gd")
 const Placement = preload("res://scripts/placement_validator.gd")
 const March = preload("res://scripts/region_march.gd")
 
 const LEGACY: Array[String] = ["b_farm", "b_fishery"]
-const SHOPS: Array[String] = ["b_tavern", "b_restaurant", "b_bakery"]
-const TITLES: Dictionary = {"b_farm": "民田", "b_fishery": "民用码头", "b_tavern": "酒馆", "b_restaurant": "酒楼", "b_bakery": "烘焙铺", "b_manor": "府邸"}
+const SHOPS: Array[String] = ["b_tavern", "b_restaurant", "b_bakery", "b_inn"]
+const TITLES: Dictionary = {"b_farm": "民田", "b_fishery": "民用码头", "b_tavern": "酒馆", "b_restaurant": "酒楼", "b_bakery": "烘焙铺", "b_inn":"客栈", "b_manor": "府邸"}
 const LAND_RATES: Dictionary = {"low": 12, "standard": 18, "high": 25}
 const SHOP_RATES: Dictionary = {"low": 14, "standard": 22, "high": 31}
 const OFFICE_WEALTH: int = 240
@@ -113,7 +114,7 @@ static func settle(world: RefCounted) -> Dictionary:
 	for job: Dictionary in jobs:
 		var owner: int = job["id"]
 		var family: Dictionary = families[owner]
-		_reinvest(state["seed"], day, owner, family, job["workers"], fishing)
+		_reinvest(world, state["seed"], day, owner, family, job["workers"], fishing)
 		if shops.has(owner):
 			job["shop"] = mini(job["workers"], 2)
 		job["fish"] = mini(job["workers"] - job["shop"], int(family["boats"]) * 2)
@@ -150,7 +151,14 @@ static func settle(world: RefCounted) -> Dictionary:
 		var shop_due: int = roundi(gross * (SHOP_RATES[world.tax_policy] + tax_bonus(world)) / 100.0)
 		result["shop_tax"] += shop_due
 		result["hires"] += int(family["hired"])
-		var earnings: int = wage + (int(job["assigned"]) * 2) + maxi(0, gross - supplies - shop_due) + int(job["workers"])
+		var net: int = maxi(0,gross-supplies-shop_due)
+		if net > 0 and world.capital_layout and not world.royal_works["shares"].is_empty():
+			for building: Dictionary in world.buildings:
+				var id: String = building["id"]
+				if world.royal_works["shares"].has(id) and state["property"].get(id,-1)==index and building["def_id"]==shops.get(index):
+					net -= Works.distribute(world,id,net)
+					break
+		var earnings: int = wage + (int(job["assigned"]) * 2) + net + int(job["workers"])
 		_earn(family, earnings)
 		# 家用与偶发修缮形成支出，家大业大的账也可能从盈转亏。
 		var members: int = int(world.households[index]["adults"]) + world.households[index]["children"].size()
@@ -169,11 +177,13 @@ static func settle(world: RefCounted) -> Dictionary:
 
 
 # 行业再投资：余钱、家庭工时与水路可达共同决定买田、置船和转行。
-static func _reinvest(seed: int, day: int, index: int, family: Dictionary, workers: int, fishing: Dictionary) -> void:
+static func _reinvest(world: RefCounted, seed: int, day: int, index: int, family: Dictionary, workers: int, fishing: Dictionary) -> void:
 	if workers <= 0:
 		return
 	var chance: int = _roll(seed, day, index, 10, 100)
 	if fishing.has(index) and family["boats"] < 5 and family["cash"] >= 105 and chance < 20:
+		if world.capital_layout and not Works.buy(world,family,8,0):
+			return
 		family["cash"] -= 85
 		family["boats"] += 1
 	elif family["cash"] >= 58 and family["land"] < mini(60, workers * 10 + 5) and chance < 49:
@@ -308,7 +318,7 @@ static func _private_construction(world: RefCounted) -> void:
 # 商铺与府邸：成熟市场附近择址，先检查地段再扣住户资产，不占官府账。
 static func _invest_in_buildings(world: RefCounted, day: int, trades: Dictionary) -> void:
 	var state: Dictionary = world.household_economy
-	if world.buildings.size() >= 256 or world.next_building_id >= 1000000:
+	if world.buildings.size() + world.royal_works["roads"].size() >= 256 or world.next_building_id >= 1000000:
 		return
 	var markets: Array[Vector2i] = []
 	var ways: Array[Vector2i] = []
@@ -351,6 +361,11 @@ static func _invest_in_buildings(world: RefCounted, day: int, trades: Dictionary
 		var definition: Resource = Catalog.for_construction(kind, world.capital_layout and kind == "b_manor")
 		var slot: Vector2i = _shop_site(ways, markets, definition, occupied, world.capital_layout)
 		if slot != Grid.INVALID:
+			if world.capital_layout:
+				var wood: int = 28 if kind=="b_manor" else (4 if kind=="b_farm" else 12)
+				var stone: int = 16 if kind=="b_manor" else (0 if kind=="b_farm" else 6)
+				if family["cash"] < price+Works.price(wood,stone) or not Works.buy(world,family,wood,stone):
+					continue
 			family["cash"] -= price
 			family["income"] -= price
 			var id: String = Market.found(world, slot, definition)

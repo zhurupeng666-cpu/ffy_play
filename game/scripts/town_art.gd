@@ -93,7 +93,7 @@ static func site(canvas: Control, center: Vector2) -> void:
 	_logs(canvas, center + Vector2(4, -1))
 
 # 建筑模块：依据用途组合主楼、塔楼、侧棚和生产设施。
-static func building(canvas: Control, id: String, center: Vector2, spread: float = 1.0, front: int = 0) -> void:
+static func building(canvas: Control, id: String, center: Vector2, spread: float = 1.0, front: int = 0, variation: int = 0) -> void:
 	match id:
 		"b_hall":
 			_house(canvas, center + Vector2(0, -10), 42, 35, Color("#526b86"), Color("#baa98e"), "stone")
@@ -101,7 +101,9 @@ static func building(canvas: Control, id: String, center: Vector2, spread: float
 			_tower(canvas, center + Vector2(37, 5), 14, 37)
 			_flag(canvas, center + Vector2(-3, -73), Color("#c45d4b"))
 		"b_house":
-			_house(canvas, center, 39, 25, Color("#ab5640"), Color("#e6bf87"), "home", 1.45, front)
+			var roofs: Array[Color] = [Color("#ab5640"),Color("#737848"),Color("#8d6b53"),Color("#577980"),Color("#8d5859")]
+			var walls: Array[Color] = [Color("#e6bf87"),Color("#d8b9a2"),Color("#ba9472"),Color("#e5cba4"),Color("#cfb08a")]
+			_house(canvas,center,37+variation,22+variation*2,roofs[variation],walls[variation],"home" if variation != 2 else "timber",1.45,front)
 		"b_farm":
 			var plots: int = clampi(roundi(spread), 1, 5)
 			for row: int in range(plots):
@@ -129,6 +131,10 @@ static func building(canvas: Control, id: String, center: Vector2, spread: float
 			_house(canvas, center, 36, 25, Color("#b68a49"), Color("#d4b78c"), "home", 1.44, front)
 			_crate(canvas, center + Vector2(-28, 23))
 			_shop_sign(canvas, center, Color("#dbb374"))
+		"b_inn":
+			_house(canvas, center, 40, 35, Color("#92724b"), Color("#d6b187"), "timber", 1.58, front)
+			_shop_sign(canvas, center, Color("#e3c276"))
+			_crate(canvas, center + Vector2(24,17))
 		"b_manor":
 			_house(canvas, center - Vector2(0, 12), 52, 43, Color("#56687e"), Color("#ccc1a4"), "stone", 1.62)
 			_tower(canvas, center + Vector2(-61, 19), 13, 28)

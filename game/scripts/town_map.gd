@@ -81,6 +81,8 @@ var art_world_space: bool = false
 var work_areas: Dictionary = {}
 var ready_infrastructure: Dictionary = {}
 var street_cells: Dictionary = {}
+var tender_reserve: Dictionary = {}
+var tender_orders: Array = []
 var equipment_cells: Dictionary = {}
 var motion_layer: Control
 var art_canvas: CanvasItem
@@ -313,6 +315,11 @@ func _draw() -> void:
 		return
 	_draw_building_feedback()
 	_draw_region_site_labels()
+	for order: Dictionary in tender_orders:
+		var point := Vector2i(order["cell"][0],order["cell"][1])
+		if Rect2(Vector2.ZERO,size).grow(140).has_point(world_to_screen(Grid.cell_to_world(point))):
+			var outline: PackedVector2Array = _footprint_outline(point,Vector2i(3,3))
+			draw_colored_polygon(outline,Color("#bc9e5488" if order["owner"]<0 else "#6591af88"))
 	if court_edit >= 0:
 		var court: Rect2i = Courts.AREAS[court_edit]
 		_outline_building(court.position,court.size)
@@ -643,7 +650,7 @@ func _update_preview() -> void:
 	if not Grid.contains(hovered):
 		preview_result = {"ok": false, "code": "NO_ANCHOR", "reason": "请将鼠标移到地图内", "cells": []}
 	else:
-		var taken: Dictionary = occupied_cells if capital_buildings.is_empty() else occupied_cells.merged(Capital.occupation())
+		var taken: Dictionary = occupied_cells if capital_buildings.is_empty() else occupied_cells.merged(Capital.occupation()).merged(tender_reserve)
 		preview_result = Placement.check_building(hovered, active_definition, taken, not capital_buildings.is_empty())
 		if preview_result["ok"] and active_definition.get("id") == "b_house" and not capital_buildings.is_empty():
 			var front: int = Streets.direction(hovered, active_definition.get("footprint"), street_cells)
@@ -853,7 +860,7 @@ func _draw_foundation(record: Dictionary) -> void:
 	art_canvas.draw_colored_polygon(surface, tint)
 	surface.append(surface[0])
 	art_canvas.draw_polyline(surface, Color("#473e32aa"), 2.0, false)
-	if not constructing and record["def_id"] in ["b_house","b_manor","b_tavern","b_restaurant","b_bakery"]:
+	if not constructing and record["def_id"] in ["b_house","b_manor","b_tavern","b_restaurant","b_bakery","b_inn"]:
 		_draw_entry_path(record, anchor, footprint)
 
 
@@ -1004,7 +1011,7 @@ func _draw_map_objects(visible_objects: Rect2, decorate: bool) -> void:
 			elif worksite:
 				WorksiteArt.draw_site(self, record["def_id"], center)
 			else:
-				Art.building(self, record["def_id"], center, spread, Streets.for_record(record, street_cells))
+				Art.building(self, record["def_id"], center, spread, Streets.for_record(record, street_cells), posmod(int(hash(record["id"])),5) if record["def_id"]=="b_house" else 0)
 			drawing_building = ""
 			if compound or worksite or record["def_id"] in ["b_ranch", "b_barracks"]:
 				animated_objects.append({

@@ -22,6 +22,7 @@ const Population = preload("res://scripts/population_service.gd")
 const DistrictMarket = preload("res://scripts/district_market.gd")
 const Capital = preload("res://scripts/capital_layout.gd")
 const Courts = preload("res://scripts/palace_courtyards.gd")
+const Works = preload("res://scripts/royal_works.gd")
 const HouseEconomy = preload("res://scripts/household_economy.gd")
 const Estate = preload("res://scripts/estate_labor.gd")
 var tick: int = 0
@@ -31,6 +32,7 @@ var population: int = Population.START_POPULATION
 var household_economy: Dictionary = {}
 var capital_layout: bool = false
 var palace_decor: Dictionary = Courts.initial()
+var royal_works: Dictionary = Works.initial()
 var households: Array = Population.initial(Population.START_POPULATION, Population.START_CHILDREN, 1)
 var population_report: Dictionary = {}
 # 领主劳役：建筑工人数包含双方，单独记录领主人手以保留原生产公式。
@@ -126,6 +128,8 @@ func settle_days() -> void:
 		Army.settle(self)
 		last_settled_day += 1
 		Estate.settle(self)
+		if capital_layout and not household_economy.is_empty():
+			Works.settle(self)
 		Population.settle(self)
 		if not household_economy.is_empty():
 			HouseEconomy.enroll(self)
@@ -145,9 +149,10 @@ func snapshot() -> Dictionary:
 		data["version"] = 27
 		data["household_economy"] = household_economy.duplicate(true)
 	if capital_layout:
-		data["version"] = 29
+		data["version"] = 30
 		data["capital_layout"] = true
 		data["palace_decor"] = palace_decor.duplicate(true)
+		data["royal_works"] = royal_works.duplicate(true)
 	return data
 
 
@@ -158,7 +163,7 @@ static func from_snapshot(data: Variant) -> RefCounted:
 	for key: String in ["version", "tick", "last_settled_day", "population", "speed"]:
 		if not _valid_integer(data.get(key), 0, 120000000):
 			return null
-	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29] or int(data["speed"]) not in [1, 2, 4]:
+	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30] or int(data["speed"]) not in [1, 2, 4]:
 		return null
 	var version: int = int(data["version"])
 	if not _valid_integer(data["population"], Population.START_POPULATION, Population.MAX_POPULATION) or (version < 25 and data["population"] != Population.START_POPULATION):
@@ -285,6 +290,8 @@ static func from_snapshot(data: Variant) -> RefCounted:
 			return null
 	if version >= 27 and not HouseEconomy.restore(state, data.get("household_economy")):
 		return null
+	if version >= 30 and not Works.restore(state,data.get("royal_works")):
+		return null
 	if state.idle_workers() < 0 or state.population > state.housing_capacity():
 		return null
 	return state
@@ -338,6 +345,8 @@ func _move_city_extractors() -> bool:
 # 占用模块：从真实实例推导占用，不将冗余格表另行存档。
 func occupied_cells() -> Dictionary:
 	var occupied: Dictionary = Capital.occupation().duplicate() if capital_layout else {}
+	if capital_layout:
+		occupied.merge(Works.reserved(royal_works["roads"]))
 	for record: Dictionary in buildings:
 		var anchor: Vector2i = Vector2i(int(record["cell"][0]), int(record["cell"][1]))
 		for cell: Vector2i in Placement.footprint_cells(anchor, Catalog.footprint(record)):
@@ -446,7 +455,7 @@ func _restore_buildings(data: Dictionary) -> bool:
 		if raw.has("large"):
 			record["large"] = raw["large"]
 		if raw.has("front"):
-			if raw["def_id"] not in ["b_house", "b_manor", "b_tavern", "b_restaurant", "b_bakery"] or not _valid_integer(raw["front"], 0, 3):
+			if raw["def_id"] not in ["b_house", "b_manor", "b_tavern", "b_restaurant", "b_bakery", "b_inn"] or not _valid_integer(raw["front"], 0, 3):
 				return false
 			record["front"] = int(raw["front"])
 		if raw.get("legacy_large", false) or (prior_large and raw.get("large", false)):

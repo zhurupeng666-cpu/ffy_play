@@ -13,7 +13,7 @@ const MARKET_SPACING: int = 2 * WALK_RANGE
 
 # 日结模块：只用并入道路网的住宅，每天最多形成一处新集市。
 static func settle(world: RefCounted) -> void:
-	if world.buildings.size() >= 256 or world.next_building_id >= 1000000:
+	if world.buildings.size() + world.royal_works["roads"].size() >= 256 or world.next_building_id >= 1000000:
 		return
 	var ways: Dictionary = Streets.network(world.buildings)
 	var houses: Array[Dictionary] = []

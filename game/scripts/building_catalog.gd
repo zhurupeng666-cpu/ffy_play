@@ -21,6 +21,7 @@ const TAVERN = preload("res://data/buildings/tavern.tres")
 const RESTAURANT = preload("res://data/buildings/restaurant.tres")
 const BAKERY = preload("res://data/buildings/bakery.tres")
 const MANOR = preload("res://data/buildings/manor.tres")
+const INN = preload("res://data/buildings/inn.tres")
 
 
 # 场地模块：独立维护大型用地尺寸，保留原类型、生产和军营归属。
@@ -93,4 +94,6 @@ static func find(id: String) -> Resource:
 			return BAKERY
 		"b_manor":
 			return MANOR
+		"b_inn":
+			return INN
 	return null

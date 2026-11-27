@@ -78,6 +78,7 @@ func _run() -> void:
 	_check(Legions.dissolve(old, legion["legion_id"])["ok"] and economy["general"] == -1, "解散军团后留下悬空武将")
 	_check_investment()
 	_check_player_view()
+	_check_royal_works()
 	if not failed:
 		print("HOUSEHOLD_PASS: migration, property, farming, fishing, paid labor, shop tax, appointment, deterministic save and UI")
 	quit(1 if failed else 0)
@@ -143,4 +144,49 @@ func _check_player_view() -> void:
 	_check(main.store.load_world() != null, "正常界面的新版存档无法重读")
 	var path: String = main.store_path_override
 	main.free()
+	DirAccess.remove_absolute(path)
+
+
+# 皇家工程验收：发标、预算、材料、民居、自有店铺分红和自动读档共用现有世界。
+func _check_royal_works() -> void:
+	var works = State.Works
+	var world: RefCounted = State.new()
+	Economy.activate(world,71342)
+	world.capital_layout = true
+	var family: Dictionary = world.household_economy["families"][2]
+	family["cash"] = 500
+	var inn: String = Market.found(world,Vector2i(16,12),Catalog.INN)
+	world.household_economy["property"][inn] = 2
+	var balance: int = world.resources["gold"]
+	_check(works.invest(world,inn) and world.resources["gold"] == balance-60 and family["cash"] == 560,"认购未从皇家付款给业主")
+	_check(works.distribute(world,inn,34)==3 and world.royal_works["dividends"]==3,"分红未按净利和比例计算")
+	var road := Vector2i(13,12)
+	_check(works.publish(world,road)["ok"] and not works.publish(world,road)["ok"],"重复投标覆盖地块")
+	_check(State.from_snapshot(JSON.parse_string(JSON.stringify(world.snapshot()))) != null,"待投标订单无法读档")
+	world.paused = false
+	Clock.new(world).advance(State.DAY_TICKS)
+	var orders: Array = world.royal_works["roads"]
+	_check(not orders.is_empty() and orders[0]["owner"]>=0 and orders[0]["bid"]>=30,"报价和中标未执行")
+	Clock.new(world).advance(State.DAY_TICKS)
+	_check(world.royal_works["roads"].is_empty() and world.royal_works["paid"]>=30,"发包工程未交工付款")
+	_check(world.royal_works["wood"]>=3 and world.royal_works["stone"]>=6 and world.royal_works["sales"]>0,"没有向皇家收取材料费")
+	_check(not world.royal_works["homes"].is_empty(),"人口住房压力未触发居民自建")
+	_check(State.from_snapshot(JSON.parse_string(JSON.stringify(world.snapshot()))) != null,"施工、住宅产权或股权未恢复")
+
+	var scene: PackedScene = load("res://scenes/world_prototype.tscn")
+	var path: String = ProjectSettings.globalize_path("res://local_data/tests/exit_auto_%d.db" % Time.get_ticks_usec())
+	var first: Control = scene.instantiate()
+	first.store_path_override = path
+	first.auto_lifecycle_for_test = true
+	root.add_child(first)
+	first.world = world
+	_check(first._save_on_exit(),"退出自动保存写入失败")
+	first.free()
+	var second: Control = scene.instantiate()
+	second.store_path_override = path
+	second.auto_lifecycle_for_test = true
+	root.add_child(second)
+	_check(second.world.tick == world.tick and second.world.royal_works == world.royal_works,"进入游戏未自动读取最近存档")
+	second.free()
+	auto_accept_quit = true
 	DirAccess.remove_absolute(path)

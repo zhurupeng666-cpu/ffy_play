@@ -35,6 +35,7 @@ const Population = preload("res://scripts/population_service.gd")
 const HouseEconomy = preload("res://scripts/household_economy.gd")
 const Capital = preload("res://scripts/capital_layout.gd")
 const Courts = preload("res://scripts/palace_courtyards.gd")
+const Works = preload("res://scripts/royal_works.gd")
 const Estate = preload("res://scripts/estate_labor.gd")
 const Clock = preload("res://scripts/strategic_clock.gd")
 const Store = preload("res://scripts/world_save_repository.gd")
@@ -43,6 +44,10 @@ const ExportProbe = preload("res://scripts/export_probe.gd")
 # 控制模块：界面只持有世界引用，资源计算和SQL分别由独立模块承担。
 var world: RefCounted = State.new()
 var legacy_economy_fixture: bool = false
+var auto_lifecycle_for_test: bool = false
+var automatic_lifecycle: bool = false
+var works_totals: Label
+var invest_button: Button
 var household_detail: Label
 var household_report: Label
 var civil_button: Button
@@ -229,6 +234,11 @@ func _ready() -> void:
 			return
 	else:
 		_refresh_save_stamp()
+		automatic_lifecycle = not legacy_economy_fixture and (auto_lifecycle_for_test or (store_path_override.is_empty() and DisplayServer.get_name() != "headless"))
+		if automatic_lifecycle:
+			get_tree().auto_accept_quit = false
+			if not store.list_saves().is_empty():
+				_load()
 	_refresh()
 	if not world_probe.is_empty():
 		get_tree().quit(_verify_export(world_probe))
@@ -580,6 +590,11 @@ func _build_management_drawer(columns: HBoxContainer) -> void:
 		], 2)
 
 	_build_population_sections(town_page)
+	if not legacy_economy_fixture:
+		town_picker.add_icon_item(HudIcons.texture("work"),"皇家工程与交易")
+		panel = _data_section(town_page,town_sections)
+		works_totals = _label("")
+		_button(_row(),"撤回最早的待投标工程",_cancel_tender)
 	town_picker.item_selected.connect(_show_data_section.bind(town_sections))
 	_show_data_section(0, town_sections)
 
@@ -595,6 +610,38 @@ func _build_management_drawer(columns: HBoxContainer) -> void:
 	_drawer_page("账本")
 	_build_ledger()
 	management_drawer.hide()
+
+
+# 工程展示：在城镇账页列出投标、承建户和皇家木石账。
+func _refresh_works() -> void:
+	if works_totals == null:
+		return
+	var data: Dictionary = world.royal_works
+	if town_map.tender_orders != data["roads"]:
+		town_map.tender_orders = data["roads"].duplicate(true)
+		town_map.tender_reserve = Works.reserved(town_map.tender_orders)
+		town_map.queue_redraw()
+	var lines: PackedStringArray = ["木材 %d金／份 · 石材 %d金／份" % [Works.WOOD_PRICE,Works.STONE_PRICE],
+		"累计售木 %d · 售石 %d · 收入 %d金" % [data["wood"],data["stone"],data["sales"]],
+		"工程款 %d金 · 商铺分红 %d金" % [data["paid"],data["dividends"]]]
+	for order: Dictionary in data["roads"]:
+		var text: String = "等投标" if order["owner"] < 0 else "第%d户承建，报价%d金，第%d日交工" % [order["owner"]+1,order["bid"],order["due"]]
+		lines.append("(%d,%d) · %s" % [order["cell"][0],order["cell"][1],text])
+	works_totals.text = "\n".join(lines)
+
+
+# 撤标入口：只撤销尚未选出承建户的一项工程。
+func _cancel_tender() -> void:
+	var roads: Array = world.royal_works["roads"]
+	for i: int in range(roads.size()):
+		if roads[i]["owner"] < 0 and world.resources["gold"] <= 1000000000-Works.ROAD_BUDGET:
+			world.resources["gold"] += Works.ROAD_BUDGET
+			roads.remove_at(i)
+			status_label.text = "已撤标，预算退回"
+			_refresh_works()
+			town_map._update_preview()
+			return
+	status_label.text = "暂无可撤回工程"
 
 
 # 城镇数据模块：家庭账和领主劳役分别展示，方便确认两类劳动力来源。
@@ -676,7 +723,10 @@ func _build_command_bar(layout: VBoxContainer) -> void:
 	build_toolbar = HBoxContainer.new()
 	build_toolbar.add_theme_constant_override("separation", 6)
 	toolbar.add_child(build_toolbar)
-	_build_category("民居仓储", "house", ["b_house", "b_granary"])
+	if legacy_economy_fixture:
+		_build_category("民居仓储", "house", ["b_house","b_granary"])
+	else:
+		_build_category("仓储", "house", ["b_granary"])
 	if legacy_economy_fixture:
 		_build_category("农业渔牧", "food", ["b_farm", "b_ranch", "b_fishery"])
 	else:
@@ -723,7 +773,7 @@ func _build_category(title: String, icon_id: String, ids: Array[String]) -> void
 		var definition: Resource = Construction.Catalog.find(id)
 		var scaled: bool = Construction.Catalog.LARGE_SIZES.has(id) and (id != "b_road" or not legacy_economy_fixture)
 		var footprint: Vector2i = Construction.Catalog.footprint({"def_id": id, "large": scaled})
-		var title_text: String = "宽街" if id == "b_road" and scaled else definition.get("display_name")
+		var title_text: String = "宽街招标" if id == "b_road" and scaled else definition.get("display_name")
 		popup.add_icon_item(HudIcons.texture(icon_id), "%s   %d×%d" % [title_text, footprint.x, footprint.y], i)
 	popup.id_pressed.connect(_build_menu_selected.bind(ids))
 
@@ -840,6 +890,7 @@ func _refresh() -> void:
 	_refresh_civic()
 	_refresh_builder_controls()
 	_refresh_population()
+	_refresh_works()
 	town_map.sync_capital(world.capital_layout, world.population)
 	_refresh_estate()
 	_refresh_inspection()
@@ -1066,10 +1117,29 @@ func _unhandled_key_input(event: InputEvent) -> void:
 				management_drawer.hide()
 				get_viewport().set_input_as_handled()
 			else:
-				get_tree().quit()
+				_request_game_exit()
 
 
-# 退出模块：只关闭连接，不擅自覆盖手动存档。
+# 关闭按钮入口：窗口关闭请求与 Esc 共用自动存档。
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST and automatic_lifecycle:
+		_request_game_exit()
+
+
+# 退出请求：保存成功后释放窗口和数据库，失败仍可继续操作。
+func _request_game_exit() -> void:
+	if automatic_lifecycle and not _save_on_exit():
+		status_label.text = "自动存档失败，游戏仍打开：" + store.error_message
+		return
+	get_tree().quit()
+
+
+# 自动存档模块：复用普通存档的事务和七档轮换。
+func _save_on_exit() -> bool:
+	return store.save_world(world,"退出自动存档")
+
+
+# 退出模块：释放存档连接。
 func _exit_tree() -> void:
 	store.close_store()
 
@@ -1146,6 +1216,12 @@ func _on_placement_clicked(_result: Dictionary) -> void:
 	if town_map.active_definition == null:
 		return
 	var definition: Resource = town_map.active_definition
+	if world.capital_layout and definition.get("id") == "b_road":
+		var order: Dictionary = Works.publish(world,town_map.hovered)
+		status_label.text = "已发布道路招标，预留%d金币" % Works.ROAD_BUDGET if order["ok"] else order["reason"]
+		_refresh_works()
+		town_map._update_preview()
+		return
 	var result: Dictionary = Construction.execute(world, definition.get("id"), town_map.hovered, pending_build_command, bool(definition.get_meta("large", false)))
 	if not result["ok"]:
 		status_label.text = "建造失败：" + str(result.get("reason", ""))
@@ -1773,6 +1849,9 @@ func _build_inspection_card() -> void:
 	inspection_remove.focus_mode = Control.FOCUS_NONE
 	inspection_remove.pressed.connect(_request_removal)
 	contents.add_child(inspection_remove)
+	var finance := HBoxContainer.new()
+	contents.add_child(finance)
+	invest_button = _button(finance,"认购10%股份",_invest_selected)
 	removal_dialog = ConfirmationDialog.new()
 	removal_dialog.exclusive = true
 	removal_dialog.get_ok_button().text = "确认执行"
@@ -1813,6 +1892,15 @@ func _inspect_building(id: String, reveal: bool) -> void:
 		management_scroll.set_deferred("scroll_vertical", 0)
 
 
+# 股权入口：向居民酒楼或客栈业主支付认购款。
+func _invest_selected() -> void:
+	if world.capital_layout and Works.invest(world,inspected_building_id):
+		status_label.text = "认购成功，营业净利将按占股分红"
+		_refresh()
+	else:
+		status_label.text = "认购失败：请检查库款、商户与持股上限"
+
+
 # 详情刷新模块：施工、暂停、岗位和读档后始终从当前世界重算显示及按钮状态。
 func _refresh_inspection() -> void:
 	if inspection_label == null:
@@ -1824,7 +1912,7 @@ func _refresh_inspection() -> void:
 		detail["text"] = "%s ｜ 首府\n%s" % [landmark["title"], landmark["description"]]
 		var scale: Vector2i = landmark["size"]
 		detail["numbers"]["size"] = "%d × %d" % [scale.x, scale.y]
-	var owner: int = world.household_economy.get("property", {}).get(inspected_building_id, -1)
+	var owner: int = world.household_economy.get("property", {}).get(inspected_building_id,world.royal_works["homes"].get(inspected_building_id,-1))
 	if owner >= 0:
 		var property: Dictionary = Inspector.find(world, inspected_building_id)
 		var extent: Vector2i = Construction.Catalog.footprint(property)
@@ -1854,6 +1942,11 @@ func _refresh_inspection() -> void:
 		estate_producer_add.disabled = world.estate_idle() == 0 or int(record["workers"]) >= int(definition.get("worker_slots"))
 		estate_producer_remove.disabled = int(world.estate_posts.get(inspected_building_id, 0)) == 0
 	site_builder_actions.visible = owner < 0 and record.get("state") == "constructing"
+	invest_button.visible = world.capital_layout and owner >= 0 and record.get("def_id") in Works.ELIGIBLE_SHOPS
+	if invest_button.visible:
+		var share: int = world.royal_works["shares"].get(inspected_building_id,0)
+		invest_button.text = "认购10%% · %d金 ｜ 已持有%d%%" % [Works.INVESTMENT,share]
+		invest_button.disabled = share >= Works.MAX_SHARE or world.resources["gold"] < Works.INVESTMENT
 	inspection_remove.visible = owner < 0 and not record.is_empty() and record["def_id"] not in ["b_hall", "b_market"]
 	inspection_remove.text = "取消施工" if record.get("state") == "constructing" else "拆除建筑"
 	var military: bool = record.get("def_id") == "b_barracks"
