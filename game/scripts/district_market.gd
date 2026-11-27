@@ -43,7 +43,7 @@ static func settle(world: RefCounted) -> void:
 			continue
 		for direction: Vector2i in Terrain.CARDINALS:
 			var candidate: Vector2i = road + Vector2i(direction.x * 2, direction.y * 2) - Vector2i.ONE
-			if Placement.check_building(candidate, Catalog.MARKET, occupied)["ok"]:
+			if Placement.check_building(candidate, Catalog.MARKET, occupied, world.capital_layout)["ok"]:
 				best = candidate
 				score = reached
 				break

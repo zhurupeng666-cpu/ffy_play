@@ -31,14 +31,14 @@ static func check(anchor: Vector2i, size: Vector2i, occupied: Dictionary) -> Dic
 
 
 # 建筑校验模块：几何、占用和地形共用同一入口，预览与确认不会出现规则分歧。
-static func check_building(anchor: Vector2i, definition: Resource, occupied: Dictionary) -> Dictionary:
+static func check_building(anchor: Vector2i, definition: Resource, occupied: Dictionary, cleared_city: bool = false) -> Dictionary:
 	var result: Dictionary = check(anchor, definition.get("footprint"), occupied)
 	if result["ok"] and Sites.overlaps(Rect2i(anchor, definition.get("footprint"))):
 		result["ok"] = false
 		result["code"] = "REGION_SITE"
 		result["reason"] = "这块地属于区域据点，请在围墙外建造"
 	if result["ok"]:
-		var terrain: Dictionary = preload("res://scripts/town_terrain.gd").check(result["cells"], definition.get("requires_water"), definition.get("required_deposit"))
+		var terrain: Dictionary = preload("res://scripts/town_terrain.gd").check(result["cells"], definition.get("requires_water"), definition.get("required_deposit"), false, cleared_city)
 		if not terrain["ok"]:
 			result["ok"] = false
 			result["code"] = terrain["code"]

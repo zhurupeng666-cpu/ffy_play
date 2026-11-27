@@ -1,6 +1,7 @@
 ## 文件用途：定义城外林矿、湖河和沿岸建造规则，兼容旧档地形校验。
 extends RefCounted
 const Grid = preload("res://scripts/isometric_grid.gd")
+const Capital = preload("res://scripts/capital_layout.gd")
 const Sites = preload("res://scripts/region_sites.gd")
 
 # 河道断面：每项记录横坐标、北岸和南岸，中央河段拓宽成湖盆。
@@ -67,20 +68,20 @@ static func is_water(cell: Vector2i, legacy: bool = false) -> bool:
 
 
 # 地形校验：首轮检查占地，沿岸或林矿的接触从边缘正交格判定。
-static func check(cells: Array[Vector2i], requires_water: bool, required_deposit: String = "", legacy: bool = false) -> Dictionary:
+static func check(cells: Array[Vector2i], requires_water: bool, required_deposit: String = "", legacy: bool = false, cleared_city: bool = false) -> Dictionary:
 	var waterfront: bool = false
 	var deposit_nearby: bool = false
 	for cell: Vector2i in cells:
 		if is_water(cell, legacy):
 			return {"ok": false, "code": "WATER", "reason": "水域不能建造，请选择岸上空地"}
-		if not deposit_at(cell, legacy).is_empty():
+		if not deposit_at(cell, legacy, cleared_city).is_empty():
 			return {"ok": false, "code": "DEPOSIT", "reason": "资源区不能直接建造，请选择边缘空地"}
 		if (not requires_water or waterfront) and (required_deposit.is_empty() or deposit_nearby):
 			continue
 		for offset: Vector2i in CARDINALS:
 			if requires_water and is_water(cell + offset, legacy):
 				waterfront = true
-			if not required_deposit.is_empty() and deposit_at(cell + offset, legacy) == required_deposit:
+			if not required_deposit.is_empty() and deposit_at(cell + offset, legacy, cleared_city) == required_deposit:
 				deposit_nearby = true
 	if requires_water and not waterfront:
 		return {"ok": false, "code": "NEEDS_WATER", "reason": "渔场必须沿水建造，占地边缘需与河岸接触"}
@@ -111,7 +112,9 @@ const LEGACY_DEPOSITS: Dictionary = {
 }
 
 # 资源查询：返回真实占地所需的类型，也供地表纹理采样。
-static func deposit_at(cell: Vector2i, legacy: bool = false) -> String:
+static func deposit_at(cell: Vector2i, legacy: bool = false, cleared_city: bool = false) -> String:
+	if cleared_city and Capital.OUTER.has_point(cell):
+		return ""
 	if legacy:
 		return LEGACY_DEPOSITS.get(cell, "")
 	_prepare()

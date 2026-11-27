@@ -21,6 +21,7 @@ const Placement = preload("res://scripts/placement_validator.gd")
 const Population = preload("res://scripts/population_service.gd")
 const DistrictMarket = preload("res://scripts/district_market.gd")
 const Capital = preload("res://scripts/capital_layout.gd")
+const Courts = preload("res://scripts/palace_courtyards.gd")
 const HouseEconomy = preload("res://scripts/household_economy.gd")
 const Estate = preload("res://scripts/estate_labor.gd")
 var tick: int = 0
@@ -29,6 +30,7 @@ var last_settled_day: int = 0
 var population: int = Population.START_POPULATION
 var household_economy: Dictionary = {}
 var capital_layout: bool = false
+var palace_decor: Dictionary = Courts.initial()
 var households: Array = Population.initial(Population.START_POPULATION, Population.START_CHILDREN, 1)
 var population_report: Dictionary = {}
 # 领主劳役：建筑工人数包含双方，单独记录领主人手以保留原生产公式。
@@ -143,8 +145,9 @@ func snapshot() -> Dictionary:
 		data["version"] = 27
 		data["household_economy"] = household_economy.duplicate(true)
 	if capital_layout:
-		data["version"] = 28
+		data["version"] = 29
 		data["capital_layout"] = true
+		data["palace_decor"] = palace_decor.duplicate(true)
 	return data
 
 
@@ -155,7 +158,7 @@ static func from_snapshot(data: Variant) -> RefCounted:
 	for key: String in ["version", "tick", "last_settled_day", "population", "speed"]:
 		if not _valid_integer(data.get(key), 0, 120000000):
 			return null
-	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28] or int(data["speed"]) not in [1, 2, 4]:
+	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29] or int(data["speed"]) not in [1, 2, 4]:
 		return null
 	var version: int = int(data["version"])
 	if not _valid_integer(data["population"], Population.START_POPULATION, Population.MAX_POPULATION) or (version < 25 and data["population"] != Population.START_POPULATION):
@@ -274,6 +277,12 @@ static func from_snapshot(data: Variant) -> RefCounted:
 		if data.get("capital_layout") != true:
 			return null
 		state.capital_layout = true
+		if version >= 29:
+			state.palace_decor = Courts.restore(data.get("palace_decor"))
+			if state.palace_decor.is_empty():
+				return null
+		elif not state._move_city_extractors():
+			return null
 	if version >= 27 and not HouseEconomy.restore(state, data.get("household_economy")):
 		return null
 	if state.idle_workers() < 0 or state.population > state.housing_capacity():
@@ -284,6 +293,46 @@ static func from_snapshot(data: Variant) -> RefCounted:
 # 数值模块：拒绝空值、小数、负数、无穷值和超出边界的数据。
 static func _valid_integer(value: Variant, minimum: int, maximum: int) -> bool:
 	return typeof(value) in [TYPE_INT, TYPE_FLOAT] and is_finite(float(value)) and value >= minimum and value <= maximum and float(value) == floor(float(value))
+
+
+# 迁址模块：城内采集站保留岗位与产量进度，移到城外同类矿林旁。
+func _move_city_extractors() -> bool:
+	var taken: Dictionary = occupied_cells()
+	for record: Dictionary in buildings:
+		var kind: String = record["def_id"]
+		if kind not in ["b_lumber","b_quarry"]:
+			continue
+		var start := Vector2i(record["cell"][0],record["cell"][1])
+		var definition: Resource = Catalog.find(kind)
+		if not Capital.OUTER.has_point(start) and Placement.check_building(start,definition,{},true)["ok"]:
+			continue
+		var target: Vector2i = Grid.INVALID
+		var best: int = 1000000000
+		for district: Dictionary in Terrain.DISTRICTS:
+			if district["kind"] != definition.get("required_deposit"):
+				continue
+			var area: Rect2i = district["bounds"].grow(4)
+			for y: int in range(area.position.y,area.end.y):
+				for x: int in range(area.position.x,area.end.x):
+					var cell := Vector2i(x,y)
+					var distance: int = cell.distance_squared_to(start)
+					if Capital.OUTER.intersects(Rect2i(cell,definition.footprint)) or distance >= best:
+						continue
+					if Placement.check_building(cell,definition,taken,true)["ok"]:
+						best = distance
+						target = cell
+		if target == Grid.INVALID:
+			return false
+		for cell: Vector2i in Placement.footprint_cells(start,definition.footprint):
+			taken.erase(cell)
+		record["cell"] = [target.x,target.y]
+		for cell: Vector2i in Placement.footprint_cells(target,definition.footprint):
+			taken[cell] = record["id"]
+		for receipt: Dictionary in applied_commands.values():
+			if receipt["building_id"] == record["id"]:
+				receipt["cell"] = record["cell"].duplicate()
+				break
+	return true
 
 
 # 占用模块：从真实实例推导占用，不将冗余格表另行存档。
@@ -342,7 +391,7 @@ func _restore_buildings(data: Dictionary) -> bool:
 		# 地形存档模块：先以原版地形校验旧档，新档的退役记录按历史坐标保留。
 		var legacy_terrain: bool = int(data["version"]) < 24
 		var terrain_required: bool = raw.get("large", false) or definition.get("requires_water") or not str(definition.get("required_deposit")).is_empty()
-		if ((legacy_terrain and terrain_required) or (not legacy_terrain and not retired)) and not Terrain.check(check["cells"], definition.get("requires_water"), definition.get("required_deposit"), legacy_terrain)["ok"]:
+		if ((legacy_terrain and terrain_required) or (not legacy_terrain and not retired)) and not Terrain.check(check["cells"], definition.get("requires_water"), definition.get("required_deposit"), legacy_terrain, int(data["version"]) >= 29)["ok"]:
 			return false
 		if not legacy_terrain and not retired and raw["def_id"] == "b_fishery" and not raw.get("large", false):
 			return false

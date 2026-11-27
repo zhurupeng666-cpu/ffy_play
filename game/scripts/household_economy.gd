@@ -349,7 +349,7 @@ static func _invest_in_buildings(world: RefCounted, day: int, trades: Dictionary
 		if kind.is_empty():
 			continue
 		var definition: Resource = Catalog.for_construction(kind, world.capital_layout and kind == "b_manor")
-		var slot: Vector2i = _shop_site(ways, markets, definition, occupied)
+		var slot: Vector2i = _shop_site(ways, markets, definition, occupied, world.capital_layout)
 		if slot != Grid.INVALID:
 			family["cash"] -= price
 			family["income"] -= price
@@ -363,7 +363,7 @@ static func _invest_in_buildings(world: RefCounted, day: int, trades: Dictionary
 
 
 # 临街选址：商铺距集市有限；府邸也需道路，且不能挤占既有建筑。
-static func _shop_site(ways: Array[Vector2i], markets: Array[Vector2i], definition: Resource, occupied: Dictionary) -> Vector2i:
+static func _shop_site(ways: Array[Vector2i], markets: Array[Vector2i], definition: Resource, occupied: Dictionary, cleared_city: bool = false) -> Vector2i:
 	ways.sort()
 	for road: Vector2i in ways:
 		var near: bool = definition.id in ["b_manor", "b_farm"]
@@ -378,7 +378,7 @@ static func _shop_site(ways: Array[Vector2i], markets: Array[Vector2i], definiti
 				-int(definition.footprint.y) if direction.y < 0 else direction.y)
 			var centered := Vector2i(floori((definition.footprint.x - 1) * 0.5) if direction.y != 0 else 0, floori((definition.footprint.y - 1) * 0.5) if direction.x != 0 else 0)
 			var candidate: Vector2i = road + shift - centered
-			if Placement.check_building(candidate, definition, occupied)["ok"]:
+			if Placement.check_building(candidate, definition, occupied, cleared_city)["ok"]:
 				return candidate
 	return Grid.INVALID
 

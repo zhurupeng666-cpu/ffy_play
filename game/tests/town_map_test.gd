@@ -126,6 +126,7 @@ func _run() -> void:
 		_check(area >= 800 and bounds.position.length() > 50.0, "林矿资源区面积不足或离主城太近")
 	_check(Terrain.is_water(Vector2i(100, 110)) and Terrain.is_water(Vector2i(299, 130)) and not Terrain.is_water(Vector2i(6, 1)), "内陆水域未替换旧窄水带")
 	_check_capital(map)
+	_check_palace_decor()
 	_check_broad_streets(map)
 	map.free()
 	if not failed:
@@ -211,3 +212,20 @@ func _check_broad_streets(map: Control) -> void:
 	_check(loaded != null and loaded.buildings.back().get("front") == 0, "读档丢失住宅门向")
 	snapshot["buildings"].back()["front"] = 4
 	_check(state.from_snapshot(snapshot) == null, "坏档可以注入无效门向")
+
+
+# 宫苑验收：陈设边界、重叠禁止、布置存档以及城内资源清除同步。
+func _check_palace_decor() -> void:
+	var State = preload("res://scripts/world_state.gd")
+	var courts = State.Courts
+	var world: RefCounted = State.new()
+	State.HouseEconomy.activate(world, 71342)
+	world.capital_layout = true
+	var useful := Vector2i(131,-145)
+	_check(courts.can_place(world.palace_decor,0,4,useful), "院内空地不能放亭")
+	world.palace_decor["items"].append([4,useful.x,useful.y])
+	_check(not courts.can_place(world.palace_decor,0,0,useful) and not courts.can_place(world.palace_decor,0,0,Vector2i(5,5)), "布置允许重叠或越界")
+	var restored: RefCounted = State.from_snapshot(JSON.parse_string(JSON.stringify(world.snapshot())))
+	_check(restored != null and restored.palace_decor == world.palace_decor, "自定义陈设未随读档恢复")
+	_check(Terrain.deposit_at(Vector2i(56,42)) == "forest" and Terrain.deposit_at(Vector2i(56,42), false, true).is_empty(), "城内林矿遮罩未影响规则")
+	_check(Terrain.deposit_at(Vector2i(54,162), false, true) == "forest", "城外林矿被错误清除")

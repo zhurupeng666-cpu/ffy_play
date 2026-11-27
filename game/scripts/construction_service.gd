@@ -35,7 +35,7 @@ static func execute(world: RefCounted, definition_id: String, anchor: Vector2i, 
 	var definition: Resource = Catalog.for_construction(definition_id, large)
 	if definition == null or not definition.get("buildable"):
 		return {"ok": false, "code": "UNKNOWN_BUILDING", "reason": "此建筑不能建造"}
-	var geometry: Dictionary = Placement.check_building(anchor, definition, world.occupied_cells())
+	var geometry: Dictionary = Placement.check_building(anchor, definition, world.occupied_cells(), world.capital_layout)
 	if not geometry["ok"]:
 		return geometry
 	var front: int = Streets.NO_FRONT

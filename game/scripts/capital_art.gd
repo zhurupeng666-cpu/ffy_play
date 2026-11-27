@@ -4,6 +4,7 @@ extends RefCounted
 const Layout = preload("res://scripts/capital_layout.gd")
 const Grid = Layout.Grid
 const Art = preload("res://scripts/town_art.gd")
+const Courts = preload("res://scripts/palace_courtyards.gd")
 const GOLD := Color("#cc9c41")
 const JADE := Color("#568671")
 const RUBY := Color("#995649")
@@ -75,10 +76,92 @@ static func landmark(canvas: Control, record: Dictionary) -> void:
 			var roof: Color = GOLD if record["def_id"] == "gold" else (RUBY if record["def_id"] == "ruby" else JADE)
 			_tile(canvas, area, Color("#d2c3a5") if royal else Color("#a39378"))
 			var main: Rect2i = area.grow(-1)
-			_hall(canvas, main, roof, float(clampi(area.size.y * 9, 48, 155)), royal)
+			if canvas.palace_cutaway and record["def_id"] in ["ruby","gold","jade","service"] and area.size.x >= 10:
+				_room(canvas, main, record["id"])
+			else:
+				_hall(canvas, main, roof, float(clampi(area.size.y * 9, 48, 155)), royal)
 			if area.size.x >= 18:
 				for offset: Vector2i in [Vector2i(2, area.size.y - 2), Vector2i(area.size.x - 3, area.size.y - 2)]:
 					_incense(canvas, area.position + offset)
+
+
+# 内景模块：揭开屋顶后显示不同用途的家具、隔扇、地毯和矮墙。
+static func _room(canvas: Control, area: Rect2i, id: String) -> void:
+	var residential: bool = id.ends_with("/living") or id.ends_with("/queen") or id.ends_with("/dowager") or id.ends_with("/retirement")
+	var primary: bool = id.ends_with("/ceremony")
+	var fabric: Color = Color("#a24d39") if primary else (Color("#687d69") if residential else Color("#6e8292"))
+	_box(canvas, area, 0, 16, Color("#87775f"), Color("#cfb78e"))
+	_box(canvas, Rect2i(area.position,Vector2i(area.size.x,1)), 16, 58, Color("#8e4741"), Color("#b8795d"))
+	_box(canvas, Rect2i(area.position,Vector2i(1,area.size.y)), 16, 37, Color("#ab6650"), Color("#be8d70"))
+	var mid: int = floori(area.size.x / 2.0)
+	var aisle := Rect2i(area.position + Vector2i(mid-1,2),Vector2i(3,area.size.y-2))
+	_box(canvas, aisle, 16, 2, fabric.darkened(0.28), fabric)
+	var dais := Rect2i(area.position + Vector2i(mid-1,1),Vector2i(3,2))
+	for y: int in range(3, area.size.y - 1, 2):
+		for x: int in [mid-1,mid+1]:
+			_box(canvas,Rect2i(area.position+Vector2i(x,y),Vector2i.ONE),18,2,fabric,Color("#d4b572"))
+	if primary:
+		_box(canvas,dais,16,24,Color("#9f6c3c"),Color("#d3a658"))
+		_box(canvas,Rect2i(dais.position + Vector2i(1,0),Vector2i(1,2)),40,35,Color("#a56338"),Color("#ebb26e"))
+		for x: int in [mid-3,mid+3]:
+			_box(canvas,Rect2i(area.position + Vector2i(x,1),Vector2i(1,2)),16,48,Color("#704c43"),Color("#d6a76d"))
+	elif residential:
+		_box(canvas,dais,16,26,Color("#8f6051"),Color("#bb8580"))
+		_box(canvas,Rect2i(dais.position + Vector2i(0,1),Vector2i(3,1)),42,6,Color("#c19367"),Color("#edbe8f"))
+	else:
+		_box(canvas,dais,16,26,Color("#775042"),Color("#b0835a"))
+	for x: int in [2, area.size.x - 3]:
+		for y: int in range(2,area.size.y-1,3):
+			var cell: Vector2i = area.position + Vector2i(x,y)
+			_box(canvas,Rect2i(cell,Vector2i.ONE),16,18,Color("#7e563e"),Color("#af8357"))
+			_box(canvas,Rect2i(cell,Vector2i.ONE),34,13 if y == 2 else 4,Color("#81694c"),Color("#6d9e88") if y == 2 else Color("#c1aa7e"))
+			if area.size.x >= 12:
+				var chair: Vector2i = cell + (Vector2i.RIGHT if x == 2 else Vector2i.LEFT)
+				_box(canvas,Rect2i(chair,Vector2i.ONE),16,12,Color("#634336"),Color("#a36d52"))
+
+
+# 院落模块：地砖和独立陈设均是真实地图格子，摆放后立刻重画。
+static func courts(canvas: Control, view: Rect2, layout: Dictionary) -> void:
+	var colors: Array[Color] = [Color("#9eacad"),Color("#c8b295"),Color("#829274")]
+	for i: int in range(Courts.AREAS.size()):
+		var area: Rect2i = Courts.AREAS[i]
+		if not _visible(canvas,area,view):
+			continue
+		_tile(canvas,area,colors[layout["styles"][i]].darkened(0.24))
+		_tile(canvas,area.grow(-1),colors[layout["styles"][i]])
+		var plaza := Rect2i(area.position + Vector2i(area.size.x / 2,0),Vector2i(1,area.size.y))
+		_tile(canvas,plaza,colors[layout["styles"][i]].lightened(0.25))
+		if i == 3:
+			_box(canvas,Rect2i(area.position,Vector2i(area.size.x,1)),0,38,RUBY,Color("#bf967a"))
+			_box(canvas,Rect2i(area.position,Vector2i(1,area.size.y)),0,28,RUBY,Color("#bf967a"))
+	var ordered: Array = layout["items"].duplicate()
+	ordered.sort_custom(func(a: Array,b: Array) -> bool: return a[1]+a[2] < b[1]+b[2])
+	for item: Array in ordered:
+		var area := Rect2i(Vector2i(item[1],item[2]),Courts.size_for(item[0]))
+		if _visible(canvas,area,view):
+			_ornament(canvas,area,item[0])
+
+
+# 陈设模块：用各自的体块和色彩区分石灯、盆景、石几、池、亭、屏风。
+static func _ornament(canvas: Control, area: Rect2i, kind: int) -> void:
+	match kind:
+		0:
+			_box(canvas,area,0,12,Color("#676e6a"),Color("#b9c3ac"))
+			_box(canvas,area,14,37,Color("#8e8170"),Color("#e9c867"))
+			_roof(canvas,area,57,JADE,9)
+		1:
+			_box(canvas,area,0,15,RUBY,Color("#836541"))
+			Art.deposit(canvas,Grid.cell_to_world(area.position) - Vector2(0,15),"forest")
+		2:
+			_box(canvas,area,0,22,Color("#777e78"),Color("#c2bbad"))
+		3:
+			_tile(canvas,area,Color("#a6b0a4"))
+			_tile(canvas,area.grow(-1),Color("#55938f"))
+			_box(canvas,Rect2i(area.position+Vector2i.ONE,Vector2i.ONE),0,3,Color("#478c79"),Color("#80a76f"))
+		4:
+			_hall(canvas,area,JADE,58,true)
+		5:
+			_box(canvas,area,0,47,Color("#8c5843"),Color("#c49763"))
 
 
 # 北南门与东西门保留中间门洞，门楼以横跨洞口的台梁连接两座墩台。

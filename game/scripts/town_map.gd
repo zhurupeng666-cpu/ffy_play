@@ -20,6 +20,8 @@ const Grid = preload("res://scripts/isometric_grid.gd")
 const Sites = preload("res://scripts/region_sites.gd")
 const Capital = preload("res://scripts/capital_layout.gd")
 const CapitalArt = preload("res://scripts/capital_art.gd")
+const Courts = preload("res://scripts/palace_courtyards.gd")
+signal court_clicked(cell: Vector2i, remove: bool)
 const Walkers = preload("res://scripts/capital_walkers.gd")
 const Scout = preload("res://scripts/region_scout.gd")
 const Field = preload("res://scripts/woods_battle.gd")
@@ -47,6 +49,10 @@ var site_buildings: Dictionary = {}
 var site_cells: Dictionary = {}
 var overview_only: bool = false
 var capital_buildings: Dictionary = {}
+var palace_decor: Dictionary = {}
+var palace_cutaway: bool = false
+var court_edit: int = -1
+var court_tool: int = 0
 var resident_routes: Array[PackedVector2Array] = []
 var town_population: int = 0
 
@@ -275,6 +281,8 @@ func _draw_static_map(patch: Dictionary) -> void:
 	var coverage: Rect2 = patch["coverage"]
 	if not capital_buildings.is_empty():
 		CapitalArt.ground(self, coverage)
+		if not palace_decor.is_empty():
+			CapitalArt.courts(self,coverage,palace_decor)
 		CapitalArt.walls(self, coverage, false)
 		CapitalArt.walls(self, coverage, true)
 	for record: Dictionary in placed_buildings:
@@ -305,6 +313,11 @@ func _draw() -> void:
 		return
 	_draw_building_feedback()
 	_draw_region_site_labels()
+	if court_edit >= 0:
+		var court: Rect2i = Courts.AREAS[court_edit]
+		_outline_building(court.position,court.size)
+		if court.grow(-1).has_point(hovered):
+			_outline_building(hovered,Courts.size_for(court_tool))
 	if active_definition != null and Grid.contains(hovered):
 		var valid: bool = preview_result.get("ok", false)
 		var tint: Color = Color("#51d88580") if valid else Color("#f454508a")
@@ -388,6 +401,10 @@ func street_view_hidden(foot: Vector2) -> bool:
 
 # 鼠标模块：左键选择建筑，右键取消，滚轮定位缩放；施工模式仍按地格预览。
 func _gui_input(event: InputEvent) -> void:
+	if court_edit >= 0 and event is InputEventMouseButton and event.pressed and event.button_index in [MOUSE_BUTTON_LEFT,MOUSE_BUTTON_RIGHT]:
+		court_clicked.emit(cell_at(event.position),event.button_index == MOUSE_BUTTON_RIGHT)
+		accept_event()
+		return
 	if event is InputEventMouseButton:
 		if event.pressed and event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
 			_apply_zoom(event.position, 1.2 if event.button_index == MOUSE_BUTTON_WHEEL_UP else 1.0 / 1.2)
@@ -627,7 +644,7 @@ func _update_preview() -> void:
 		preview_result = {"ok": false, "code": "NO_ANCHOR", "reason": "请将鼠标移到地图内", "cells": []}
 	else:
 		var taken: Dictionary = occupied_cells if capital_buildings.is_empty() else occupied_cells.merged(Capital.occupation())
-		preview_result = Placement.check_building(hovered, active_definition, taken)
+		preview_result = Placement.check_building(hovered, active_definition, taken, not capital_buildings.is_empty())
 		if preview_result["ok"] and active_definition.get("id") == "b_house" and not capital_buildings.is_empty():
 			var front: int = Streets.direction(hovered, active_definition.get("footprint"), street_cells)
 			if front == Streets.NO_FRONT:
@@ -693,11 +710,27 @@ func sync_capital(enabled: bool, population: int) -> void:
 	if enabled == not capital_buildings.is_empty():
 		return
 	capital_buildings = Capital.buildings() if enabled else {}
+	var area: Rect2i = Capital.OUTER if enabled else Rect2i()
+	ground_material.set_shader_parameter("capital_cleared",Vector4(area.position.x,area.position.y,area.end.x,area.end.y))
 	street_cells = Streets.network(placed_buildings, enabled)
 	if fitting_overview and showing_entire_map:
 		_fit_camera()
 		view_changed.emit()
 	_refresh_walking_routes()
+	static_dirty = true
+	_redraw_scene()
+
+
+# 皇宫同步：布置内容与查看屋顶状态独立于战略镜头。
+func sync_palace(layout: Dictionary) -> void:
+	if palace_decor == layout:
+		return
+	palace_decor = layout.duplicate(true)
+	redraw_palace()
+
+
+# 皇宫重画：只在装饰内容或屋顶视图改变时刷新静态画布。
+func redraw_palace() -> void:
 	static_dirty = true
 	_redraw_scene()
 
@@ -912,7 +945,7 @@ func _draw_map_objects(visible_objects: Rect2, decorate: bool) -> void:
 	if decorate:
 		var deposit_view: Rect2 = visible_objects.grow(104.0)
 		for item: Dictionary in deposit_models:
-			if deposit_view.has_point(item["center"]) and not equipment_cells.has(Grid.world_to_cell(item["center"])):
+			if deposit_view.has_point(item["center"]) and not equipment_cells.has(Grid.world_to_cell(item["center"])) and (capital_buildings.is_empty() or not Capital.OUTER.has_point(Grid.world_to_cell(item["center"]))):
 				objects.append(item)
 		_append_outer_deposits(objects, deposit_view)
 	for record: Dictionary in site_buildings.values() + capital_buildings.values():
@@ -992,7 +1025,7 @@ func _append_outer_deposits(objects: Array[Dictionary], view: Rect2) -> void:
 			var cell := Vector2i(x + posmod(y * 2459 ^ x * 7927, step), y + posmod(x * 601 ^ y * 1789, step))
 			if not Grid.contains(cell) or Grid.in_authored_map(cell) or equipment_cells.has(cell) or occupied_cells.has(cell):
 				continue
-			if not capital_buildings.is_empty() and Capital.occupation().has(cell):
+			if not capital_buildings.is_empty() and Capital.OUTER.has_point(cell):
 				continue
 			var center: Vector2 = Grid.cell_to_world(cell)
 			if not view.has_point(center):

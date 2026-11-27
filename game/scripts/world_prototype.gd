@@ -34,6 +34,7 @@ const State = preload("res://scripts/world_state.gd")
 const Population = preload("res://scripts/population_service.gd")
 const HouseEconomy = preload("res://scripts/household_economy.gd")
 const Capital = preload("res://scripts/capital_layout.gd")
+const Courts = preload("res://scripts/palace_courtyards.gd")
 const Estate = preload("res://scripts/estate_labor.gd")
 const Clock = preload("res://scripts/strategic_clock.gd")
 const Store = preload("res://scripts/world_save_repository.gd")
@@ -49,6 +50,7 @@ var marshal_button: Button
 var appointment_legion: OptionButton
 var selected_household: int = 0
 var city_navigation: MenuButton
+var palace_menu: MenuButton
 var clock: RefCounted = Clock.new(world)
 var store: RefCounted = Store.new()
 var store_path_override: String = ""
@@ -346,6 +348,7 @@ func _build_map(columns: HBoxContainer) -> void:
 	_button(map_actions, "石矿", town_map.visit_work_area.bind(Vector2i(106, 39), "stone"))
 	_button(map_actions, "河港", town_map.visit_site.bind(Vector2i(22, 90)))
 	_build_city_navigation(map_actions)
+	_build_palace_menu(map_actions)
 	map_info = Label.new()
 	map_info.custom_minimum_size.x = 39
 	map_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -363,6 +366,7 @@ func _build_map(columns: HBoxContainer) -> void:
 	map_actions.add_child(map_info)
 	town_map.hovered_changed.connect(_on_map_cell_changed)
 	town_map.building_selected.connect(_on_town_selected)
+	town_map.court_clicked.connect(_court_action)
 	town_map.view_changed.connect(_refresh_map_info)
 	town_map.placement_changed.connect(_on_placement_changed)
 	town_map.placement_clicked.connect(_on_placement_clicked)
@@ -384,6 +388,7 @@ func _build_city_navigation(row: HBoxContainer) -> void:
 
 # 导览入口：每处设施保留整栋点选与用途说明。
 func _visit_city(index: int) -> void:
+	_end_court_edit()
 	management_drawer.hide()
 	if index < 2:
 		town_map.visit_capital_area(Capital.OUTER if index == 0 else Capital.INNER)
@@ -414,6 +419,90 @@ func _visit_city(index: int) -> void:
 	var cell := Vector2i(landmark["cell"][0], landmark["cell"][1])
 	town_map.visit_capital_area(Rect2i(cell, landmark["size"]).grow(4))
 	_inspect_building(landmark["id"], false)
+
+
+# 皇宫菜单：可切换殿内视图，并在三块独立院落摆设及换铺地砖。
+func _build_palace_menu(row: HBoxContainer) -> void:
+	palace_menu = MenuButton.new()
+	palace_menu.text = "皇宫布置 ▾"
+	palace_menu.flat = false
+	palace_menu.focus_mode = Control.FOCUS_NONE
+	row.add_child(palace_menu)
+	var menu: PopupMenu = palace_menu.get_popup()
+	menu.add_item("查看殿内／恢复屋顶",0)
+	for i: int in range(Courts.NAMES.size()):
+		menu.add_item("布置" + Courts.NAMES[i],i+1)
+	menu.add_separator()
+	menu.add_item("切换地砖",5)
+	for i: int in range(Courts.ITEMS.size()):
+		menu.add_item("放置" + Courts.ITEMS[i],10+i)
+	menu.add_item("结束布置",99)
+	menu.id_pressed.connect(_palace_command)
+
+
+# 操作入口：道具工具每次仅作用于当前院落，退出后恢复正常建筑点选。
+func _palace_command(id: int) -> void:
+	if not world.capital_layout:
+		return
+	_show_region_view(false)
+	if id == 0:
+		_end_court_edit()
+		town_map.palace_cutaway = not town_map.palace_cutaway
+		_visit_city(2)
+		if town_map.palace_cutaway:
+			town_map._apply_zoom(town_map.size * 0.5,1.52)
+		town_map.redraw_palace()
+		status_label.text = "正在查看殿内陈设" if town_map.palace_cutaway else "已恢复宫殿屋顶"
+		return
+	if id == 99:
+		_end_court_edit()
+		status_label.text = "已结束布置，可保存进度"
+		return
+	if id >= 1 and id <= Courts.AREAS.size():
+		if town_map.active_definition != null:
+			town_map.cancel_preview()
+		management_drawer.hide()
+		_clear_inspection()
+		town_map.court_edit = id-1
+		town_map.visit_capital_area(Courts.AREAS[id-1].grow(5))
+	if town_map.court_edit < 0:
+		status_label.text = "先从菜单选择要布置的院落"
+		return
+	if id == 5:
+		var court: int = town_map.court_edit
+		world.palace_decor["styles"][court] = (world.palace_decor["styles"][court]+1) % Courts.STYLES.size()
+		town_map.sync_palace(world.palace_decor)
+	if id >= 10 and id < 10+Courts.ITEMS.size():
+		town_map.court_tool = id-10
+	status_label.text = "%s · 左键放%s · 右键移除 · 菜单结束" % [Courts.NAMES[town_map.court_edit],Courts.ITEMS[town_map.court_tool]]
+	town_map.queue_redraw()
+
+
+# 院落点击：只提交通过范围和碰撞校验的改动。
+func _court_action(cell: Vector2i, remove: bool) -> void:
+	var court: int = town_map.court_edit
+	var layout: Dictionary = world.palace_decor
+	if court < 0 or not Courts.AREAS[court].has_point(cell):
+		return
+	if remove:
+		var item: int = Courts.item_at(layout,cell)
+		if item < 0:
+			return
+		layout["items"].remove_at(item)
+	elif Courts.can_place(layout,court,town_map.court_tool,cell):
+		layout["items"].append([town_map.court_tool,cell.x,cell.y])
+	else:
+		status_label.text = "陈设需要院内连续空地"
+		return
+	town_map.sync_palace(layout)
+	status_label.text = "院落已更新 · 保存进度后可继续使用"
+
+
+# 编辑退出：保留布置内容，释放地图点击。
+func _end_court_edit() -> void:
+	if town_map.court_edit >= 0:
+		town_map.court_edit = -1
+		town_map.queue_redraw()
 
 
 # 管理抽屉：按当前对象、城镇、军团与账本分组，默认给地图留足空间。
@@ -704,6 +793,8 @@ func _toggle_region_view() -> void:
 
 # 地图切换模块：退出未确认的建造预览，保留城镇镜头、战略时钟和世界状态。
 func _show_region_view(show_overview: bool) -> void:
+	if show_overview:
+		_end_court_edit()
 	if show_overview and town_map.active_definition != null:
 		town_map.cancel_preview()
 	if show_overview:
@@ -940,6 +1031,7 @@ func _load(save_id: int = 0) -> void:
 		status_label.text = store.error_message
 		return
 	_clear_inspection()
+	_end_court_edit()
 	world = candidate
 	if not legacy_economy_fixture:
 		HouseEconomy.activate(world)
@@ -961,7 +1053,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		elif event.keycode == KEY_HOME:
 			town_map.reset_view()
 		elif event.keycode == KEY_ESCAPE:
-			if region_overview.visible:
+			if town_map.court_edit >= 0:
+				_end_court_edit()
+				get_viewport().set_input_as_handled()
+			elif region_overview.visible:
 				_show_region_view(false)
 				get_viewport().set_input_as_handled()
 			elif town_map.active_definition != null:
@@ -1018,6 +1113,7 @@ func _start_large_preview(id: String) -> void:
 
 # 建筑选择模块：为一次放置生成唯一命令，失败时可调整位置重试。
 func _start_preview(definition: Resource) -> void:
+	_end_court_edit()
 	if definition.get("id") == "b_road" and world.capital_layout:
 		definition = Construction.Catalog.for_construction("b_road", true)
 	_show_region_view(false)
@@ -1075,6 +1171,8 @@ func _on_placement_cancelled() -> void:
 
 # 视图同步模块：建造或读档后，从权威数据重建建筑占用与费用提示。
 func _sync_building_view() -> void:
+	town_map.sync_palace(world.palace_decor)
+	palace_menu.visible = world.capital_layout
 	town_map.sync_capital(world.capital_layout, world.population)
 	city_navigation.visible = world.capital_layout
 	town_map.sync_property(world.household_economy.get("property", {}), [world.household_economy.get("civil",-1),world.household_economy.get("general",-1)])

@@ -12,6 +12,7 @@ uniform vec2 west_river_span;
 uniform vec2 east_river_span;
 uniform vec4 woods_site;
 uniform vec4 fort_site;
+uniform vec4 capital_cleared;
 uniform float zoom = 0.5;
 
 // 手绘区沿用原有遮罩，外围按与城镇建造相同的规则继续生成河流和资源区。
@@ -25,6 +26,7 @@ bool inside_site(vec2 cell, vec4 bounds) {
 }
 
 vec4 sample_tile(vec2 cell) {
+	if (inside_site(cell, capital_cleared)) { return vec4(0.0); }
 	if (authored(cell)) {
 		return texture(terrain_mask, (cell + 0.5) / map_extent);
 	}
