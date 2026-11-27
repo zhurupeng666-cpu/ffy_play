@@ -1,17 +1,8 @@
 ## 文件用途：以原创像素图绘制城镇角色和牲畜，保存每种着色与姿态的纹理。
 extends RefCounted
 
-const PERSON := [
-	".....dddd.....", "....dHHhhd....", "...dHHHhhhd...", "..dddddddddd..",
-	"....dSsSFd....", "....dSEsFd....", ".....dssd.....", "....dEEd......",
-	"...dCCCcd.....", "..dCCaAccd....", "..dCSAaCCd....", "...dCAAcd.....",
-	"....dbbd......",
-]
-const BOOTS := [
-	["....dTTdTd....", "...dTTddTdd...", "...ddd..ddd..."],
-	["....dTTdTd....", "....dTddTd....", "....ddd.dd...."],
-	["....dTTdTdd...", "....dTddTTd...", "...ddd..ddd..."],
-]
+const People = preload("res://scripts/resident_sprite_art.gd")
+
 const COW := [
 	"...................dd...", ".................ddHDd..", ".d..dddddddddddd.dDHDd..",
 	"d.ddCCHCCCCCCCCddhHEdd..", ".dHHHHCCCHHHCCddhddmd..", "..dHHHCCCHHHCCHhHHHmmd.",
@@ -30,13 +21,6 @@ const BASE := {
 	"D": "#ddbd88", "m": "#a86c61",
 }
 const PALETTES := {
-	"farmer": {},
-	"fisher": {"C": "#64a6ae", "c": "#3d6a76"},
-	"logger": {"C": "#c38e53", "c": "#77523b", "H": "#b8a67b", "h": "#7b6248"},
-	"mason": {"C": "#c68169", "c": "#80514a", "H": "#9aafa6", "h": "#687d77"},
-	"herder": {"C": "#839755", "c": "#4a6241", "H": "#d6a16f", "h": "#9c684b", "F": "#8b543e"},
-	"trainee": {"C": "#c28e56", "c": "#825144", "H": "#ae9a7b", "h": "#785e53", "A": "#ead0a5"},
-	"guard": {"C": "#af5752", "c": "#753c45", "H": "#c7d1c8", "h": "#7b8987", "A": "#d6b87b"},
 	"cow": {"C": "#b58159", "c": "#976046", "H": "#faf0d6", "h": "#c7ac94"},
 	"sheep": {"C": "#eee1c1", "c": "#c6aa91", "H": "#fff4d9", "h": "#d0b19d", "T": "#66504d"},
 }
@@ -48,9 +32,8 @@ static func _texture(kind: String, phase: int, flipped: bool) -> ImageTexture:
 	var key: String = kind + str(phase) + str(flipped)
 	if textures.has(key):
 		return textures[key]
-	var animal: bool = kind == "cow" or kind == "sheep"
-	var rows: Array = (COW if kind == "cow" else SHEEP).duplicate() if animal else PERSON + BOOTS[phase]
-	if animal and phase == 1:
+	var rows: Array = (COW if kind=="cow" else SHEEP).duplicate()
+	if phase==1:
 		rows[-1] = ".....ddd.ddd"
 	var width: int = 0
 	for row: String in rows:
@@ -71,6 +54,9 @@ static func _texture(kind: String, phase: int, flipped: bool) -> ImageTexture:
 
 # 投影绘制：以脚下为锚点，镜像只改变面向，人与牛羊共用地图比例。
 static func draw(canvas: Control, at: Vector2, kind: String, phase: int, facing: float = 1.0) -> void:
+	if kind not in ["cow","sheep"]:
+		People.draw(canvas,at,"militia" if kind=="trainee" else kind,phase,facing,true)
+		return
 	var texture: ImageTexture = _texture(kind, phase, facing < 0.0)
 	var size: Vector2 = texture.get_size() * (1.85 if kind == "sheep" else 2.05)
 	var start: Vector2 = canvas.art_point(at - Vector2(size.x * 0.5, size.y - 1))

@@ -92,9 +92,33 @@ static func routes(world: RefCounted, farming: Dictionary) -> Array[Dictionary]:
 		var activity: String = destination["activity"]
 		var leave: float = (9.2 if activity=="buy" else 7.0)+(i%11)*0.16
 		var work: float = 0.85 if activity=="buy" else 6.0
-		result.append({"owner":i,"target":destination["record"]["id"],"activity":activity,"points":points,"distances":distances,
+		var actor: String = _role(world,i,activity,destination["record"]["def_id"])
+		result.append({"owner":i,"target":destination["record"]["id"],"activity":activity,"role":actor,"points":points,"distances":distances,
 			"length":length,"start":leave,"work":work,"travel":clampf(length/2000.0,0.25,1.10)})
 	return result
+
+
+# 通勤人物：显眼装束来自岗位和登记身份，同一条路线可区分旅客与当值人员。
+static func _role(world: RefCounted, owner: int, activity: String, kind: String) -> String:
+	if activity=="build":
+		return "builder"
+	if activity=="guard":
+		return "constable"
+	if activity=="sell":
+		return {"b_restaurant":"server","b_inn":"merchant","b_tavern":"merchant","b_smithy":"smith","b_market":"hawker"}.get(kind,"merchant")
+	if owner==world.household_economy.get("civil",-1):
+		return "magistrate"
+	var families: Array = world.household_economy.get("families",[])
+	if owner>=families.size():
+		return "buyer"
+	var family: Dictionary = families[owner]
+	if family["cash"]>=240:
+		return "gentry"
+	if family["boats"]>0:
+		return "fisher"
+	if family["cash"]<60 and world.resident_register[owner]["registered"]>=world.current_day()-1:
+		return "refugee"
+	return "scholar" if kind=="b_inn" else "buyer"
 
 
 # 门外落脚：优先门向旁的道路，入城建筑只在外围可步行的格子选点。
@@ -134,8 +158,7 @@ static func draw(canvas: Control, plans: Array[Dictionary], hour: float, time: f
 		var point: Vector2 = start.lerp(target,(distance-distances[next-1])/maxf(1.0,distances[next]-distances[next-1]))
 		if not view.has_point(point) or canvas.street_view_hidden(point):
 			continue
-		var role: int = {"build":0,"sell":2,"buy":1,"guard":4}[plan["activity"]]
-		Pedestrians.draw(canvas,point,role,posmod(floori(time*7.0)+plan["owner"],6),facing,on_site)
+		Pedestrians.draw(canvas,point,plan["role"],posmod(floori(time*7.0)+plan["owner"],6),facing,on_site)
 		if on_site and plan["activity"] in ["buy","sell"]:
 			var mark: Vector2 = canvas.art_point(point-Vector2(0,58))
 			canvas.art_canvas.draw_circle(mark,maxf(1.0,canvas.zoom_level*2.0),Color("#edd293"))

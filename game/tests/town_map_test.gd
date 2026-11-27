@@ -6,6 +6,7 @@ const Map = preload("res://scripts/town_map.gd")
 const Terrain = preload("res://scripts/town_terrain.gd")
 const CompoundArt = preload("res://scripts/town_compound_art.gd")
 const Capital = preload("res://scripts/capital_layout.gd")
+const People = preload("res://scripts/resident_sprite_art.gd")
 const Walker = preload("res://scripts/capital_walkers.gd")
 var failed: bool = false
 
@@ -183,6 +184,15 @@ func _check_capital(map: Control) -> void:
 	var b: Texture2D = Walker.Pedestrians._texture(0,3,false,false)
 	var child: Texture2D = Walker.Pedestrians._texture(3,0,false,false)
 	_check(a.get_image().get_data() != b.get_image().get_data() and a.get_image().get_data() != child.get_image().get_data(), "行人步态或身份剪影没有区别")
+
+	var styles: Dictionary = {}
+	for role: String in People.ROLES:
+		var texture: ImageTexture = People.texture(role,0,false,false)
+		var silhouette: Image = texture.get_image()
+		var signature: int = hash(silhouette.get_data())
+		_check(not styles.has(signature) and silhouette.get_pixel(0,0).a==0.0,"职业造型重复或背景不透明")
+		_check(texture==People.texture(role,0,false,false),"滚动地图时重复创建人物帧")
+		styles[signature]=true
 
 
 # 宽街验收：真实占地、完工前限制、四侧门向、预览单一来源及读档。

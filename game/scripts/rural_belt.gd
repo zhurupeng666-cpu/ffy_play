@@ -365,7 +365,7 @@ static func draw_workers(canvas: Control, paths: Dictionary, hour: float, scener
 			if work:
 				Activity._field_worker(canvas,at,sin(scenery*4.0+owner),true,owner)
 			else:
-				Pedestrians.draw(canvas,at,owner%5,floori(scenery*7.0)%6,facing,false)
+				Pedestrians.draw(canvas,at,"farmer",floori(scenery*7.0)%6,facing,false)
 
 
 # 路段查询：二分沿路累计距离，缩放和移动时不复制长路径。

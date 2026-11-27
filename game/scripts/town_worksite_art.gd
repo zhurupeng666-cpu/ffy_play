@@ -320,17 +320,4 @@ static func draw_fishers(canvas: Control, center: Vector2, dock: Dictionary, cou
 # 工人轮廓：帽子和动作区分木匠、石工与渔工，帽檐和衣料保持像素对齐。
 static func _worker(canvas: Control, at: Vector2, id: String, step: float) -> void:
 	var kind: String = "fisher" if id == "b_fishery" else ("logger" if id == "b_lumber" else "mason")
-	_pixel(canvas, at, Vector2(-10, 0), Vector2(21, 4), Color("#30281eb0"))
-	Sprites.draw(canvas, at, kind, clampi(roundi(step) + 1, 0, 2))
-	var hand := Vector2(9, -15 + step * 4)
-	_stroke(canvas, at, Vector2(3, -18), hand, Color("#d4a27b"), 3)
-	if id == "b_fishery":
-		_pixel(canvas, at, hand + Vector2(-2, -1), Vector2(10, 7), Color("#af8256"))
-		_pixel(canvas, at, hand + Vector2(0, 0), Vector2(6, 2), Color("#dbad6f"))
-	else:
-		var tip := Vector2(13, -25 - step * 4)
-		_stroke(canvas, at, hand, tip, Color("#5f412c"), 2.5)
-		if id == "b_lumber":
-			_poly(canvas, at + tip, [Vector2(-3, -2), Vector2(5, -4), Vector2(7, 2), Vector2(1, 4)], Color("#c4c9bc"))
-		else:
-			_stroke(canvas, at, tip - Vector2(4, 2), tip + Vector2(5, 0.5), Color("#c7c7b4"), 3.5)
+	Sprites.draw(canvas,at,kind,clampi(roundi(step)+1,0,2),-1.0 if step<0.0 else 1.0)

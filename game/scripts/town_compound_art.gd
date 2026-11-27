@@ -308,14 +308,4 @@ static func drill_foot(index: int, total: int, time: float) -> Vector2:
 
 # 农牧工人：草帽、袖口和移动工具区分田间锄作与牧场搬运。
 static func _field_worker(canvas: Control, at: Vector2, step: float, farmer: bool, job: int) -> void:
-	_pixel(canvas, at, Vector2(-9, 0), Vector2(18, 4), Color("#352b206b"))
-	Sprites.draw(canvas, at, "farmer" if farmer else "herder", clampi(roundi(step) + 1, 0, 2))
-	var hand := Vector2(10, -14 + step * 2.0)
-	if farmer and job % 3 == 0:
-		var tip := Vector2(21, -6 - step * 11.0)
-		_stroke(canvas, at, hand, tip, Color("#8e6146"), 3.1)
-		_stroke(canvas, at, tip - Vector2(2, 0), tip + Vector2(6, 3), Color("#bbc6ac"), 3.1)
-	else:
-		_pixel(canvas, at, hand, Vector2(10, 7), Color("#6d4938"))
-		_pixel(canvas, at, hand + Vector2(1, 1), Vector2(8, 3), Color("#c79a5a"))
-		_pixel(canvas, at, hand + Vector2(2, -2), Vector2(5, 3), Color("#ddad61") if farmer else Color("#b3aa6d"))
+	Sprites.draw(canvas,at,"farmer" if farmer else "herder",posmod(roundi(step)+1+job,6),-1.0 if step<0.0 else 1.0)

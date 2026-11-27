@@ -138,7 +138,7 @@ static func draw_building(canvas: Control, record: Dictionary, at: Vector2, guar
 			Art.building(canvas, kind, at)
 			if kind == "b_barracks":
 				for index: int in range(guards):
-					Art._drill_soldier(canvas, at + Vector2((index - 2.5) * 24, 43 + index * 4), 0.0, index, false)
+					Art._drill_soldier(canvas, at + Vector2((index - 2.5) * 24, 43 + index * 4), 0.0,index,false,"guard" if stone else "bandit")
 			elif kind == "b_ranch":
 				Art.moving_units(canvas, kind, at, 0.0, Vector2i.ZERO, 1.0)
 

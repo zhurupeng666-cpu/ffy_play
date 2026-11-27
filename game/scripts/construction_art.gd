@@ -49,11 +49,7 @@ static func draw(canvas: Control, record: Dictionary, crew: int, time: float) ->
 		var position: Vector2 = stock.lerp(front,clampf(labor,0.0,1.0)) if delivery else front.lerp(stock,(labor-1.5)*2.0)
 		var busy: bool = labor>=1.0 and labor<1.5
 		position+=Vector2(worker*15,worker*7)
-		Pedestrian.draw(canvas,position,0,floori(time*8.0)%6,signf(front.x-stock.x)*(1.0 if delivery else -1.0),busy)
-		if busy:
-			var swing: float = sin(time*8.0+worker)
-			Art._stroke(canvas,position,Vector2(10,-17),Vector2(22,-9+8*swing),Color("#ae7f4c"),3)
-			Art._pixel(canvas,position,Vector2(22,-11+8*swing),Vector2(6,3),Color("#c0b5a1"))
+		Pedestrian.draw(canvas,position,"builder",floori(time*8.0)%6,signf(front.x-stock.x)*(1.0 if delivery else -1.0),busy)
 
 
 # 整地模块：按逐行施工范围显示刨开的土、基层或已经整齐铺好的面层。

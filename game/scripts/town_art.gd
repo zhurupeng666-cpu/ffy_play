@@ -502,15 +502,9 @@ static func drill_position(index: int, total: int, time: float) -> Vector2:
 	return Vector2(spacing * 17.0 - 11.0 + row * 9.0 + stride, spacing * 2.0 - 6.0 + row * 18.0 - stride * 0.35)
 
 # 士兵绘制模块：头盔、盾牌和木质训练器械跟随操练动作。
-static func _drill_soldier(canvas: Control, at: Vector2, time: float, index: int, trainee: bool) -> void:
-	var step: float = sin(time * 7.6 + index * 0.8)
-	_pixel(canvas, at, Vector2(-10, 0), Vector2(20, 4), Color("#332c2460"))
-	Sprites.draw(canvas, at, "trainee" if trainee else "guard", clampi(roundi(step) + 1, 0, 2))
-	var shield: Vector2 = Vector2(-12, -17 + step * 2.0)
-	_poly(canvas, at + shield, [Vector2(-6, -5), Vector2(5, -5), Vector2(4, 4), Vector2(-1, 8), Vector2(-5, 4)], Color("#3d3942"))
-	_stroke(canvas, at + shield, Vector2(-3, -2), Vector2(2, 4), Color("#c9a96e"), 2.2)
-	var tip: Vector2 = Vector2(17, -22 - step * 10.0)
-	_stroke(canvas, at, Vector2(9, -14), tip, Color("#966544"), 3.0)
+static func _drill_soldier(canvas: Control, at: Vector2, time: float, index: int, trainee: bool, role: String = "") -> void:
+	var phase: int = posmod(floori(time*5.0)+index,6)
+	Sprites.draw(canvas,at,role if not role.is_empty() else ("trainee" if trainee else "guard"),phase,1.0 if index%2==0 else -1.0)
 
 
 # 深度模块：按地面纵坐标绘制牛羊，避免远处覆盖近处。
