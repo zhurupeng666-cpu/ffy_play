@@ -237,7 +237,7 @@ func snapshot() -> Dictionary:
 	if capital_layout:
 		Register.sync_people(self)
 		Register.assign_homes(self)
-		data["version"] = 34
+		data["version"] = 35
 		Rural.sync_titles(self)
 		data["chancery"] = chancery.duplicate(true)
 		data["capital_layout"] = true
@@ -254,7 +254,7 @@ static func from_snapshot(data: Variant) -> RefCounted:
 	for key: String in ["version", "tick", "last_settled_day", "population", "speed"]:
 		if not _valid_integer(data.get(key), 0, 120000000):
 			return null
-	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34] or int(data["speed"]) not in [1, 2, 4]:
+	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35] or int(data["speed"]) not in [1, 2, 4]:
 		return null
 	var version: int = int(data["version"])
 	if not _valid_integer(data["population"], Population.START_POPULATION, Population.MAX_POPULATION) or (version < 25 and data["population"] != Population.START_POPULATION):
@@ -381,7 +381,7 @@ static func from_snapshot(data: Variant) -> RefCounted:
 			return null
 	if version >= 27 and not HouseEconomy.restore(state, data.get("household_economy")):
 		return null
-	if version >= 30 and not Works.restore(state,data.get("royal_works"),version>=32):
+	if version >= 30 and not Works.restore(state,data.get("royal_works"),version>=32,version>=35):
 		return null
 	if state.capital_layout:
 		if version >= 31:
@@ -401,6 +401,8 @@ static func from_snapshot(data: Variant) -> RefCounted:
 				Rural.petition(state,index,state.current_day(),state.households[index]["adults"])
 		elif not Book.restore(state,data.get("chancery")):
 			return null
+		if version<35:
+			Works.recover_history(state)
 	if state.idle_workers() < 0 or state.population > state.housing_capacity():
 		return null
 	return state

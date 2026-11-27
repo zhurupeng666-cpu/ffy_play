@@ -12,13 +12,14 @@ const STONE_PRICE: int = 3
 const ROAD_BUDGET: int = 42
 const MAX_SHARE: int = 100
 const PROFIT_DAYS: int = 7
+const HISTORY_LIMIT: int = 1024
 const ROAD_STOCK := Vector2i(3,6)
 const ELIGIBLE_SHOPS: Array[String] = ["b_restaurant","b_inn"]
 
 
 # 初始账本：订单、产权与累计交易分开保存。
 static func initial() -> Dictionary:
-	return {"roads":[],"homes":{},"shares":{},"profits":{},"wood":0,"stone":0,"sales":0,"dividends":0,"paid":0}
+	return {"roads":[],"tenders":[],"homes":{},"shares":{},"profits":{},"wood":0,"stone":0,"sales":0,"dividends":0,"paid":0}
 
 
 # 标准售价：所有私人项目用同一价目。
@@ -54,7 +55,7 @@ static func publish(world: RefCounted, cell: Vector2i) -> Dictionary:
 	if roads.size() >= 64 or world.buildings.size()+pending_slots(world) >= 256 or world.resources["gold"] < ROAD_BUDGET:
 		return {"ok":false,"reason":"工程名额或皇家招标预算不足"}
 	world.resources["gold"] -= ROAD_BUDGET
-	roads.append({"cell":[cell.x,cell.y],"posted":world.last_settled_day,"owner":-1,"due":0,"bid":0})
+	roads.append({"cell":[cell.x,cell.y],"posted":world.last_settled_day,"owner":-1,"due":0,"bid":0,"stock":false})
 	world.post_report("工程","道路招标发布","路段 (%d,%d)，预留预算 %d 金。" % [cell.x,cell.y,ROAD_BUDGET])
 	return {"ok":true}
 
@@ -85,9 +86,9 @@ static func pending_slots(world: RefCounted) -> int:
 	return count
 
 
-# 工程工班：中标道路施工不调用玩家的施工队，到下一日验收前最多显示百分之九十九。
+# 工程工班：每一步之后即时验收，备料补足后的旧工程也不必等下一次日结。
 static func advance_contracts(world: RefCounted) -> void:
-	for order: Dictionary in world.royal_works["roads"]:
+	for order: Dictionary in world.royal_works["roads"].duplicate():
 		if order["owner"]<0:
 			continue
 		var road: Dictionary = road_site(world,order["cell"])
@@ -97,7 +98,76 @@ static func advance_contracts(world: RefCounted) -> void:
 			var at := Vector2i(order["cell"][0],order["cell"][1])
 			Market.found(world,at,Catalog.for_construction("b_road",true),world.DAY_TICKS)
 			road=world.buildings.back()
-		road["work_done"]=mini(road["work_required"]-1,road["work_done"]+1)
+		if road["work_done"]>=road["work_required"]-1:
+			_accept(world,order,road)
+		else:
+			road["work_done"]+=1
+
+
+# 工程账：中标预留木石；验收一次结清工程款、材料费和剩余预算。
+static func _accept(world: RefCounted, order: Dictionary, road: Dictionary) -> void:
+	var amount: int = order["bid"]
+	var refund: int = ROAD_BUDGET-amount
+	var materials: int = price(ROAD_STOCK.x,ROAD_STOCK.y)
+	if not _blocking_reason(world,order).is_empty():
+		return
+	if not order.get("stock",false):
+		_reserve_stock(world)
+	var family: Dictionary = world.household_economy["families"][order["owner"]]
+	family["cash"]=mini(family["cash"]+amount-materials,1000000)
+	family["income"]+=amount-materials
+	world.royal_works["wood"]+=ROAD_STOCK.x
+	world.royal_works["stone"]+=ROAD_STOCK.y
+	world.royal_works["sales"]+=materials
+	world.royal_works["paid"]+=amount
+	world.resources["gold"]+=refund+materials
+	road["work_done"]=road["work_required"]
+	road["state"]="ready"
+	for entry: Dictionary in world.royal_works["tenders"]:
+		if entry["finished"]==0 and entry["cell"]==order["cell"] and entry["owner"]==order["owner"]:
+			entry["finished"]=world.current_day()
+			break
+	world.royal_works["roads"].erase(order)
+	world.post_report("工程","道路完工验收","%s完成 (%d,%d) 路段，已支付工程款 %d 金。" % [world.household_name(order["owner"]),order["cell"][0],order["cell"][1],amount])
+
+
+# 备料查询：在签约与旧工地验收时共用同一标准。
+static func _has_stock(world: RefCounted) -> bool:
+	return world.resources["wood"]>=ROAD_STOCK.x and world.resources["stone"]>=ROAD_STOCK.y
+
+
+# 锁定实物：动工后木石已归工程使用，完工记账时无需再次购买。
+static func _reserve_stock(world: RefCounted) -> void:
+	world.resources["wood"]-=ROAD_STOCK.x
+	world.resources["stone"]-=ROAD_STOCK.y
+
+
+# 卡点说明：旧工地材料不足或库存上限阻挡时明确告知玩家。
+static func _blocking_reason(world: RefCounted, order: Dictionary) -> String:
+	if not order.get("stock",false) and not _has_stock(world):
+		return "待补木材或石材"
+	if rights_blocked(world,ROAD_BUDGET-order["bid"],price(ROAD_STOCK.x,ROAD_STOCK.y)):
+		return "国库已满，待结款"
+	return ""
+
+
+# 状态查询：待投标、待备料、施工及验收状态供账页、地图和详情共用。
+static func road_status(world: RefCounted, order: Dictionary) -> String:
+	if order["owner"]<0:
+		return "待投标" if _has_stock(world) else "待备料后发包"
+	var road: Dictionary = road_site(world,order["cell"])
+	if not road.is_empty() and road["work_done"]>=road["work_required"]-1:
+		var reason: String = _blocking_reason(world,order)
+		return reason if not reason.is_empty() else "待验收"
+	return "施工中"
+
+
+# 工程定位：同一坐标只能有一个承包工地，可供建筑详情反查。
+static func order_at(world: RefCounted, cell: Array) -> Dictionary:
+	for order: Dictionary in world.royal_works["roads"]:
+		if order["cell"]==cell:
+			return order
+	return {}
 
 
 # 施工识别：既有路单优先处理，普通道路施工仍遵循常规规则。
@@ -110,44 +180,16 @@ static func is_contract(world: RefCounted, building: Dictionary) -> bool:
 	return false
 
 
-# 工程日结：先选择最低价的合格富商，下一日验收付款并结清皇家材料费用。
+# 工程日结：选择合资格的最低报价，缺材料时留在待发包队列。
 static func settle(world: RefCounted) -> void:
 	var day: int = world.last_settled_day
-	var families: Array = world.household_economy["families"]
-	var finished: Array = []
 	var active: Dictionary = {}
 	for order: Dictionary in world.royal_works["roads"]:
-		if order["owner"] >= 0:
-			active[order["owner"]] = true
+		if order["owner"]>=0:
+			active[order["owner"]]=true
 	for order: Dictionary in world.royal_works["roads"]:
-		var worker: int = order["owner"]
-		if worker < 0 and day > order["posted"]:
+		if order["owner"]<0 and day>order["posted"] and _has_stock(world):
 			_award(world,order,active,day)
-		elif worker >= 0 and day >= order["due"]:
-			var road: Dictionary = road_site(world,order["cell"])
-			if road.is_empty() or road["work_done"]<road["work_required"]-1:
-				continue
-			var amount: int = order["bid"]
-			var refund: int = ROAD_BUDGET-amount
-			var family: Dictionary = families[worker]
-			var materials: int = price(ROAD_STOCK.x,ROAD_STOCK.y)
-			if rights_blocked(world,refund,materials):
-				continue
-			family["cash"] += amount
-			if not buy(world,family,ROAD_STOCK.x,ROAD_STOCK.y):
-				family["cash"] -= amount
-				continue
-			family["income"] += amount
-			family["cash"] = mini(family["cash"],1000000)
-			world.resources["gold"] += refund
-			world.royal_works["paid"] += amount
-			var cell := Vector2i(order["cell"][0],order["cell"][1])
-			road["work_done"]=road["work_required"]
-			road["state"]="ready"
-			finished.append(order)
-			world.post_report("工程","道路完工验收","%s完成 (%d,%d) 路段，已支付工程款 %d 金。" % [world.household_name(worker),cell.x,cell.y,amount])
-	for order: Dictionary in finished:
-		world.royal_works["roads"].erase(order)
 	_build_home(world,day)
 
 
@@ -175,15 +217,71 @@ static func _award(world: RefCounted, order: Dictionary, active: Dictionary, day
 		if offer < best:
 			best = offer
 			owner = index
-	if owner >= 0:
+	if owner>=0 and world.next_building_id<1000000 and world.buildings.size()<256:
+		_reserve_stock(world)
+		order["stock"]=true
 		order["owner"] = owner
 		order["bid"] = best
 		order["due"] = day+1
 		active[owner] = true
-		if world.next_building_id<1000000 and world.buildings.size()<256:
-			var at := Vector2i(order["cell"][0],order["cell"][1])
-			Market.found(world,at,Catalog.for_construction("b_road",true),world.DAY_TICKS)
-		world.post_report("工程","道路工程中标","%s以 %d 金中标 (%d,%d)，第 %d 日交工。" % [world.household_name(owner),best,order["cell"][0],order["cell"][1],day+1])
+		var at := Vector2i(order["cell"][0],order["cell"][1])
+		Market.found(world,at,Catalog.for_construction("b_road",true),world.DAY_TICKS)
+		_remember(world,owner,order["cell"],world.current_day(),best,0)
+		_report_award(world,owner,order["cell"],best)
+
+
+# 中标奏报：统一实时中标和旧档缺失记录的文本格式。
+static func _report_award(world: RefCounted, owner: int, cell: Array, bid: int) -> void:
+	world.post_report("工程","道路工程中标","%s以 %d 金中标 (%d,%d)，已安排工班施工。" % [world.household_name(owner),bid,cell[0],cell[1]])
+
+
+# 承建户档案：业主索引不随户名变化，独立于有长度限制的普通奏章。
+static func _remember(world: RefCounted, owner: int, cell: Array, day: int, bid: int, finished: int) -> void:
+	var history: Array = world.royal_works["tenders"]
+	history.append({"owner":owner,"cell":cell.duplicate(),"day":day,"bid":bid,"finished":finished})
+	if history.size()>HISTORY_LIMIT:
+		for index: int in range(history.size()):
+			if history[index]["finished"]!=0:
+				history.remove_at(index)
+				break
+
+
+# 旧档迁移：在履约单中恢复当前承建户，再用留存奏报补录无法从实物推导的旧工程。
+static func recover_history(world: RefCounted) -> void:
+	var match_award := RegEx.create_from_string("^(.+)以 (\\d+) 金中标 \\((-?\\d+),(-?\\d+)\\)")
+	var match_finish := RegEx.create_from_string("^(.+)完成 \\((-?\\d+),(-?\\d+)\\) 路段，已支付工程款 (\\d+)")
+	var residents: Dictionary = {}
+	for index: int in range(world.households.size()):
+		var name: String = world.household_name(index)
+		residents[name]=index if not residents.has(name) else -1
+	for item: Dictionary in world.chancery["items"]:
+		if item["title"]=="道路工程中标":
+			var award: RegExMatch = match_award.search(item["detail"])
+			if award!=null and residents.get(award.get_string(1),-1)>=0:
+				_remember(world,residents[award.get_string(1)],[award.get_string(3).to_int(),award.get_string(4).to_int()],item["day"],award.get_string(2).to_int(),-1)
+		elif item["title"]=="道路完工验收":
+			var receipt: RegExMatch = match_finish.search(item["detail"])
+			if receipt==null or residents.get(receipt.get_string(1),-1)<0:
+				continue
+			var history: Array = world.royal_works["tenders"]
+			for index: int in range(history.size()-1,-1,-1):
+				var entry: Dictionary = history[index]
+				if entry["owner"]==residents[receipt.get_string(1)] and entry["cell"]==[receipt.get_string(2).to_int(),receipt.get_string(3).to_int()] and entry["finished"]<0:
+					entry["finished"]=item["day"]
+					break
+	for order: Dictionary in world.royal_works["roads"]:
+		if order["owner"]<0:
+			continue
+		var known: bool = false
+		for entry: Dictionary in world.royal_works["tenders"]:
+			if entry["owner"]==order["owner"] and entry["cell"]==order["cell"] and entry["day"]==order["due"] and entry["finished"]<0:
+				entry["finished"]=0
+				known=true
+				break
+		if not known:
+			_remember(world,order["owner"],order["cell"],mini(order["due"],world.current_day()),order["bid"],0)
+			_report_award(world,order["owner"],order["cell"],order["bid"])
+
 
 
 # 民居自建：住房压力触发，按日轮换家庭并靠近现有住区找临街地。
@@ -288,8 +386,8 @@ static func distribute(world: RefCounted, shop_id: String, net_profit: int) -> i
 
 
 # 恢复模块：核验产权、工程时间与地块，保证旧档和坏档都可安全判断。
-static func restore(world: RefCounted, raw: Variant, modern: bool) -> bool:
-	if not raw is Dictionary or raw.size()!=(9 if modern else 8):
+static func restore(world: RefCounted, raw: Variant, modern: bool, contract_history: bool = false) -> bool:
+	if not raw is Dictionary or raw.size()!=(10 if contract_history else (9 if modern else 8)):
 		return false
 	var loaded: Dictionary = initial()
 	for label: String in ["wood","stone","sales","dividends","paid"]:
@@ -329,7 +427,7 @@ static func restore(world: RefCounted, raw: Variant, modern: bool) -> bool:
 		return false
 	var occupied: Dictionary = world.occupied_cells()
 	for order: Variant in raw["roads"]:
-		if not order is Dictionary or order.size()!=5 or not order.get("cell") is Array or order["cell"].size()!=2:
+		if not order is Dictionary or order.size()!=(6 if contract_history else 5) or not order.get("cell") is Array or order["cell"].size()!=2:
 			return false
 		if not _integer(order["cell"][0],-Grid.WORLD_LIMIT,Grid.WORLD_LIMIT) or not _integer(order["cell"][1],-Grid.WORLD_LIMIT,Grid.WORLD_LIMIT):
 			return false
@@ -338,6 +436,8 @@ static func restore(world: RefCounted, raw: Variant, modern: bool) -> bool:
 		if not _integer(order.get("due"),0,world.last_settled_day+1) or not _integer(order.get("bid"),0,ROAD_BUDGET):
 			return false
 		if (order["owner"]<0 and (order["bid"]!=0 or order["due"]!=0)) or (order["owner"]>=0 and (order["bid"]<30 or order["due"]<=order["posted"])):
+			return false
+		if contract_history and (not order.get("stock") is bool or (order["stock"] and order["owner"]<0)):
 			return false
 		var cell := Vector2i(int(order["cell"][0]),int(order["cell"][1]))
 		var contract: Dictionary = road_site(world,[cell.x,cell.y])
@@ -349,9 +449,35 @@ static func restore(world: RefCounted, raw: Variant, modern: bool) -> bool:
 					occupied.erase(tile)
 		if not Place.check_building(cell,Catalog.for_construction("b_road",true),occupied,true,false)["ok"]:
 			return false
-		var normalized: Dictionary = {"cell":[cell.x,cell.y],"posted":int(order["posted"]),"owner":int(order["owner"]),"due":int(order["due"]),"bid":int(order["bid"])}
+		var normalized: Dictionary = {"cell":[cell.x,cell.y],"posted":int(order["posted"]),"owner":int(order["owner"]),"due":int(order["due"]),"bid":int(order["bid"]),"stock":bool(order.get("stock",false))}
 		loaded["roads"].append(normalized)
 		occupied.merge(reserved([normalized]))
+	if contract_history:
+		if not raw.get("tenders") is Array or raw["tenders"].size()>HISTORY_LIMIT:
+			return false
+		var unresolved: Dictionary = {}
+		for entry: Variant in raw["tenders"]:
+			if not entry is Dictionary or entry.size()!=5 or not entry.get("cell") is Array or entry["cell"].size()!=2:
+				return false
+			if not _integer(entry.get("owner"),0,world.households.size()-1) or not _integer(entry.get("day"),1,world.current_day()) or not _integer(entry.get("bid"),30,ROAD_BUDGET) or not _integer(entry.get("finished"),-1,world.current_day()):
+				return false
+			if not _integer(entry["cell"][0],-Grid.WORLD_LIMIT,Grid.WORLD_LIMIT) or not _integer(entry["cell"][1],-Grid.WORLD_LIMIT,Grid.WORLD_LIMIT) or (entry["finished"]>0 and entry["finished"]<entry["day"]):
+				return false
+			var point := Vector2i(int(entry["cell"][0]),int(entry["cell"][1]))
+			if entry["finished"]==0:
+				if unresolved.has(point):
+					return false
+				unresolved[point]=[int(entry["owner"]),int(entry["bid"])]
+			loaded["tenders"].append({"owner":int(entry["owner"]),"cell":[point.x,point.y],"day":int(entry["day"]),"bid":int(entry["bid"]),"finished":int(entry["finished"])})
+		for order: Dictionary in loaded["roads"]:
+			if order["owner"]<0:
+				continue
+			var point := Vector2i(order["cell"][0],order["cell"][1])
+			if unresolved.get(point,[])!=[order["owner"],order["bid"]]:
+				return false
+			unresolved.erase(point)
+		if not unresolved.is_empty():
+			return false
 	world.royal_works = loaded
 	return world.buildings.size()+pending_slots(world)<=256
 

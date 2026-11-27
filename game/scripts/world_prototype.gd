@@ -48,6 +48,9 @@ var legacy_economy_fixture: bool = false
 var auto_lifecycle_for_test: bool = false
 var automatic_lifecycle: bool = false
 var works_totals: Label
+var tender_notice: Button
+var tender_seen: Dictionary = {}
+var tender_unread: Array[Dictionary] = []
 var resource_summary: Control
 var compact_resources: Dictionary = {}
 var notice_strip: HBoxContainer
@@ -414,6 +417,16 @@ func _build_map(columns: HBoxContainer) -> void:
 	town_map.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	town_map.custom_minimum_size = Vector2(320, 175)
 	town_view.add_child(town_map)
+	if not legacy_economy_fixture:
+		tender_notice=Button.new()
+		tender_notice.focus_mode=Control.FOCUS_NONE
+		tender_notice.add_theme_stylebox_override("normal",HudTheme.surface("#51452c","#ad9256",7))
+		tender_notice.icon=HudIcons.texture("book")
+		tender_notice.pressed.connect(_open_engineering_notices)
+		town_map.add_child(tender_notice)
+		tender_notice.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+		tender_notice.position=Vector2(12,12)
+		tender_notice.hide()
 	var map_actions := HBoxContainer.new()
 	map_actions.add_theme_constant_override("separation", 6)
 	town_view.add_child(map_actions)
@@ -696,9 +709,62 @@ func _refresh_works() -> void:
 		"累计售木 %d · 售石 %d · 收入 %d金" % [data["wood"],data["stone"],data["sales"]],
 		"工程款 %d金 · 商铺分红 %d金" % [data["paid"],data["dividends"]]]
 	for order: Dictionary in data["roads"]:
-		var text: String = "等投标" if order["owner"] < 0 else "%s承建，报价%d金，第%d日交工" % [world.household_name(order["owner"]),order["bid"],order["due"]]
+		var state: String = Works.road_status(world,order)
+		var text: String = state if order["owner"]<0 else "%s承建 · %d金 · %s" % [world.household_name(order["owner"]),order["bid"],state]
 		lines.append("(%d,%d) · %s" % [order["cell"][0],order["cell"][1],text])
 	works_totals.text = "\n".join(lines)
+	var road_labels: Dictionary = {}
+	for order: Dictionary in data["roads"]:
+		var road: Dictionary = Works.road_site(world,order["cell"])
+		if not road.is_empty() and road["work_done"]>=road["work_required"]-1:
+			road_labels[road["id"]]=Works.road_status(world,order)
+	if road_labels!=town_map.road_labels:
+		town_map.road_labels=road_labels
+		town_map.queue_redraw()
+	_refresh_tender_notice()
+
+
+# 通知索引：承建户与中标日绑定，跨帧刷新不会重复提醒。
+func _tender_key(entry: Dictionary) -> String:
+	return "%d/%d/%d/%d" % [entry["day"],entry["owner"],entry["cell"][0],entry["cell"][1]]
+
+
+# 中标提醒：直接在地图上显示承建人，奏章按钮同时标出未读工程。
+func _refresh_tender_notice() -> void:
+	if tender_notice==null:
+		return
+	for entry: Dictionary in world.royal_works["tenders"]:
+		var key: String = _tender_key(entry)
+		if not tender_seen.has(key):
+			tender_seen[key]=true
+			tender_unread.append(entry)
+	tender_notice.visible=not tender_unread.is_empty()
+	if tender_unread.is_empty():
+		return
+	var newest: Dictionary = tender_unread.back()
+	var owner: String = world.household_name(newest["owner"])
+	var suffix: String = "等 %d 项" % tender_unread.size() if tender_unread.size()>1 else " · %d金" % newest["bid"]
+	tender_notice.text="中标 · "+owner+suffix+"　›"
+	var lines: PackedStringArray = []
+	for entry: Dictionary in tender_unread:
+		lines.append("%s · (%d,%d) · %d金" % [world.household_name(entry["owner"]),entry["cell"][0],entry["cell"][1],entry["bid"]])
+	tender_notice.tooltip_text="\n".join(lines)
+	tender_notice.reset_size()
+
+
+# 进入工程奏章：查看中标记录后消除提示，档案仍保留。
+func _open_engineering_notices() -> void:
+	tender_unread.clear()
+	_refresh_tender_notice()
+	_refresh_memorial()
+	memorial_filter.select(State.Book.SECTIONS.find("工程")+2)
+	_populate_memorial()
+	for index: int in range(memorial_list.item_count):
+		if memorial_list.get_item_metadata(index)["title"]=="道路工程中标":
+			memorial_list.select(index)
+			_read_memorial(index)
+			break
+	memorial_window.popup_centered(Vector2i(780,470))
 
 
 # 撤标入口：只撤销尚未选出承建户的一项工程。
@@ -894,6 +960,9 @@ func _build_memorial_window() -> void:
 
 # 打开奏章：优先定位有待批的队列，否则打开最近奏报。
 func _open_memorial_window() -> void:
+	if not tender_unread.is_empty() and world.chancery["claims"].is_empty():
+		_open_engineering_notices()
+		return
 	memorial_filter.select(0 if not world.chancery["claims"].is_empty() else 1)
 	_populate_memorial()
 	memorial_window.popup_centered(Vector2i(780,470))
@@ -904,7 +973,7 @@ func _refresh_memorial() -> void:
 	if court_button==null:
 		return
 	var count: int = world.chancery["claims"].size()
-	court_button.text="奏章 · %d待批" % count if count>0 else "奏章"
+	court_button.text="奏章 · %d待批" % count if count>0 else ("奏章 · 工程" if not tender_unread.is_empty() else "奏章")
 	if not memorial_window.visible:
 		return
 	var signature: int = hash(world.chancery["claims"])+hash(world.chancery["items"])
@@ -1103,6 +1172,21 @@ func _show_resident_row(row: int) -> void:
 		if owner==i and stake>0:
 			var share_text: String = " · 持股 %d%%" % stake if stake<100 else ""
 			details.append("地籍 · "+town_map.building_title(record["id"]) + " (%d,%d)" % [record["cell"][0],record["cell"][1]]+share_text)
+	details.append_array(["","[b]工程中标历史[/b]"])
+	var found: bool = false
+	var tenders: Array = world.royal_works["tenders"]
+	for index: int in range(tenders.size()-1,-1,-1):
+		var tender: Dictionary = tenders[index]
+		if tender["owner"]!=i:
+			continue
+		found=true
+		var state: String = "第%d日验收" % tender["finished"] if tender["finished"]>0 else "验收记录未留存"
+		if tender["finished"]==0:
+			var order: Dictionary = Works.order_at(world,tender["cell"])
+			state=Works.road_status(world,order) if not order.is_empty() else "待验收"
+		details.append("第%d日 · 街道 (%d,%d) · %d金 · %s" % [tender["day"],tender["cell"][0],tender["cell"][1],tender["bid"],state])
+	if not found:
+		details.append("暂无中标记录")
 	resident_details.text = "\n".join(details)
 	resident_details.scroll_to_line(0)
 	resident_home.disabled = entry["address"].is_empty()
@@ -1470,6 +1554,11 @@ func _load(save_id: int = 0) -> void:
 	_end_court_edit()
 	memorial_signature=-1
 	world = candidate
+	tender_seen.clear()
+	tender_unread.clear()
+	for entry: Dictionary in world.royal_works["tenders"]:
+		if entry["finished"]!=0:
+			tender_seen[_tender_key(entry)]=true
 	if not legacy_economy_fixture:
 		HouseEconomy.activate(world)
 	selected_household = 0

@@ -98,6 +98,7 @@ var ready_infrastructure: Dictionary = {}
 var street_cells: Dictionary = {}
 var tender_reserve: Dictionary = {}
 var tender_orders: Array = []
+var road_labels: Dictionary = {}
 var equipment_cells: Dictionary = {}
 var motion_layer: Control
 var art_canvas: CanvasItem
@@ -1282,7 +1283,8 @@ func _draw_building_feedback() -> void:
 			continue
 		var label: String = building_title(record["id"])
 		if constructing:
-			label += " %d%%" % floori(100.0 * record["work_done"] / record["work_required"])
+			var phase: String = road_labels.get(record["id"],"")
+			label+=" "+phase if not phase.is_empty() else " %d%%" % floori(100.0*record["work_done"]/record["work_required"])
 		var font: Font = ThemeDB.fallback_font
 		var text_size: Vector2 = font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14)
 		var origin: Vector2 = baseline - Vector2(text_size.x * 0.5, 0)

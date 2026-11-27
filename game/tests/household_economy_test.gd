@@ -79,6 +79,7 @@ func _run() -> void:
 	_check_investment()
 	_check_player_view()
 	_check_royal_works()
+	_check_legacy_road_acceptance()
 	_check_rural_migration()
 	_check_reclamation()
 	_check_register()
@@ -179,12 +180,21 @@ func _check_royal_works() -> void:
 	world.paused = false
 	Clock.new(world).advance(State.DAY_TICKS)
 	var orders: Array = world.royal_works["roads"]
-	_check(not orders.is_empty() and orders[0]["owner"]>=0 and orders[0]["bid"]>=30,"报价和中标未执行")
+	_check(not orders.is_empty() and orders[0]["owner"]>=0 and orders[0]["bid"]>=30 and orders[0]["stock"],"报价、中标或备料未执行")
+	var awarded: Array = world.royal_works["tenders"]
+	_check(awarded.size()==1 and awarded[0]["owner"]==orders[0]["owner"] and awarded[0]["finished"]==0,"承建户档案缺少中标记录")
 	Clock.new(world).advance(25)
 	var roadwork: Dictionary = works.road_site(world,[road.x,road.y])
 	_check(not roadwork.is_empty() and roadwork["work_done"]==25 and world.royal_works["paid"]==0,"未按施工进度修路或提前支付工程款")
 	_check(State.from_snapshot(JSON.parse_string(JSON.stringify(world.snapshot())))!=null,"道路承包工地和占位不能同时读档")
+	var reserved_wood: int = world.resources["wood"]
+	var reserved_stone: int = world.resources["stone"]
+	world.resources["wood"]=0
+	world.resources["stone"]=0
 	Clock.new(world).advance(State.DAY_TICKS-25)
+	_check(awarded[0]["finished"]>0,"验收没有更新承建户档案")
+	world.resources["wood"]=reserved_wood
+	world.resources["stone"]=reserved_stone
 	_check(world.royal_works["roads"].is_empty() and world.royal_works["paid"]>=30,"发包工程未交工付款")
 	_check(world.royal_works["wood"]>=3 and world.royal_works["stone"]>=6 and world.royal_works["sales"]>0,"没有向皇家收取材料费")
 	_check(not world.royal_works["homes"].is_empty(),"人口住房压力未触发居民自建")
@@ -241,6 +251,7 @@ func _check_rural_migration() -> void:
 	var before: Dictionary = world.snapshot()
 	before["version"]=31
 	before["royal_works"].erase("profits")
+	before["royal_works"].erase("tenders")
 	_check(State.from_snapshot(world.snapshot())==null,"新档允许农牧地与城市边界相交")
 	var migrated: RefCounted = State.from_snapshot(JSON.parse_string(JSON.stringify(before)))
 	_check(migrated!=null,"旧档城市农牧地无法迁移")
@@ -291,3 +302,42 @@ func _check_reclamation() -> void:
 	_check(field["crop"]==1 and field["yield"]==result and result==6,"单田作物或收成公式不正确")
 	var restored: RefCounted = State.from_snapshot(JSON.parse_string(JSON.stringify(world.snapshot())))
 	_check(restored!=null and restored.chancery==world.chancery,"奏章、拒绝历史或产量未跨存档保持")
+
+# 旧路恢复：复现已满铺设但错过日结的进度，并检查缺料状态与补料后的即时验收。
+func _check_legacy_road_acceptance() -> void:
+	var world: RefCounted = State.new()
+	world.capital_layout=true
+	Economy.activate(world,71342)
+	for family: Dictionary in world.household_economy["families"]:
+		family["cash"]=500
+	var coordinate := Vector2i(20,14)
+	var service = State.Works
+	_check(service.publish(world,coordinate)["ok"],"测试街道发标失败")
+	world.paused=false
+	Clock.new(world).advance(State.DAY_TICKS)
+	var raw: Dictionary = world.snapshot()
+	raw["version"]=34
+	raw["royal_works"].erase("tenders")
+	var order: Dictionary = raw["royal_works"]["roads"][0]
+	order.erase("stock")
+	raw["chancery"]["items"]=[]
+	for record: Dictionary in raw["buildings"]:
+		if record["def_id"]=="b_road":
+			record["work_done"]=State.DAY_TICKS-1
+	raw["tick"]+=17
+	var legacy: RefCounted = State.from_snapshot(JSON.parse_string(JSON.stringify(raw)))
+	_check(legacy!=null,"旧版99%工地无法读档")
+	if legacy==null:
+		return
+	var archive: Array = legacy.royal_works["tenders"]
+	_check(archive.size()==1 and archive[0]["owner"]==order["owner"],"旧工地的中标户未迁移")
+	legacy.resources["stone"]=0
+	var contract: Dictionary = legacy.royal_works["roads"][0]
+	Clock.new(legacy).advance(1)
+	_check(service.road_status(legacy,contract).contains("木材或石材"),"工程卡点未给出缺料说明")
+	legacy.resources["stone"]=6
+	var paid: int = legacy.royal_works["paid"]
+	Clock.new(legacy).advance(1)
+	_check(legacy.royal_works["roads"].is_empty() and legacy.royal_works["paid"]==paid+contract["bid"] and archive[0]["finished"]==legacy.current_day(),"补料后未在同日验收")
+	Clock.new(legacy).advance(1)
+	_check(legacy.royal_works["paid"]==paid+contract["bid"],"验收后重复结款")

@@ -43,7 +43,10 @@ static func describe(world: RefCounted, id: String) -> Dictionary:
 		var crew: int = world.construction_crews().get(id,0)
 		metrics["builders"]=crew
 		if sponsor==-3:
-			state_text="承包工班施工" if crew>0 else "待工程验收"
+			var order: Dictionary = world.Works.order_at(world,building["cell"])
+			state_text="%s承建 · %s" % [world.household_name(order["owner"]),world.Works.road_status(world,order)]
+			if crew==0:
+				metrics["progress"]="已铺设"
 		elif queue>1:
 			state_text="等待前序工地"
 		elif crew==0:
