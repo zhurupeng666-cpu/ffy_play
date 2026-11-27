@@ -169,6 +169,59 @@ static func _garrison(canvas: Control, center: Vector2) -> void:
 	_open_shelter(canvas, center + _tile(0.2, -4.4), Color("#925f4d"))
 	_rail(canvas, center, _tile(-8.25, 3), _tile(-8.25, 7.5), 4)
 	_rail(canvas, center, _tile(8.25, 3), _tile(8.25, 7.5), 4)
+	_military_quarters(canvas,center)
+
+
+# 营区实景：在原军营占地内分出点将台、射手位、营帐、马厩和军械堆。
+static func _military_quarters(canvas: Control, center: Vector2) -> void:
+	var command: Vector2 = center+_tile(-5.9,-1.8)
+	_ground(canvas,command,1.8,1.1,Color("#9c9480"),Color("#5d594e"))
+	_ground(canvas,command-Vector2(0,10),1.7,1.05,Color("#bab19a"),Color("#716e5f"))
+	_rail(canvas,command-Vector2(0,10),_tile(-1.7,-1.0),_tile(1.7,-1.0),4)
+	_stroke(canvas,command,Vector2(-12,-22),Vector2(10,-8),Color("#543b2d"),9)
+	_pixel(canvas,command,Vector2(-18,-29),Vector2(18,22),Color("#9e5242"))
+	_pixel(canvas,command,Vector2(-15,-27),Vector2(11,16),Color("#d5b786"))
+	for slot: float in [-7.3,-4.8]:
+		_tent(canvas,center+_tile(slot,-7.5))
+	var arrows: Vector2 = center+_tile(6.2,3.5)
+	_ground(canvas,arrows,2.1,3.25,Color("#b49a6a"),Color("#77694f"))
+	for i: int in range(3):
+		_target(canvas,arrows+_tile(-1.3+i*1.27,2.2))
+		_stroke(canvas,arrows,_tile(-1.3+i*1.27,-2.1),_tile(-1.3+i*1.27,1.9),Color("#ccb489"),2.3)
+	_open_shelter(canvas,arrows+_tile(0,-3.15),Color("#a88555"))
+	var stable: Vector2 = center+_tile(6.3,-7.2)
+	_open_shelter(canvas,stable,Color("#73563e"))
+	_trough(canvas,stable+_tile(0.0,1.0),Color("#6b9390"))
+	_horse(canvas,stable+_tile(-1.2,0.5))
+	_horse(canvas,stable+_tile(1.1,0.6))
+	var timber: Vector2 = center+_tile(-6.5,4.5)
+	_open_shelter(canvas,timber,Color("#785b44"))
+	_cart_load(canvas,timber+_tile(0.8,0.95),Color("#8a6946"))
+	for i: int in range(4):
+		_stroke(canvas,timber,Vector2(-41+i*9,16),Vector2(-37+i*9,-8),Color("#72563c"),3.4)
+		_pixel(canvas,timber,Vector2(-40+i*9,-10),Vector2(4,5),Color("#b2aba0"))
+
+
+# 帐幕模块：布脊、门帘和地钉与木瓦营房形成差异。
+static func _tent(canvas: Control, at: Vector2) -> void:
+	var a:=Vector2(-35,5)
+	var b:=Vector2(-4,19)
+	var c:=Vector2(34,4)
+	var ridge:=Vector2(0,-42)
+	_poly(canvas,at,[a,b,ridge,Vector2(-23,-45)],Color("#b59e74"))
+	_poly(canvas,at,[b,c,ridge],Color("#dfc89d"))
+	_poly(canvas,at,[Vector2(-1,18),Vector2(14,12),Vector2(2,-23)],Color("#75634e"))
+	_stroke(canvas,at,a,Vector2(-44,12),Color("#715a3c"),2)
+	_stroke(canvas,at,c,Vector2(43,11),Color("#715a3c"),2)
+
+
+# 马厩道具：马身、鬃尾和缰绳在栅栏内呈现骑兵驻训场景。
+static func _horse(canvas: Control, at: Vector2) -> void:
+	_poly(canvas,at,[Vector2(-19,-19),Vector2(10,-23),Vector2(17,-10),Vector2(-13,-8)],Color("#8d5a40"))
+	_poly(canvas,at,[Vector2(7,-20),Vector2(14,-39),Vector2(26,-32),Vector2(26,-25),Vector2(16,-25),Vector2(16,-13)],Color("#99694d"))
+	for offset: int in [-13,-5,7,14]:
+		_stroke(canvas,at,Vector2(offset,-11),Vector2(offset-2,0),Color("#583e34"),4)
+	_stroke(canvas,at,Vector2(-16,-17),Vector2(-24,-2),Color("#593c32"),4)
 
 
 # 木靶模块：采用带同心色块的木板靶和三脚支架。
@@ -220,11 +273,11 @@ static func _cart_load(canvas: Control, at: Vector2, cargo: Color) -> void:
 
 
 # 动态入口：按实际在岗或留营人数绘制人员，牛羊沿各自围栏内路线活动。
-static func draw_activity(canvas: Control, kind: String, center: Vector2, time: float, staff: int, troops: Vector2i) -> void:
+static func draw_activity(canvas: Control, kind: String, center: Vector2, time: float, staff: int, troops: Vector2i, actor_time: float) -> void:
 	if kind == "b_barracks":
 		var total: int = troops.x + troops.y
 		for index: int in range(total):
-			_drill_soldier(canvas, center + drill_foot(index, total, time), time, index, index >= troops.x)
+			_drill_soldier(canvas, center + drill_foot(index,total,actor_time),actor_time,index, index >= troops.x)
 		return
 	if kind == "b_ranch":
 		for index: int in range(7):
@@ -232,9 +285,9 @@ static func draw_activity(canvas: Control, kind: String, center: Vector2, time: 
 			var heading: float = 1.0 if pasture_foot(index, time + 0.1).x > at.x else -1.0
 			_animal(canvas, center + at, index >= 4, heading, int(time * 5.0 + index) % 2)
 	for index: int in range(staff):
-		var step: float = sin(time * 4.0 + index * 2.1)
-		var x: float = sin(time * 0.74 + index * 2.0) * 1.9
-		var pos: Vector2 = _tile(4.8 + x, -5.4 + index * 1.4) if kind == "b_farm" else _tile(x * 0.31, -3.7 + index * 2.0)
+		var step: float = sin(actor_time*4.0+index*2.1)
+		var trip: float = pingpong(actor_time*0.28+index*0.38,1.0)
+		var pos: Vector2 = _tile(2.8+trip*3.6,-5.4+index*1.4) if kind=="b_farm" else _tile(-3.0+6.1*trip,-3.6+index*0.55)
 		_field_worker(canvas, center + pos, step, kind == "b_farm", index)
 
 

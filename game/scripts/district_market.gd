@@ -13,17 +13,15 @@ const MARKET_SPACING: int = 2 * WALK_RANGE
 
 # 日结模块：只用并入道路网的住宅，每天最多形成一处新集市。
 static func settle(world: RefCounted) -> void:
-	if world.buildings.size() + world.royal_works["roads"].size() >= 256 or world.next_building_id >= 1000000:
+	if world.buildings.size() + world.Works.pending_slots(world) >= 256 or world.next_building_id >= 1000000:
 		return
 	var ways: Dictionary = Streets.network(world.buildings)
 	var houses: Array[Dictionary] = []
 	var markets: Array[Vector2i] = []
 	for building: Dictionary in world.buildings:
-		if building["state"] != "ready":
-			continue
 		var kind: String = building["def_id"]
 		var point := Vector2i(building["cell"][0], building["cell"][1])
-		if kind == "b_house":
+		if kind == "b_house" and building["state"]=="ready":
 			houses.append(building)
 		elif kind == Catalog.MARKET.id:
 			markets.append(point)
@@ -48,7 +46,7 @@ static func settle(world: RefCounted) -> void:
 				score = reached
 				break
 	if score >= HOUSE_THRESHOLD:
-		found(world, best, Catalog.MARKET)
+		found(world,best,Catalog.MARKET,16 if world.capital_layout else 0)
 
 
 # 住宅接入模块：同一栋房在同一条路或多条路有入口时只会被统计一次。
@@ -97,11 +95,11 @@ static func _has_nearby_market(road: Vector2i, markets: Array[Vector2i]) -> bool
 
 
 # 持久化模块：集市沿用建筑实例和历史回执，重读存档保留同一地址与标识。
-static func found(world: RefCounted, point: Vector2i, definition: Resource) -> String:
+static func found(world: RefCounted, point: Vector2i, definition: Resource, work: int = 0) -> String:
 	var id: String = "building_%06d" % world.next_building_id
 	var cell: Array = [point.x, point.y]
-	world.buildings.append({"id": id, "def_id": definition.id, "cell": cell, "level": 1, "state": "ready",
-		"work_done": 0, "work_required": 0, "workers": 0, "food_credit": 0, "material_credit": 0, "paid_cost": Costs.normalize({})})
+	world.buildings.append({"id": id, "def_id": definition.id, "cell": cell, "level": 1, "state": "constructing" if work>0 else "ready",
+		"work_done": 0, "work_required": work, "workers": 0, "food_credit": 0, "material_credit": 0, "paid_cost": Costs.normalize({})})
 	world.applied_commands["resident-" + id] = {"def_id": definition.id, "cell": cell.duplicate(), "building_id": id}
 	if definition.get_meta("large", false):
 		world.buildings.back()["large"] = true

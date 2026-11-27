@@ -210,7 +210,7 @@ func settle_days() -> void:
 			Register.sync_people(self)
 			Register.assign_homes(self)
 			if buildings.size()>buildings_before_market:
-				post_report("民生","居民自发开市","临街住区已形成新集市。")
+				post_report("民生","居民集市开工","临街住区开始搭建集市。")
 			var civil: int = household_economy.get("civil",-1)
 			if civil>=0:
 				post_report("臣属","税务官核验日账","%s核验第%d日税款，田赋 %d 粮，渔税 %d 粮，商税 %d 金。" % [household_name(civil),last_settled_day,private_bill["tax_grain"],private_bill["fish_levy"],private_bill["shop_tax"]])
@@ -237,7 +237,7 @@ func snapshot() -> Dictionary:
 	if capital_layout:
 		Register.sync_people(self)
 		Register.assign_homes(self)
-		data["version"] = 33
+		data["version"] = 34
 		Rural.sync_titles(self)
 		data["chancery"] = chancery.duplicate(true)
 		data["capital_layout"] = true
@@ -254,7 +254,7 @@ static func from_snapshot(data: Variant) -> RefCounted:
 	for key: String in ["version", "tick", "last_settled_day", "population", "speed"]:
 		if not _valid_integer(data.get(key), 0, 120000000):
 			return null
-	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33] or int(data["speed"]) not in [1, 2, 4]:
+	if int(data["version"]) not in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34] or int(data["speed"]) not in [1, 2, 4]:
 		return null
 	var version: int = int(data["version"])
 	if not _valid_integer(data["population"], Population.START_POPULATION, Population.MAX_POPULATION) or (version < 25 and data["population"] != Population.START_POPULATION):
@@ -613,21 +613,65 @@ func _restore_buildings(data: Dictionary) -> bool:
 	return true
 
 
-# 施工推进模块：每名工人每战略秒投入半份工作，整数余数避免浮点误差并支持中途存档。
+# 自筹归属：居民项目使用住户劳力，集市由街坊承建并与官府施工队区分。
+func builder_owner(record: Dictionary) -> int:
+	if capital_layout and Works.is_contract(self,record):
+		return -3
+	if record["def_id"]=="b_market" and capital_layout:
+		return -2
+	return household_economy.get("property",{}).get(record["id"],royal_works["homes"].get(record["id"],-1))
+
+
+# 施工推进：每户同时推进一处自筹工地，官建保留原有队列与工时结算。
 func advance_construction() -> void:
+	if capital_layout and not royal_works["roads"].is_empty():
+		Works.advance_contracts(self)
+	var used: Dictionary = {}
+	var official: Dictionary = {}
 	for building: Dictionary in buildings:
-		if building["state"] == "constructing" and not HouseEconomy.owns(self, building["id"]):
-			if builders == 0:
-				return
-			labor_credit += builders
-			if labor_credit < 2:
-				return
-			labor_credit -= 2
-			building["work_done"] = mini(int(building["work_done"]) + 1, int(building["work_required"]))
-			if building["work_done"] == building["work_required"]:
-				building["state"] = "ready"
-			return
-	labor_credit = 0
+		if building["state"]!="constructing":
+			continue
+		var owner: int = builder_owner(building)
+		if owner==-3:
+			continue
+		if capital_layout and owner!=-1:
+			if used.has(owner) or (owner>=0 and households[owner]["adults"]<=0):
+				continue
+			used[owner]=true
+			building["work_done"]+=1
+			if building["work_done"]==building["work_required"]:
+				building["state"]="ready"
+				var category: String = "农政" if building["def_id"]=="b_farm" else "民生"
+				var who: String = household_name(owner) if owner>=0 else "街坊"
+				post_report(category,"居民营建完工","%s已完成%s，地块现已可以投入使用。" % [who,Catalog.find(building["def_id"]).get("display_name")])
+		elif official.is_empty() and owner==-1:
+			official=building
+	if official.is_empty():
+		labor_credit=0
+	elif builders>0:
+		labor_credit+=builders
+		if labor_credit>=2:
+			labor_credit-=2
+			official["work_done"]+=1
+			if official["work_done"]==official["work_required"]:
+				official["state"]="ready"
+				post_report("工程","城建完工","%s已完工，可投入使用。" % Catalog.find(official["def_id"]).get("display_name"))
+
+
+# 现场工班：渲染与详情只展示真正可以推进的工地，并保持施工队优先顺序。
+func construction_crews() -> Dictionary:
+	var crews: Dictionary = {}
+	var used: Dictionary = {}
+	for record: Dictionary in buildings:
+		if record["state"]!="constructing":
+			continue
+		var owner: int = builder_owner(record)
+		if owner==-3:
+			crews[record["id"]]=2 if record["work_done"]<record["work_required"]-1 else 0
+		elif not used.has(owner):
+			used[owner]=true
+			crews[record["id"]]=builders if owner==-1 else (1 if owner==-2 or households[owner]["adults"]>0 else 0)
+	return crews
 
 
 # 分配模块：拒绝超额或负人数，合法调整不增减总人口、不扣金币。

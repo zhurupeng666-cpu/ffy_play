@@ -180,7 +180,11 @@ func _check_royal_works() -> void:
 	Clock.new(world).advance(State.DAY_TICKS)
 	var orders: Array = world.royal_works["roads"]
 	_check(not orders.is_empty() and orders[0]["owner"]>=0 and orders[0]["bid"]>=30,"报价和中标未执行")
-	Clock.new(world).advance(State.DAY_TICKS)
+	Clock.new(world).advance(25)
+	var roadwork: Dictionary = works.road_site(world,[road.x,road.y])
+	_check(not roadwork.is_empty() and roadwork["work_done"]==25 and world.royal_works["paid"]==0,"未按施工进度修路或提前支付工程款")
+	_check(State.from_snapshot(JSON.parse_string(JSON.stringify(world.snapshot())))!=null,"道路承包工地和占位不能同时读档")
+	Clock.new(world).advance(State.DAY_TICKS-25)
 	_check(world.royal_works["roads"].is_empty() and world.royal_works["paid"]>=30,"发包工程未交工付款")
 	_check(world.royal_works["wood"]>=3 and world.royal_works["stone"]>=6 and world.royal_works["sales"]>0,"没有向皇家收取材料费")
 	_check(not world.royal_works["homes"].is_empty(),"人口住房压力未触发居民自建")
@@ -274,6 +278,15 @@ func _check_reclamation() -> void:
 	_check(State.Rural.rule(world,request,true)=="" and family["land"]==4 and family["cash"]==100 and world.resources["wood"]==old_wood-4,"批准账目不一致")
 	_check(State.Rural.rule(world,request,true)!="" and world.chancery["fields"].size()==1,"重复审批产生新田")
 	var field: Dictionary = world.chancery["fields"].values()[0]
+	var record: Dictionary = world.buildings.back()
+	_check(record["state"]=="constructing" and record["work_done"]==0 and State.Rural.harvest(world,owner,4,100)==0 and field["yield"]==-1,"批准后的田块越过垦田过程或提前产粮")
+	world.paused=false
+	Clock.new(world).advance(7)
+	_check(record["state"]=="constructing" and record["work_done"]==7,"垦田没有逐步推进")
+	var mid: RefCounted = State.from_snapshot(JSON.parse_string(JSON.stringify(world.snapshot())))
+	_check(mid!=null and mid.buildings.back()["work_done"]==7 and mid.buildings.back()["state"]=="constructing","施工中存档丢失工序")
+	Clock.new(world).advance(9)
+	_check(record["state"]=="ready","完成整地播种后没有转为可用田块")
 	var result: int = State.Rural.harvest(world,owner,4,100)
 	_check(field["crop"]==1 and field["yield"]==result and result==6,"单田作物或收成公式不正确")
 	var restored: RefCounted = State.from_snapshot(JSON.parse_string(JSON.stringify(world.snapshot())))

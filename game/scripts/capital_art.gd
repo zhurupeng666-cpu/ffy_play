@@ -174,9 +174,19 @@ static func _gate(canvas: Control, area: Rect2i, ns: bool, outer: bool) -> void:
 	var two: Rect2i = Rect2i(Vector2i(area.end.x - 5, area.position.y), one.size) if ns else Rect2i(Vector2i(area.position.x, area.end.y - 5), one.size)
 	_box(canvas, one, 0.0, 105.0, main, rim)
 	_box(canvas, two, 0.0, 105.0, main, rim)
-	_box(canvas, area.grow(-1), 105.0, 34.0, main, rim)
-	_roof(canvas, area.grow(-1), 214.0, GOLD if not outer else JADE, 43.0)
-	_roof(canvas, area.grow(-3), 245.0, GOLD if not outer else JADE, 27.0)
+	_box(canvas,area.grow(-1),105.0,30.0,main,rim)
+	var pavilion: Rect2i = area.grow(-3)
+	var roof: Color = GOLD if not outer else Color("#586568")
+	_box(canvas,pavilion,135.0,62.0,Color("#884e3e"),Color("#a18969"))
+	var corners: PackedVector2Array = canvas._footprint_outline(pavilion.position,pavilion.size,true)
+	for face: int in range(1,3):
+		var left: Vector2 = corners[face]
+		var right: Vector2 = corners[face+1]
+		for index: int in range(1,6):
+			var slot: float = index/7.0
+			Art._wall_opening(canvas,Vector2.ZERO,left,right,slot,slot+0.095,149,182,Color("#c19a68"),false)
+	_roof(canvas,area.grow(-1),197.0,roof,40.0)
+	_roof(canvas,pavilion,237.0,roof.lightened(0.12),26.0)
 	var mast: Vector2 = Grid.cell_to_world(area.position + Vector2i(2,2))
 	Art._flag(canvas, mast - Vector2(0, 103), Color("#ac533a"))
 
@@ -317,7 +327,7 @@ static func hostelry(canvas: Control, area: Rect2i, kind: String, front: int) ->
 	var center: Vector2i = area.get_center()
 	var inn: bool = kind=="b_inn"
 	var tavern: bool = kind=="b_tavern"
-	var roof: Color = Color("#50746c") if inn else (Color("#9b603e") if tavern else Color("#a15248"))
+	var roof: Color = Color("#586265") if inn else (Color("#79765a") if tavern else Color("#454e57"))
 	var yard: Color = Color("#b2a48b") if inn else Color("#aa9072")
 	_tile(canvas,area,yard.darkened(0.18))
 	_tile(canvas,area.grow(-1),yard)
@@ -345,9 +355,16 @@ static func hostelry(canvas: Control, area: Rect2i, kind: String, front: int) ->
 		Art._pixel(canvas,lantern,Vector2(-2,-32),Vector2(4,7),Color("#f3ce75"))
 	var stoop: Vector2 = Grid.cell_to_world(center+outward*2)
 	Art._shop_sign(canvas,stoop-Vector2(0,28),Color("#e9c583" if inn else "#d39249"))
-	Art._crate(canvas,stoop+Vector2(19,8))
 	if inn:
-		Art._crate(canvas,stoop+Vector2(-23,6),Color("#89654a"))
+		for side: int in [-1,1]:
+			Art._cask(canvas,stoop+Vector2(side*24,13),Color("#b19c72"))
+		Art._sack(canvas,stoop+Vector2(16,18))
+	else:
+		for offset: Vector2 in [Vector2(-23,6),Vector2(-34,12),Vector2(-12,13)]:
+			Art._cask(canvas,stoop+offset,Color("#a45c43"))
+		var bench: Vector2 = stoop+Vector2(27,11)
+		Art._stroke(canvas,bench,Vector2(-12,0),Vector2(11,9),Color("#896449"),5)
+		Art._stroke(canvas,bench,Vector2(-10,-4),Vector2(13,5),Color("#d2a575"),6)
 
 
 # 门面细节：窗格、木栏、层间线脚与石阶在近景可辨。

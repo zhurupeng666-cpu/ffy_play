@@ -102,6 +102,7 @@ static func settle(world: RefCounted) -> Dictionary:
 	var fishing: Dictionary = _fishing_access(world)
 	var public_jobs: int = world.workforce_capacity() - world.idle_workers()
 	var shops: Dictionary = _by_trade(world)
+	var fields: Dictionary = Fields.active_fields(world) if world.capital_layout else {}
 	for offset: int in range(families.size()):
 		var index: int = (offset + day) % families.size()
 		var adults: int = world.households[index]["adults"]
@@ -111,7 +112,8 @@ static func settle(world: RefCounted) -> Dictionary:
 		families[index]["hired"] = 0
 		families[index]["income"] = 0
 		families[index]["tax"] = 0
-		jobs.append({"id": index, "workers": adults - assigned, "assigned": assigned, "farm": 0, "fish": 0, "shop": 0, "catch": 0, "grain": 0, "due": 0})
+		var acres: int = fields.get(index,{}).get("acres",0) if world.capital_layout else int(families[index]["land"])
+		jobs.append({"land":acres,"id": index, "workers": adults - assigned, "assigned": assigned, "farm": 0, "fish": 0, "shop": 0, "catch": 0, "grain": 0, "due": 0})
 	for job: Dictionary in jobs:
 		var owner: int = job["id"]
 		var family: Dictionary = families[owner]
@@ -119,7 +121,7 @@ static func settle(world: RefCounted) -> Dictionary:
 		if shops.has(owner):
 			job["shop"] = mini(job["workers"], 2)
 		job["fish"] = mini(job["workers"] - job["shop"], int(family["boats"]) * 2)
-		job["farm"] = mini(job["workers"] - job["fish"] - job["shop"], ceili(int(family["land"]) / 5.0))
+		job["farm"] = mini(job["workers"] - job["fish"] - job["shop"], ceili(int(job["land"]) / 5.0))
 		job["workers"] -= int(job["farm"]) + int(job["fish"]) + int(job["shop"])
 	var hands: Array[Dictionary] = []
 	for job: Dictionary in jobs:
@@ -135,9 +137,9 @@ static func settle(world: RefCounted) -> Dictionary:
 		var index: int = job["id"]
 		var family: Dictionary = families[index]
 		var wage: int = job.get("wage", 0)
-		var cultivated: int = mini(family["land"], job["farm"] * 5)
+		var cultivated: int = mini(job["land"], job["farm"] * 5)
 		var yield_percent: int = season + _roll(state["seed"], day, index, 12, 39)
-		job["grain"] = Fields.harvest(world,index,cultivated,yield_percent) if world.capital_layout else floori(cultivated * 1.4 * yield_percent / 100.0)
+		job["grain"] = Fields.harvest(world,index,cultivated,yield_percent,fields) if world.capital_layout else floori(cultivated * 1.4 * yield_percent / 100.0)
 		job["catch"] = job["fish"] * (3 + _roll(state["seed"], day, index, 13, 5))
 		result["harvest"] += job["grain"]
 		result["fish"] += job["catch"]
@@ -176,8 +178,9 @@ static func settle(world: RefCounted) -> Dictionary:
 		family["occupation"] = _occupation(job, shops.get(index, ""))
 		job["due"] = ceili((int(world.households[index]["adults"]) + world.households[index]["children"].size()) * 0.5)
 	_trade(world, jobs, result)
-	_private_construction(world)
-	_invest_in_buildings(world, day, shops)
+	if not world.capital_layout:
+		_private_construction(world)
+	_invest_in_buildings(world,day)
 	state["report"] = result
 	return result
 
@@ -205,7 +208,7 @@ static func _hire(families: Array, jobs: Array[Dictionary], hands: Array[Diction
 	for buyer: Dictionary in jobs:
 		var owner: Dictionary = families[buyer["id"]]
 		var boats_left: int = maxi(0, int(owner["boats"]) * 2 - int(buyer["fish"]))
-		var acres_left: int = maxi(0, ceili(int(owner["land"]) / 5.0) - int(buyer["farm"]))
+		var acres_left: int = maxi(0, ceili(int(buyer["land"]) / 5.0) - int(buyer["farm"]))
 		var vacancies: int = mini(4, boats_left + acres_left)
 		while available < hands.size() and vacancies > 0 and int(owner["cash"]) >= 8:
 			var worker: Dictionary = hands[available]
@@ -324,15 +327,20 @@ static func _private_construction(world: RefCounted) -> void:
 
 
 # 商铺与府邸：成熟市场附近择址，先检查地段再扣住户资产，不占官府账。
-static func _invest_in_buildings(world: RefCounted, day: int, trades: Dictionary) -> void:
+static func _invest_in_buildings(world: RefCounted, day: int) -> void:
 	var state: Dictionary = world.household_economy
-	if world.buildings.size() + world.royal_works["roads"].size() >= 256 or world.next_building_id >= 1000000:
+	if world.buildings.size() + world.Works.pending_slots(world) >= 256 or world.next_building_id >= 1000000:
 		return
 	var markets: Array[Vector2i] = []
 	var ways: Array[Vector2i] = []
 	var manors: Dictionary = {}
 	var field_owners: Dictionary = {}
+	var planned_shops: Dictionary = {}
 	for record: Dictionary in world.buildings:
+		if record["def_id"]=="b_manor":
+			manors[state["property"].get(record["id"],-1)]=true
+		elif record["def_id"] in SHOPS:
+			planned_shops[state["property"].get(record["id"],-1)]=true
 		if record["state"] != "ready":
 			continue
 		var cell := Vector2i(record["cell"][0], record["cell"][1])
@@ -340,7 +348,6 @@ static func _invest_in_buildings(world: RefCounted, day: int, trades: Dictionary
 			"b_market": markets.append(cell)
 			"b_road":
 				ways.append_array(Placement.footprint_cells(cell, Catalog.footprint(record)))
-			"b_manor": manors[state["property"].get(record["id"], -1)] = true
 			"b_farm": field_owners[state["property"].get(record["id"], -1)] = true
 	if ways.is_empty():
 		return
@@ -356,8 +363,8 @@ static func _invest_in_buildings(world: RefCounted, day: int, trades: Dictionary
 			continue
 		var kind: String = ""
 		var price: int = 95
-		if not markets.is_empty() and not trades.has(owner) and trades.size() < markets.size() * 4:
-			kind = SHOPS[_roll(state["seed"], day, owner + trades.size(), 17, SHOPS.size())]
+		if not markets.is_empty() and not planned_shops.has(owner) and planned_shops.size() < markets.size() * 4:
+			kind = SHOPS[_roll(state["seed"], day, owner + planned_shops.size(), 17, SHOPS.size())]
 		elif not manors.has(owner) and family["cash"] >= 225 and worth(world, owner) >= MANOR_WEALTH:
 			kind = "b_manor"
 			price = 160
@@ -377,14 +384,15 @@ static func _invest_in_buildings(world: RefCounted, day: int, trades: Dictionary
 					continue
 			family["cash"] -= price
 			family["income"] -= price
-			var id: String = Market.found(world, slot, definition)
+			var work: int = (26 if kind=="b_manor" else 18) if world.capital_layout else 0
+			var id: String = Market.found(world,slot,definition,work)
 			if kind != "b_farm":
 				var front: int = Streets.direction(slot, definition.get("footprint"), established)
 				if front >= 0:
 					world.buildings.back()["front"] = front
 			state["property"][id] = owner
 			if world.capital_layout:
-				world.post_report("民生","居民新业",world.household_name(owner)+"新设"+TITLES[kind]+"。")
+				world.post_report("民生","居民开工",world.household_name(owner)+"开始营建"+TITLES[kind]+"。")
 			return
 
 

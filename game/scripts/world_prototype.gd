@@ -963,6 +963,14 @@ func _rule_memorial(approve: bool) -> void:
 	_sync_building_view()
 	_refresh()
 	_populate_memorial()
+	if approve:
+		memorial_window.hide()
+		if region_overview.visible:
+			_show_region_view(false)
+		var id: String = world.buildings.back()["id"]
+		town_map._focus_building(id)
+		_inspect_building(id,true)
+		status_label.text="已批准，农户正在此处开始垦田"
 
 
 # 居民册界面：左侧检索住户，右侧阅读地址、成员、征收和产业。
@@ -986,7 +994,7 @@ func _build_resident_window() -> void:
 	var search := HBoxContainer.new()
 	body.add_child(search)
 	resident_filter = LineEdit.new()
-	resident_filter.placeholder_text = "按姓名、户号或坐标查找"
+	resident_filter.placeholder_text = "按姓名或坐标查找"
 	resident_filter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	search.add_child(resident_filter)
 	resident_filter.text_changed.connect(_populate_resident_list.unbind(1))
@@ -1256,6 +1264,13 @@ func _refresh() -> void:
 	_refresh_works()
 	town_map.sync_capital(world.capital_layout, world.population)
 	town_map.sync_hour(_hour())
+	var crews: Dictionary = world.construction_crews()
+	var working: bool = world.buildings.any(func(record:Dictionary)->bool: return record["state"]=="constructing")
+	if crews!=town_map.construction_crews or working!=town_map.has_construction or world.paused!=town_map.animation_paused:
+		town_map.construction_crews=crews
+		town_map.has_construction=working
+		town_map.animation_paused=world.paused
+		town_map.motion_layer.queue_redraw()
 	_refresh_estate()
 	_refresh_inspection()
 	_refresh_memorial()
@@ -1296,7 +1311,7 @@ func _refresh() -> void:
 	construction_label.text = active_text
 	construction_metrics.visible = queued_count > 0
 	_set_numbers({"active_build_progress": "%d%%" % active_progress, "waiting_builds": maxi(0, queued_count - 1)})
-	if queued_count > 0 and world.builders == 0:
+	if queued_count>0 and not crews.values().any(func(count:int)->bool: return count>0):
 		construction_label.text += "；缺施工工人，已停工"
 	town_map.sync_yard_counts(Army.yard_counts(world))
 	town_map.sync_worksite_staff(world.buildings)
@@ -2382,6 +2397,9 @@ func _refresh_inspection() -> void:
 	if inspection_label == null:
 		return
 	var detail: Dictionary = Inspector.describe(world, inspected_building_id)
+	var selected: Dictionary = Inspector.find(world,inspected_building_id)
+	if world.capital_layout and selected.get("state")=="constructing":
+		detail["text"]+="\n"+TownMap.BuildArt.phase(selected)
 	var site: Dictionary = town_map.site_buildings.get(town_map.inspected_building_id, {})
 	var landmark: Dictionary = town_map.capital_buildings.get(town_map.inspected_building_id, {})
 	if not landmark.is_empty():
@@ -2396,9 +2414,11 @@ func _refresh_inspection() -> void:
 		var title: String = "%s私产" % world.household_name(owner)
 		if held>0:
 			title = "皇家全资" if held==100 else "皇家与%s共同持有" % world.household_name(owner)
-		detail = {"text": "%s ｜ %s%s" % [town_map.building_title(inspected_building_id), title,
-			" · 施工中" if property["state"] == "constructing" else ""],
-			"numbers": {"size": "%d × %d" % [extent.x, extent.y]}, "increase": false, "decrease": false}
+		if property["state"]=="constructing":
+			detail["text"]="%s ｜ %s\n%s" % [town_map.building_title(inspected_building_id),title,TownMap.BuildArt.phase(property)]
+		else:
+			detail = {"text": "%s ｜ %s" % [town_map.building_title(inspected_building_id),title],
+				"numbers":{"size":"%d × %d" % [extent.x,extent.y]},"increase":false,"decrease":false}
 	if not site.is_empty():
 		var region: Dictionary = RegionOverview.LAYOUT.regions[site["region"]]
 		detail["text"] = "%s ｜ %s\n据点设施" % [site["title"], region["title"]]
@@ -2423,18 +2443,20 @@ func _refresh_inspection() -> void:
 		var definition: Resource = Construction.Catalog.find(record["def_id"])
 		estate_producer_add.disabled = world.estate_idle() == 0 or int(record["workers"]) >= int(definition.get("worker_slots"))
 		estate_producer_remove.disabled = int(world.estate_posts.get(inspected_building_id, 0)) == 0
-	site_builder_actions.visible = owner < 0 and record.get("state") == "constructing"
+	site_builder_actions.visible = record.get("state")=="constructing" and world.builder_owner(record)==-1
 	var plot: Dictionary = world.chancery["fields"].get(inspected_building_id,{})
 	field_card.visible=not plot.is_empty()
 	if field_card.visible:
 		inspection_label.text=town_map.building_title(inspected_building_id)
+		if record.get("state")=="constructing":
+			inspection_label.text+=" · "+TownMap.BuildArt.phase(record)
 		var harvest: int = plot["yield"]
 		var nominal: int = floori(plot["acres"]*State.Rural.CROP_FACTORS[plot["crop"]])
 		field_card.text="作物  %s   ·   地籍  %d亩\n上次日结产量  %s\n满耕参考  %d粮／日" % [State.Book.CROPS[plot["crop"]],plot["acres"],"%d粮" % harvest if harvest>=0 else "待首次收成",nominal]
 	_refresh_asset()
 	if asset_card.visible:
 		numbers["building_size"].get_parent().get_parent().get_parent().hide()
-	inspection_remove.visible = owner < 0 and not record.is_empty() and record["def_id"] not in ["b_hall", "b_market"]
+	inspection_remove.visible = owner < 0 and not record.is_empty() and not Works.is_contract(world,record) and record["def_id"] not in ["b_hall", "b_market"]
 	inspection_remove.text = "取消施工" if record.get("state") == "constructing" else "拆除建筑"
 	var military: bool = record.get("def_id") == "b_barracks"
 	army_recruit_button.get_parent().visible = military

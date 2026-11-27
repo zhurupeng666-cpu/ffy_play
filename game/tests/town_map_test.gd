@@ -167,13 +167,18 @@ func _check_capital(map: Control) -> void:
 		var area: Rect2i = record[2]
 		var projected: Vector2 = map.world_to_screen(Grid.cell_to_world(area.get_center()))
 		_check(area.get_area() >= 200 and visible.has_point(projected), "外城大门没有完整随地图定位")
-	var ways: Dictionary = {Vector2i(2,1):"b_road", Vector2i(3,1):"b_gate", Vector2i(4,1):"b_road", Vector2i(5,1):"b_wall"}
-	var routes: Array[PackedVector2Array] = Walker.routes(ways)
-	_check(not routes.is_empty(), "连通道路没有生成行人路径")
-	for path: PackedVector2Array in routes:
-		for point: Vector2 in path:
-			var cell: Vector2i = Grid.world_to_cell(point)
-			_check(ways.get(cell) in ["b_road","b_gate"], "行人路线经过城墙")
+	_check(Walker.routes(world,{}).is_empty(),"没有目的地仍出现来回闲逛")
+	var farm_market: String = State.DistrictMarket.found(world,Vector2i(18,10),State.Catalog.MARKET)
+	var wall: String = State.DistrictMarket.found(world,Vector2i(12,7),State.Catalog.WALL)
+	State.Register.sync_people(world)
+	for household: Dictionary in world.resident_register:
+		household["address"]="building_000001"
+	var routes: Array[Dictionary] = Walker.routes(world,{})
+	_check(not routes.is_empty(),"有市场和已登记住所仍未生成办事路线")
+	for route: Dictionary in routes:
+		_check(route["target"]==farm_market and route["activity"]=="buy","住户办事缺少市场目的地")
+		for point: Vector2 in route["points"]:
+			_check(world.occupied_cells().get(Grid.world_to_cell(point),"")!=wall,"行人路线经过城墙")
 	var a: Texture2D = Walker.Pedestrians._texture(0,0,false,false)
 	var b: Texture2D = Walker.Pedestrians._texture(0,3,false,false)
 	var child: Texture2D = Walker.Pedestrians._texture(3,0,false,false)

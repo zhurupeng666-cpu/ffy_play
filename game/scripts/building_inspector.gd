@@ -31,20 +31,25 @@ static func describe(world: RefCounted, id: String) -> Dictionary:
 	var state_text: String = "已完工"
 	if not ready:
 		var queue: int = 0
+		var sponsor: int = world.builder_owner(building)
 		for record: Dictionary in world.buildings:
-			if record["state"] == "constructing":
-				queue += 1
-			if record["id"] == id:
+			if record["state"]=="constructing" and world.builder_owner(record)==sponsor:
+				queue+=1
+			if record["id"]==id:
 				break
 		metrics["progress"] = "%d%%" % floori(100.0 * building["work_done"] / building["work_required"])
-		metrics["queue"] = queue
-		metrics["builders"] = world.builders
-		if world.builders == 0:
-			state_text = "缺施工工人，已停工"
-		elif queue > 1:
-			state_text = "等待前序工地"
+		if sponsor!=-3:
+			metrics["queue"]=queue
+		var crew: int = world.construction_crews().get(id,0)
+		metrics["builders"]=crew
+		if sponsor==-3:
+			state_text="承包工班施工" if crew>0 else "待工程验收"
+		elif queue>1:
+			state_text="等待前序工地"
+		elif crew==0:
+			state_text="缺施工工人，已停工"
 		else:
-			state_text = "施工暂停" if world.paused else "施工中"
+			state_text="施工暂停" if world.paused else "施工中"
 	elif slots > 0:
 		var material: String = str(definition.get("material_resource"))
 		var unit: String = "粮食" if material.is_empty() else ("木材" if material == "wood" else "石材")

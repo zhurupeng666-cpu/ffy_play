@@ -101,9 +101,7 @@ static func building(canvas: Control, id: String, center: Vector2, spread: float
 			_tower(canvas, center + Vector2(37, 5), 14, 37)
 			_flag(canvas, center + Vector2(-3, -73), Color("#c45d4b"))
 		"b_house":
-			var roofs: Array[Color] = [Color("#ab5640"),Color("#737848"),Color("#8d6b53"),Color("#577980"),Color("#8d5859")]
-			var walls: Array[Color] = [Color("#e6bf87"),Color("#d8b9a2"),Color("#ba9472"),Color("#e5cba4"),Color("#cfb08a")]
-			_house(canvas,center,37+variation,22+variation*2,roofs[variation],walls[variation],"home" if variation != 2 else "timber",1.45,front)
+			_vernacular_home(canvas,center,front,variation)
 		"b_farm":
 			var plots: int = clampi(roundi(spread), 1, 5)
 			for row: int in range(plots):
@@ -117,22 +115,23 @@ static func building(canvas: Control, id: String, center: Vector2, spread: float
 		"b_barracks":
 			_barracks(canvas, center, spread)
 		"b_market":
-			_market(canvas, center, 0.86)
+			_market(canvas, center+Vector2(14,-6), 0.82)
+			_well(canvas,center+Vector2(-44,22))
 			_stroke(canvas, center, Vector2(52,17), Vector2(52,-55), Color("#594735"), 5.0)
 			_poly(canvas, center, [Vector2(54,-56), Vector2(78,-42), Vector2(75,-22), Vector2(54,-34)], Color("#c2693b"))
 			_stroke(canvas, center, Vector2(58,-46), Vector2(70,-39), Color("#f9dd91"), 3.0)
 		"b_tavern":
-			_house(canvas, center, 35, 28, Color("#7e4551"), Color("#bb9b65"), "timber", 1.48, front)
+			_house(canvas, center, 35, 28, Color("#56605c"), Color("#bb9b65"), "timber", 1.48, front)
 			_shop_sign(canvas, center, Color("#c68948"))
 		"b_restaurant":
-			_house(canvas, center - Vector2(0, 3), 44, 41, Color("#497681"), Color("#d0b08d"), "stone", 1.63, front)
+			_house(canvas, center - Vector2(0, 3), 44, 41, Color("#48545d"), Color("#d0b08d"), "stone", 1.63, front)
 			_shop_sign(canvas, center, Color("#bc6948"))
 		"b_bakery":
 			_house(canvas, center, 36, 25, Color("#b68a49"), Color("#d4b78c"), "home", 1.44, front)
 			_crate(canvas, center + Vector2(-28, 23))
 			_shop_sign(canvas, center, Color("#dbb374"))
 		"b_inn":
-			_house(canvas, center, 40, 35, Color("#92724b"), Color("#d6b187"), "timber", 1.58, front)
+			_house(canvas, center, 40, 35, Color("#525c60"), Color("#d6b187"), "timber", 1.58, front)
 			_shop_sign(canvas, center, Color("#e3c276"))
 			_crate(canvas, center + Vector2(24,17))
 		"b_manor":
@@ -143,13 +142,73 @@ static func building(canvas: Control, id: String, center: Vector2, spread: float
 		"b_smithy":
 			_smithy(canvas, center)
 		"b_granary":
-			_house(canvas, center + Vector2(-6, -5), 36, 30, Color("#ad783b"), Color("#d0ae73"), "store", 2.2 if spread > 1.0 else 1.45)
-			for offset: Vector2 in [Vector2(-23, 12), Vector2(-15, 16), Vector2(23, 9)]:
-				_crate(canvas, center + offset)
+			_house(canvas, center + Vector2(-6, -5), 36, 30, Color("#77654d"), Color("#c3a477"), "store", 2.2 if spread > 1.0 else 1.45)
+			for offset: Vector2 in [Vector2(-39, 23),Vector2(-26,29),Vector2(32,21),Vector2(41,27)]:
+				_sack(canvas,center+offset)
+			for offset: Vector2 in [Vector2(-14,33),Vector2(12,35)]:
+				_cask(canvas,center+offset,Color("#d7b47a"))
 			if spread > 1.0:
 				_house(canvas, center + Vector2(44 * spread, 4), 38, 26, Color("#936838"), Color("#bc9866"), "store", 2.1)
 				for offset: Vector2 in [Vector2(41, 40), Vector2(58, 36), Vector2(76, 32), Vector2(96, 23)]:
 					_crate(canvas, center + offset)
+
+# 民居变体：灰瓦平房、木梁双层、小合院与草顶林屋沿用相同占地。
+static func _vernacular_home(canvas: Control, at: Vector2, front: int, variation: int) -> void:
+	var slate: Color = [Color("#5d6057"),Color("#596164"),Color("#9b653e"),Color("#9a7c47"),Color("#4f5a61")][variation]
+	var walls: Color = [Color("#c9b394"),Color("#bfa489"),Color("#c8b798"),Color("#bb9868"),Color("#d2be9c")][variation]
+	var door: Vector2 = [Vector2(-19,18),Vector2(21,18),Vector2(20,-10),Vector2(-21,-12)][front]
+	for index: int in range(5):
+		var stone: Vector2 = door*(0.92+index*0.14)+Vector2((index%2)*7,3)
+		_poly(canvas,at+stone,[Vector2(-6,1),Vector2(0,-3),Vector2(7,0),Vector2(1,4)],Color("#aa9d84"))
+	if variation==2:
+		_house(canvas,at+Vector2(-18,3),23,20,slate.darkened(0.08),walls,"timber",1.05,front)
+		_house(canvas,at+Vector2(15,-7),28,25,slate,walls,"home",1.32,front)
+		_stroke(canvas,at,Vector2(-35,17),Vector2(-10,28),Color("#aa9b82"),5)
+	elif variation==1:
+		_house(canvas,at+Vector2(-14,5),23,19,slate,walls,"home",1.05,front)
+		_house(canvas,at+Vector2(11,-4),31,38,slate,walls,"timber",1.25,front)
+		_stroke(canvas,at,Vector2(-15,-15),Vector2(8,-6),Color("#cca577"),3)
+	else:
+		var size: int = 34 if variation!=3 else 31
+		_house(canvas,at,size,24 if variation!=3 else 20,slate,walls,"timber" if variation==3 else "home",1.38,front)
+	if variation==3:
+		_well(canvas,at+Vector2(-28,19),0.53)
+		for group: int in range(4):
+			_pixel(canvas,at,Vector2(19+group*6,17+group*2),Vector2(5,4),Color("#7a9150"))
+	else:
+		for group: int in range(3):
+			_crate(canvas,at+Vector2(-27+group*5,16+group*3),Color("#937251"))
+
+
+# 井与卷扬：石圈、井水和悬桶组成可辨认的市井设施。
+static func _well(canvas: Control, at: Vector2, scale_hint: float = 1.0) -> void:
+	canvas.art_origin=at
+	canvas.art_scale=scale_hint
+	_poly(canvas,at,[Vector2(-15,0),Vector2(0,-7),Vector2(16,0),Vector2(0,8)],Color("#7c7d72"))
+	_poly(canvas,at,[Vector2(-14,-5),Vector2(0,-12),Vector2(15,-5),Vector2(0,2)],Color("#b7ac94"))
+	_poly(canvas,at,[Vector2(-9,-5),Vector2(0,-9),Vector2(9,-5),Vector2(0,-1)],Color("#456d70"))
+	for x: int in [-11,11]:
+		_stroke(canvas,at,Vector2(x,1),Vector2(x,-27),Color("#69513b"),4)
+	_stroke(canvas,at,Vector2(-12,-27),Vector2(12,-27),Color("#967451"),5)
+	_stroke(canvas,at,Vector2(0,-26),Vector2(0,-13),Color("#d3b17c"),2)
+	_pixel(canvas,at,Vector2(-4,-14),Vector2(8,6),Color("#8f6949"))
+	canvas.art_scale=1.0
+
+
+# 粮袋模块：叠袋与木桶用布面和扎口表现库房装卸。
+static func _sack(canvas: Control, at: Vector2) -> void:
+	_poly(canvas,at,[Vector2(-7,0),Vector2(-9,-7),Vector2(-4,-13),Vector2(4,-13),Vector2(8,-7),Vector2(6,1)],Color("#a69068"))
+	_poly(canvas,at,[Vector2(-7,-6),Vector2(-4,-11),Vector2(4,-10),Vector2(5,-3),Vector2(-4,-1)],Color("#d0b991"))
+	_stroke(canvas,at,Vector2(-4,-12),Vector2(4,-12),Color("#8a6f50"),2)
+
+
+# 木桶模块：横箍、桶腹和桶口使用不同明度。
+static func _cask(canvas: Control, at: Vector2, fill: Color) -> void:
+	_poly(canvas,at,[Vector2(-9,-10),Vector2(7,-10),Vector2(7,1),Vector2(-7,3)],Color("#886448"))
+	_poly(canvas,at,[Vector2(-9,-10),Vector2(-2,-14),Vector2(7,-10),Vector2(0,-7)],fill)
+	for y: int in [-7,-2]:
+		_stroke(canvas,at,Vector2(-8,y),Vector2(6,y),Color("#514740"),2)
+
 
 # 商铺招牌：挂靠屋檐与入口，颜色随行业区分。
 static func _shop_sign(canvas: Control, center: Vector2, color: Color) -> void:
@@ -225,9 +284,11 @@ static func _wall_opening(canvas: Control, center: Vector2, a: Vector2, b: Vecto
 	var r: Vector2 = a.lerp(b, right)
 	var low: Vector2 = Vector2(0, -bottom)
 	var high: Vector2 = Vector2(0, -top)
-	var margin: Vector2 = (r - l).normalized() * 2.0
+	var edge: Vector2 = r-l
+	var margin: Vector2 = edge.normalized()*minf(2.0,edge.length()*0.22)
+	var bevel: Vector2 = Vector2(0,minf(2.0,(top-bottom)*0.22))
 	_poly(canvas, center, [l + low, r + low, r + high, l + high], Ink)
-	_poly(canvas, center, [l + low + margin - Vector2(0, 2), r + low - margin - Vector2(0, 2), r + high - margin + Vector2(0, 2), l + high + margin + Vector2(0, 2)], fill)
+	_poly(canvas, center, [l+low+margin-bevel,r+low-margin-bevel,r+high-margin+bevel,l+high+margin+bevel], fill)
 	var middle: Vector2 = (l + r) * 0.5
 	_stroke(canvas, center, middle + low, middle + high, Ink, 1.5)
 	if not door:
@@ -306,13 +367,13 @@ static func _entry_details(canvas: Control, center: Vector2, west: Vector2, sout
 
 # 屋瓦模块：顺坡的错缝纹理增强屋顶坡度与瓦片层次。
 static func _roof_rows(canvas: Control, center: Vector2, ridge_a: Vector2, ridge_b: Vector2, eave_a: Vector2, eave_b: Vector2, roof: Color) -> void:
-	for row: int in range(1, 5):
-		var fraction: float = row * 0.2
+	for row: int in range(1, 7):
+		var fraction: float = row / 7.0
 		var a: Vector2 = ridge_a.lerp(eave_a, fraction)
 		var b: Vector2 = ridge_b.lerp(eave_b, fraction)
-		_stroke(canvas, center, a, b, roof.darkened(0.24), 1.4)
-		for tile: int in range(4):
-			var position: float = (tile + 0.4 + 0.35 * (row % 2)) / 4.0
+		_stroke(canvas, center, a, b, roof.darkened(0.24), 1.3)
+		for tile: int in range(7):
+			var position: float = (tile + 0.35 + 0.34 * (row % 2))/7.0
 			var seam: Vector2 = a.lerp(b, position)
 			var upper: Vector2 = ridge_a.lerp(eave_a, fraction - 0.13).lerp(ridge_b.lerp(eave_b, fraction - 0.13), position)
 			_stroke(canvas, center, seam, upper, roof.darkened(0.17), 1.0)

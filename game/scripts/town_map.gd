@@ -9,6 +9,7 @@ signal placement_clicked(result: Dictionary)
 signal placement_cancelled
 
 const Art = preload("res://scripts/town_art.gd")
+const BuildArt = preload("res://scripts/construction_art.gd")
 const WorksiteArt = preload("res://scripts/town_worksite_art.gd")
 const CompoundArt = preload("res://scripts/town_compound_art.gd")
 const Terrain = preload("res://scripts/town_terrain.gd")
@@ -54,7 +55,10 @@ var palace_decor: Dictionary = {}
 var palace_cutaway: bool = false
 var court_edit: int = -1
 var court_tool: int = 0
-var resident_routes: Array[PackedVector2Array] = []
+var resident_routes: Array[Dictionary] = []
+var construction_crews: Dictionary = {}
+var has_construction: bool = false
+var animation_paused: bool = false
 var town_population: int = 0
 var commute_lots: Array[Dictionary] = []
 var commute_paths: Dictionary = {}
@@ -77,6 +81,7 @@ var drawing_building: String = ""
 var yard_counts_by_barracks: Dictionary = {}
 var staff_by_site: Dictionary = {}
 var scenery_time: float = 0.0
+var actor_time: float = 0.0
 var has_ranch: bool = false
 var has_fishery: bool = false
 var scenery_frame: int = 0
@@ -255,13 +260,15 @@ func _process(delta: float) -> void:
 			direction += PAN_KEYS[arrow]
 		if direction != Vector2.ZERO:
 			_pan_camera(direction.normalized() * PAN_SPEED * minf(delta, 0.05))
-	if zoom_level < 0.12 or (resident_routes.is_empty() and commute_paths.is_empty() and not has_ranch and not has_fishery and yard_counts_by_barracks.is_empty() and staff_by_site.is_empty()):
+	if zoom_level < 0.10 or (not has_construction and resident_routes.is_empty() and commute_paths.is_empty() and not has_ranch and not has_fishery and yard_counts_by_barracks.is_empty() and staff_by_site.is_empty()):
 		return
-	scenery_time += delta
+	scenery_time+=delta
+	if not animation_paused:
+		actor_time+=delta
 	var frame: int = floori(scenery_time * 12.0)
 	if frame != scenery_frame:
 		scenery_frame = frame
-		if not animated_objects.is_empty() or not resident_routes.is_empty() or not commute_paths.is_empty():
+		if has_construction or not animated_objects.is_empty() or not resident_routes.is_empty() or not commute_paths.is_empty():
 			motion_layer.queue_redraw()
 
 
@@ -731,12 +738,15 @@ func sync_commutes(world: RefCounted) -> void:
 	var geometry: Array = []
 	for record: Dictionary in world.buildings:
 		geometry.append([record["id"],record["cell"],record["state"]])
-	var signature: int = hash(geometry)
+	for entry: Dictionary in world.resident_register:
+		geometry.append(entry["address"])
+	var signature: int = hash(geometry)+world.current_day()+world.builders*773
 	if current==commute_lots and signature==commute_layout:
 		return
 	commute_lots=current
 	commute_layout=signature
 	commute_paths=Rural.routes(world,current) if not current.is_empty() else {}
+	resident_routes=Walkers.routes(world,commute_paths)
 	motion_layer.queue_redraw()
 
 
@@ -813,6 +823,7 @@ func sync_capital(enabled: bool, population: int) -> void:
 	if not enabled:
 		commute_lots.clear()
 		commute_paths.clear()
+		resident_routes.clear()
 		commute_layout=0
 	var area: Rect2i = Capital.OUTER if enabled else Rect2i()
 	ground_material.set_shader_parameter("capital_cleared",Vector4(area.position.x,area.position.y,area.end.x,area.end.y))
@@ -820,7 +831,6 @@ func sync_capital(enabled: bool, population: int) -> void:
 	if fitting_overview and showing_entire_map:
 		_fit_camera()
 		view_changed.emit()
-	_refresh_walking_routes()
 	static_dirty = true
 	_redraw_scene()
 
@@ -853,23 +863,13 @@ func visit_capital_area(area: Rect2i) -> void:
 	_redraw_scene()
 
 
-# 居民路线：沿用普通路段连接，宫苑主街另有观景与巡行路线。
-func _refresh_walking_routes() -> void:
-	if overview_only:
-		return
-	resident_routes = Walkers.routes(Streets.network(placed_buildings))
-	if not capital_buildings.is_empty():
-		for path: PackedVector2Array in Capital.walks():
-			for i: int in range(5):
-				resident_routes.push_front(path)
-
-
 # 实例同步模块：从世界传入只读副本，重新推导格表以避免视图与存档各存一份占用。
 func sync_buildings(records: Array) -> void:
 	var before: Array = placed_buildings
 	placed_buildings = records.duplicate(true)
 	if _same_layout(before, placed_buildings):
 		if before != placed_buildings:
+			motion_layer.queue_redraw()
 			queue_redraw()
 		return
 	occupied_cells.clear()
@@ -891,7 +891,6 @@ func sync_buildings(records: Array) -> void:
 		for cell: Vector2i in Placement.footprint_cells(anchor, Catalog.footprint(record)):
 			occupied_cells[cell] = record["id"]
 	street_cells = Streets.network(placed_buildings, not capital_buildings.is_empty())
-	_refresh_walking_routes()
 	static_dirty = true
 	_update_preview()
 	_redraw_scene()
@@ -1086,9 +1085,7 @@ func _draw_map_objects(visible_objects: Rect2, decorate: bool) -> void:
 			WorksiteArt.draw_resource_equipment(self, item["equipment"], center, item["role"])
 		elif item.has("deposit"):
 			Art.deposit(self, center, item["deposit"])
-		elif item["record"]["state"] == "constructing":
-			Art.site(self, center)
-		else:
+		elif item["record"]["state"] != "constructing":
 			var record: Dictionary = item["record"]
 			drawing_building = record["id"]
 			building_faces[drawing_building] = {"anchor": Vector2i(int(record["cell"][0]), int(record["cell"][1])), "faces": []}
@@ -1162,29 +1159,32 @@ func _building_bounds(record: Dictionary) -> Rect2:
 # 动态层：复用静景过滤后的场地，只绘制镜头附近的牲畜、士兵和在岗工人。
 func _draw_motion() -> void:
 	art_canvas = motion_layer
+	var view: Rect2 = _world_viewport().grow(85.0)
+	if zoom_level>=0.065 and has_construction:
+		for record: Dictionary in placed_buildings:
+			if record["state"]=="constructing" and view.intersects(_building_bounds(record)):
+				BuildArt.draw(self,record,construction_crews.get(record["id"],0),actor_time)
 	if zoom_level < 0.12:
 		return
-	var view: Rect2 = _world_viewport().grow(65.0)
-	if map_hour>=6.0 and map_hour<19.0:
-		Walkers.draw(self, resident_routes, scenery_time, view, town_population)
-	Rural.draw_workers(self,commute_paths,map_hour,scenery_time,view)
+	Walkers.draw(self,resident_routes,map_hour,actor_time,view)
+	Rural.draw_workers(self,commute_paths,map_hour,actor_time,view)
 	for item: Dictionary in animated_objects:
 		if not view.intersects(item["bounds"]):
 			continue
 		var center: Vector2 = item["center"]
 		if item["compound"]:
-			CompoundArt.draw_activity(self, item["type"], center, scenery_time, staff_by_site.get(item["id"], 0), yard_counts_by_barracks.get(item["id"], Vector2i.ZERO))
+			CompoundArt.draw_activity(self, item["type"], center, scenery_time, staff_by_site.get(item["id"], 0), yard_counts_by_barracks.get(item["id"], Vector2i.ZERO),actor_time)
 		elif item["type"] == "b_fishery":
 			var workers: int = staff_by_site.get(item["id"], 0)
 			WorksiteArt.draw_fish(self, center, item["dock"], scenery_time)
 			if workers > 0:
-				WorksiteArt.draw_fishers(self, center, item["dock"], workers, scenery_time)
+				WorksiteArt.draw_fishers(self, center, item["dock"], workers,actor_time)
 		elif not item["worksite"]:
 			Art.moving_units(self, item["type"], center, scenery_time, yard_counts_by_barracks.get(item["id"], Vector2i.ZERO), item["spread"])
 	for id: String in staff_by_site:
 		if work_areas.has(id):
 			var area: Dictionary = work_areas[id]
-			WorksiteArt.draw_resource_workers(self, area, staff_by_site[id], scenery_time, view)
+			WorksiteArt.draw_resource_workers(self, area, staff_by_site[id],actor_time,view)
 
 
 # 排序模块：深度相同时按横坐标固定绘制顺序。

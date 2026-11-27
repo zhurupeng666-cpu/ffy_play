@@ -108,8 +108,7 @@ static func draw_building(canvas: Control, record: Dictionary, at: Vector2, guar
 		"market":
 			Art._market(canvas, at, 1.0)
 		"well":
-			Art._house(canvas, at, 17, 18, Color("#46666b"), Color("#97958c"), "stone", 1.08)
-			Art._poly(canvas, at, [Vector2(-17, 8), Vector2(0, 0), Vector2(17, 8), Vector2(0, 16)], Color("#559798"))
+			Art._well(canvas,at,1.6)
 		"tower":
 			_tower(canvas, at, stone)
 		"gate":
@@ -125,8 +124,16 @@ static func draw_building(canvas: Control, record: Dictionary, at: Vector2, guar
 			if kind == "mill":
 				for direction: Vector2 in [Vector2(-23, -23), Vector2(21, -23), Vector2(-23, 23), Vector2(21, 23)]:
 					Art._stroke(canvas, at, Vector2(24, -50), Vector2(24, -50) + direction, Color("#dfcd96"), 5.0)
+			elif kind=="forge":
+				Art._smithy(canvas,at+Vector2(28,18))
+			elif kind=="clinic":
+				Art._cask(canvas,at+Vector2(31,18),Color("#9caa65"))
+				Art._sack(canvas,at+Vector2(43,22))
+			elif kind=="stable":
+				Art._sack(canvas,at+Vector2(34,17))
+				Art._cask(canvas,at+Vector2(43,24),Color("#7aa5aa"))
 			else:
-				Art._crate(canvas, at + Vector2(28, 16))
+				Art._crate(canvas,at+Vector2(28,16))
 		_:
 			Art.building(canvas, kind, at)
 			if kind == "b_barracks":
@@ -139,6 +146,14 @@ static func draw_building(canvas: Control, record: Dictionary, at: Vector2, guar
 # 哨楼模块：村落使用木岗楼，旧堡使用石塔。
 static func _tower(canvas: Control, at: Vector2, stone: bool) -> void:
 	if stone:
-		Art._tower(canvas, at, 24, 66)
+		Art._tower(canvas,at,24,66)
+		var light: Vector2 = at-Vector2(1,68)
+		Art._cask(canvas,light,Color("#4b4941"))
+		Art._poly(canvas,light,[Vector2(-6,-12),Vector2(-3,-23),Vector2(1,-19),Vector2(4,-29),Vector2(7,-13),Vector2(0,-10)],Color("#e3994b"))
+		Art._pixel(canvas,light,Vector2(0,-17),Vector2(3,5),Color("#f1ce76"))
 	else:
-		Art._house(canvas, at, 20, 35, Color("#684735"), Color("#aa8350"), "timber", 1.40)
+		Art._tower(canvas,at,20,55)
+		for i: int in range(5):
+			var post: Vector2 = at+Vector2(-25+i*7,17+i*3)
+			Art._stroke(canvas,post,Vector2.ZERO,Vector2(0,-15),Color("#78583d"),4)
+			Art._pixel(canvas,post,Vector2(-1,-17),Vector2(3,3),Color("#ae8755"))

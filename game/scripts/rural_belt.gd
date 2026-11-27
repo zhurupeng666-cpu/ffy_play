@@ -109,7 +109,7 @@ static func survey(world: RefCounted) -> void:
 			farms[titles[record["id"]]]=true
 	var occupied: Dictionary = world.occupied_cells()
 	for index: int in range(world.households.size()):
-		if world.buildings.size()+world.royal_works["roads"].size()>=256 or world.next_building_id>=1000000:
+		if world.buildings.size()+world.Works.pending_slots(world)>=256 or world.next_building_id>=1000000:
 			break
 		if farms.has(index) or world.household_economy["families"][index]["land"]<=0:
 			continue
@@ -193,7 +193,7 @@ static func rule(world: RefCounted, claim: Dictionary, approved: bool) -> String
 		queue.remove_at(index)
 		world.post_report("农政","垦荒申请驳回",detail)
 		return ""
-	if world.buildings.size()+world.royal_works["roads"].size()>=256 or world.next_building_id>=1000000:
+	if world.buildings.size()+world.Works.pending_slots(world)>=256 or world.next_building_id>=1000000:
 		return "郊区地契名额已满"
 	var site_cell: Vector2i = field_site(Catalog.FARM,world.occupied_cells())
 	if site_cell==Grid.INVALID:
@@ -205,25 +205,24 @@ static func rule(world: RefCounted, claim: Dictionary, approved: bool) -> String
 		return "皇家木材或库存额度不足"
 	family["cash"]-=32
 	family["land"]+=int(claim["acres"])
-	var id: String = Market.found(world,site_cell,Catalog.FARM)
+	var id: String = Market.found(world,site_cell,Catalog.FARM,8+int(claim["acres"])*2)
 	world.household_economy["property"][id]=owner
 	world.chancery["fields"][id]={"crop":claim["crop"],"acres":claim["acres"],"yield":-1}
 	queue.remove_at(index)
-	world.post_report("农政","垦荒申请获准",detail+" · 已登记新田。")
+	world.post_report("农政","垦荒申请获准",detail+" · 已划地，进入清地、整地和播种工序。")
 	return ""
 
 
 # 闭合账目：同户劳力按比例耕种各块，累计取整确保耕种亩数不会超出户内劳力。
-static func harvest(world: RefCounted, owner: int, cultivated: int, weather: int) -> int:
+static func harvest(world: RefCounted, owner: int, cultivated: int, weather: int, active: Variant = null) -> int:
+	var available: Dictionary = active_fields(world) if active==null else active
+	var group: Dictionary = available.get(owner,{"acres":0,"plots":[]})
 	var fields: Dictionary = world.chancery["fields"]
-	var titles: Dictionary = world.household_economy["property"]
-	var total: int = world.household_economy["families"][owner]["land"]
+	var total: int = int(group["acres"])
 	var prior: int = 0
 	var acres_so_far: int = 0
 	var grain: int = 0
-	for id: String in fields:
-		if titles.get(id,-1)!=owner:
-			continue
+	for id: String in group["plots"]:
 		var plot: Dictionary = fields[id]
 		acres_so_far+=int(plot["acres"])
 		var worked: int = 0 if total==0 else floori(float(acres_so_far)*cultivated/total)
@@ -232,9 +231,24 @@ static func harvest(world: RefCounted, owner: int, cultivated: int, weather: int
 		plot["yield"]=amount
 		grain+=amount
 		prior=worked
-	if acres_so_far==0:
-		return floori(cultivated*1.4*weather/100.0)
 	return grain
+
+
+# 生产边界：权属可在施工前登记，只有播种完工的地块纳入耕种和收成。
+static func active_fields(world: RefCounted) -> Dictionary:
+	var grouped: Dictionary = {}
+	var fields: Dictionary = world.chancery["fields"]
+	var titles: Dictionary = world.household_economy["property"]
+	for record: Dictionary in world.buildings:
+		var id: String = record["id"]
+		if record["state"]!="ready" or not fields.has(id):
+			continue
+		var owner: int = titles[id]
+		if not grouped.has(owner):
+			grouped[owner]={"acres":0,"plots":[]}
+		grouped[owner]["acres"]+=fields[id]["acres"]
+		grouped[owner]["plots"].append(id)
+	return grouped
 
 
 # 起点模块：优先取住户门外，城外或未分配住户沿用镇中心住区入口。
@@ -343,7 +357,9 @@ static func draw_workers(canvas: Control, paths: Dictionary, hour: float, scener
 		var target: Vector2 = points[next]
 		var at: Vector2 = target if target==start else start.lerp(target,(travelled-distances[next-1])/maxf(1.0,distances[next]-distances[next-1]))
 		if work:
-			at+=Vector2(sin(scenery*0.8+owner)*32,cos(scenery*0.8+owner)*14)
+			var furrow: int = posmod(floori((hour-7.5)*1.1)+owner,4)
+			var stride: float = pingpong(scenery*0.7+owner,1.0)
+			at+=Vector2((stride-0.5)*62,(stride-0.5)*30)+Vector2((furrow-1.5)*14,-(furrow-1.5)*7)
 		if view.has_point(at) and (work or not canvas.street_view_hidden(at)):
 			var facing: float = signf((target.x-start.x)*(1.0 if outbound<inbound else -1.0))
 			if work:

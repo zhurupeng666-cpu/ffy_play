@@ -1,78 +1,154 @@
-## 文件用途：根据完工道路生成可重复步行路径，只绘制镜头内的行人。
+## 文件用途：为有真实住址、岗位和店铺的家庭生成出门办事与返家的时间表。
 extends RefCounted
 
-const Grid = preload("res://scripts/isometric_grid.gd")
-const Terrain = preload("res://scripts/town_terrain.gd")
+const Streets = preload("res://scripts/street_frontage.gd")
+const Grid = Streets.Capital.Grid
+const Catalog = Streets.Catalog
+const Capital = Streets.Capital
 const Pedestrians = preload("res://scripts/capital_pedestrian_art.gd")
-const MAX_STREET_ROUTES: int = 42
+const LIMIT: int = 48
 
 
-# 路线模块：沿接通的道路走到下一段路，门可通行，墙和房屋不参与。
-static func routes(ways: Dictionary) -> Array[PackedVector2Array]:
-	var anchors: Array[Vector2i] = []
+# 目的地模块：覆盖值勤、工地、开店、集市与客栈采购；无可达目标的住户留在家里。
+static func routes(world: RefCounted, farming: Dictionary) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	var addresses: Dictionary = {}
+	var private_jobs: Dictionary = {}
+	var public_jobs: Array[Dictionary] = []
+	var shops: Array[Dictionary] = []
+	for record: Dictionary in world.buildings:
+		addresses[record["id"]]=record
+		var kind: String = record["def_id"]
+		var cell := Vector2i(record["cell"][0],record["cell"][1])
+		if not Capital.OUTER.has_point(cell):
+			continue
+		var owner: int = world.builder_owner(record)
+		if record["state"]=="constructing":
+			if owner>=0:
+				private_jobs[owner]={"record":record,"activity":"build"}
+			elif owner!=-3:
+				var count: int = world.builders if owner==-1 and public_jobs.is_empty() else int(owner==-2)
+				for person: int in range(count):
+					public_jobs.append({"record":record,"activity":"build"})
+		elif kind in ["b_market","b_tavern","b_restaurant","b_bakery","b_inn","b_granary","b_smithy"]:
+			shops.append(record)
+			if owner>=0:
+				private_jobs[owner]={"record":record,"activity":"sell"}
+		elif kind=="b_gate":
+			public_jobs.append({"record":record,"activity":"guard"})
+	if private_jobs.is_empty() and public_jobs.is_empty() and shops.is_empty():
+		return result
+	var pathfinder := AStarGrid2D.new()
+	pathfinder.region=Capital.OUTER
+	pathfinder.diagonal_mode=AStarGrid2D.DIAGONAL_MODE_NEVER
+	pathfinder.update()
+	var occupied: Dictionary = world.occupied_cells()
+	for cell: Vector2i in occupied:
+		if Capital.OUTER.has_point(cell):
+			pathfinder.set_point_solid(cell)
+	var ways: Dictionary = Streets.network(world.buildings,true)
 	for cell: Vector2i in ways:
-		if ways[cell] in ["b_road", "b_gate"]:
-			anchors.append(cell)
-	anchors.sort()
-	var paths: Array[PackedVector2Array] = []
-	if anchors.is_empty():
-		return paths
-	var limit: int = mini(MAX_STREET_ROUTES, ceili(anchors.size() / 2.0))
-	for i: int in range(limit):
-		var at: Vector2i = anchors[floori(i * anchors.size() / float(limit))]
-		var path := PackedVector2Array([Grid.cell_to_world(at)])
-		var direction := Vector2i.ZERO
-		for step: int in range(20):
-			var next_direction := Vector2i.ZERO
-			for offset: int in range(Terrain.CARDINALS.size()):
-				var side: Vector2i = Terrain.CARDINALS[(offset + i + floori(step / 5.0)) % 4]
-				if side != -direction and ways.get(at + side) in ["b_road", "b_gate"]:
-					next_direction = side
-					break
-			if next_direction == Vector2i.ZERO:
-				break
-			at += next_direction
-			direction = next_direction
-			path.append(Grid.cell_to_world(at))
-		if path.size() > 1:
-			paths.append(path)
-	return paths
-
-
-# 人物位置模块：不同步速与出发时机，走到终点后沿街返回。
-static func draw(canvas: Control, paths: Array[PackedVector2Array], time: float, view: Rect2, population: int) -> void:
-	if population <= 0:
-		return
-	var budget: int = mini(54, ceili(population * 0.68))
-	for i: int in range(paths.size()):
-		if budget <= 0:
-			return
-		var path: PackedVector2Array = paths[i]
+		if Capital.OUTER.has_point(cell):
+			pathfinder.set_point_solid(cell,false)
+			pathfinder.set_point_weight_scale(cell,0.60)
+	var rotating_job: int = 0
+	for i: int in range(world.resident_register.size()):
+		if result.size()>=LIMIT:
+			break
+		var home: Dictionary = addresses.get(world.resident_register[i]["address"],{})
+		if home.is_empty() or world.households[i]["adults"]<=0:
+			continue
+		var start: Vector2i = _entry(home,ways,pathfinder)
+		if start==Grid.INVALID:
+			continue
+		if farming.has(i) and world.households[i]["adults"]<2:
+			continue
+		var destination: Dictionary = private_jobs.get(i,{})
+		if destination.is_empty():
+			if farming.has(i):
+				continue
+			if rotating_job<public_jobs.size():
+				destination=public_jobs[rotating_job]
+				rotating_job+=1
+			elif not shops.is_empty():
+				destination={"record":shops[posmod(hash(Vector2i(i,world.current_day())),shops.size())],"activity":"buy"}
+		if destination.is_empty():
+			continue
+		var stop: Vector2i = _entry(destination["record"],ways,pathfinder)
+		if stop==Grid.INVALID or stop==start:
+			continue
+		var path: Array[Vector2i] = pathfinder.get_id_path(start,stop)
+		if path.size()<2:
+			continue
+		var points := PackedVector2Array()
+		var distances := PackedFloat32Array()
 		var length: float = 0.0
-		for point: int in range(1, path.size()):
-			length += path[point - 1].distance_to(path[point])
-		var pace: float = 34.0 + (i % 4) * 6.0
-		var duration: float = length / pace
-		var pause: float = 0.6 + (i % 5) * 0.33
-		var clock: float = fposmod(time + fposmod(i * 0.618, 1.0) * 2.0 * (duration + pause), 2.0 * (duration + pause))
-		var backward: bool = clock >= duration + pause
-		var local: float = clock - (duration + pause if backward else 0.0)
-		var waiting: bool = local >= duration
-		var travel: float = clampf(local * pace, 0.0, length)
-		var distance: float = length - travel if backward else travel
-		var segment: int = 0
-		while segment < path.size() - 2:
-			var span: float = path[segment].distance_to(path[segment + 1])
-			if distance <= span:
-				break
-			distance -= span
-			segment += 1
-		var start: Vector2 = path[segment]
-		var finish: Vector2 = path[segment + 1]
-		var heading: Vector2 = (finish - start).normalized()
-		var direction: float = -1.0 if backward else 1.0
-		var lane: Vector2 = heading.orthogonal() * ((i % 3 + 1) * 4.0 * direction)
-		var at: Vector2 = start + heading * distance + lane
-		if view.has_point(at) and not canvas.street_view_hidden(at):
-			budget -= 1
-			Pedestrians.draw(canvas, at, i % 5, posmod(floori(travel / 7.0 + i), 6), heading.x * direction, waiting)
+		for cell: Vector2i in path:
+			var point: Vector2 = Grid.cell_to_world(cell)
+			if not points.is_empty():
+				length+=points[-1].distance_to(point)
+			points.append(point)
+			distances.append(length)
+		var activity: String = destination["activity"]
+		var leave: float = (9.2 if activity=="buy" else 7.0)+(i%11)*0.16
+		var work: float = 0.85 if activity=="buy" else 6.0
+		result.append({"owner":i,"target":destination["record"]["id"],"activity":activity,"points":points,"distances":distances,
+			"length":length,"start":leave,"work":work,"travel":clampf(length/2000.0,0.25,1.10)})
+	return result
+
+
+# 门外落脚：优先门向旁的道路，入城建筑只在外围可步行的格子选点。
+static func _entry(record: Dictionary, ways: Dictionary, finder: AStarGrid2D) -> Vector2i:
+	var at := Vector2i(record["cell"][0],record["cell"][1])
+	var footprint: Vector2i = Catalog.footprint(record)
+	var front: int = Streets.for_record(record,ways)
+	for index: int in range(4):
+		var side: int = (front+index)%4
+		var origin: Vector2i = Streets.edge_start(at,footprint,side)+Streets.SIDES[side]
+		var along := Vector2i.RIGHT if side%2==0 else Vector2i.DOWN
+		var span: int = footprint.x if side%2==0 else footprint.y
+		for offset: int in range(span):
+			var cell: Vector2i = origin + along*((span/2+offset)%span)
+			if Capital.OUTER.has_point(cell) and not finder.is_point_solid(cell):
+				return cell
+	return Grid.INVALID
+
+
+# 行为模块：到达后停留接货或执勤，办完事沿同一条有效路径回家。
+static func draw(canvas: Control, plans: Array[Dictionary], hour: float, time: float, view: Rect2) -> void:
+	for plan: Dictionary in plans:
+		var elapsed: float = hour-plan["start"]
+		var travel: float = plan["travel"]
+		var work: float = plan["work"]
+		if elapsed<0.0 or elapsed>=2.0*travel+work:
+			continue
+		var returning: bool = elapsed>=travel+work
+		var on_site: bool = elapsed>=travel and not returning
+		var distance: float = clampf(minf(elapsed,2.0*travel+work-elapsed)/travel,0.0,1.0)*plan["length"]
+		var distances: PackedFloat32Array = plan["distances"]
+		var next: int = _segment(distances,distance)
+		var points: PackedVector2Array = plan["points"]
+		var start: Vector2 = points[next-1]
+		var target: Vector2 = points[next]
+		var facing: float = signf(target.x-start.x)*(-1.0 if returning else 1.0)
+		var point: Vector2 = start.lerp(target,(distance-distances[next-1])/maxf(1.0,distances[next]-distances[next-1]))
+		if not view.has_point(point) or canvas.street_view_hidden(point):
+			continue
+		var role: int = {"build":0,"sell":2,"buy":1,"guard":4}[plan["activity"]]
+		Pedestrians.draw(canvas,point,role,posmod(floori(time*7.0)+plan["owner"],6),facing,on_site)
+		if on_site and plan["activity"] in ["buy","sell"]:
+			var mark: Vector2 = canvas.art_point(point-Vector2(0,58))
+			canvas.art_canvas.draw_circle(mark,maxf(1.0,canvas.zoom_level*2.0),Color("#edd293"))
+
+
+# 位置查找：累计距离使用二分搜索，长距离通勤也只查询当前小段。
+static func _segment(distances: PackedFloat32Array, distance: float) -> int:
+	var first: int = 1
+	var last: int = distances.size()-1
+	while first<last:
+		var middle: int = (first+last)/2
+		if distances[middle]<distance:
+			first=middle+1
+		else:
+			last=middle
+	return first
